@@ -1,47 +1,47 @@
+from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from jose import jwt, JWTError
+from jose import JWTError, jwt
 from sqlmodel import Session, select
-from pydantic import ValidationError
 
 from app.db.session import get_session
-from app.core.config import settings
 from app.models.user import User
-from app.schemas.auth import TokenData, UserRead
+from app.core.security import SECRET_KEY, ALGORITHM
+from app.schemas.token import TokenData
 
 router = APIRouter()
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/auth/login")
 
-def get_current_user(
-    token: str = Depends(oauth2_scheme),
+async def get_current_user(
+    token: Annotated[str, Depends(oauth2_scheme)],
     session: Session = Depends(get_session)
-) -> User:
-    """
-    Dependency that decodes the JWT and returns the current active User.
-    If the token is invalid, raises 401.
-    """
+):
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
     try:
-        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
-        username: str = payload.get("sub")
-        if username is None:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        # We stored the email in the 'sub' field in auth.py
+        email: str = payload.get("sub")
+        if email is None:
             raise credentials_exception
-        token_data = TokenData(username=username)
-    except (JWTError, ValidationError):
+        token_data = TokenData(email=email)
+    except JWTError:
         raise credentials_exception
         
-    statement = select(User).where(User.username == token_data.username)
+    # FIX: Look up by email, NOT username
+    statement = select(User).where(User.email == token_data.email)
     user = session.exec(statement).first()
+    
     if user is None:
         raise credentials_exception
     return user
 
-@router.get("/me", response_model=UserRead)
-def read_users_me(current_user: User = Depends(get_current_user)):
-    """Return the currently logged-in user's profile."""
+@router.get("/me", response_model=User)
+async def read_users_me(
+    current_user: Annotated[User, Depends(get_current_user)]
+):
     return current_user
