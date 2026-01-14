@@ -1,13 +1,24 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
+
+// Auth Pages
 import Login from './pages/auth/Login';
+import Register from './pages/auth/Register'; // <--- Added this
+
+// Admin Pages
 import ManagePlayers from './pages/admin/ManagePlayers';
-import AdminLayout from './components/layout/AdminLayout';
 import CreateTournament from './pages/admin/CreateTournament';
+import SystemLogs from './pages/admin/SystemLogs';
+
+// Public Pages
 import TournamentView from './pages/public/TournamentView';
+
+// Scorer Pages
 import ScorerMatchList from './pages/scorer/MatchList';
 import Scoreboard from './pages/scorer/Scoreboard';
-import SystemLogs from './pages/admin/SystemLogs';
+
+// Components
+import AdminLayout from './components/layout/AdminLayout';
 
 // Simple placeholder for the Dashboard Home
 const DashboardHome = () => (
@@ -22,19 +33,25 @@ function App() {
     <AuthProvider>
       <BrowserRouter>
         <Routes>
+          {/* Auth Routes */}
           <Route path="/login" element={<Login />} />
+          <Route path="/register" element={<Register />} /> {/* <--- Added this */}
+          
           {/* Public Routes (No Login Required) */}
           <Route path="/t/:public_uuid" element={<TournamentView />} />
+
           {/* Admin Routes */}
           <Route path="/dashboard" element={<DashboardHome />} />
           <Route path="/dashboard/players" element={<ManagePlayers />} />
           <Route path="/dashboard/create-tournament" element={<CreateTournament />} />
           <Route path="/dashboard/logs" element={<SystemLogs />} />
-          {/* Redirects */}
-          <Route path="/" element={<Navigate to="/dashboard" replace />} />
+
           {/* Scorer Routes (Tablet View) */}
           <Route path="/board/:scorer_uuid" element={<ScorerMatchList />} />
           <Route path="/board/:scorer_uuid/match/:match_id" element={<Scoreboard />} />
+
+          {/* Default Redirect */}
+          <Route path="/" element={<Navigate to="/dashboard" replace />} />
         </Routes>
       </BrowserRouter>
     </AuthProvider>
