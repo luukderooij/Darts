@@ -1,0 +1,13 @@
+{
+  "packages": {
+    "backend": {
+      "release-type": "python",
+      "package-name": "dart-tournament-backend",
+      "version-file": "app/__init__.py" 
+    },
+    "frontend": {
+      "release-type": "node",
+      "package-name": "dart-tournament-frontend"
+    }
+  }
+}
