@@ -1,0 +1,48 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Start Backend",
+      "type": "shell",
+      "windows": {
+        "command": "${workspaceFolder}/.venv/Scripts/python -m uvicorn app.main:app --reload"
+      },
+      "linux": {
+        "command": "${workspaceFolder}/.venv/bin/python -m uvicorn app.main:app --reload"
+      },
+      "osx": {
+        "command": "${workspaceFolder}/.venv/bin/python -m uvicorn app.main:app --reload"
+      },
+      "options": {
+        "cwd": "${workspaceFolder}/backend"
+      },
+      "presentation": {
+        "group": "servers",
+        "reveal": "always",
+        "panel": "split"
+      }
+    },
+    {
+      "label": "Start Frontend",
+      "type": "shell",
+      "command": "npm run dev",
+      "options": {
+        "cwd": "${workspaceFolder}/frontend"
+      },
+      "presentation": {
+        "group": "servers",
+        "reveal": "always",
+        "panel": "split"
+      }
+    },
+    {
+      "label": "Start Full Stack",
+      "dependsOn": ["Start Backend", "Start Frontend"],
+      "problemMatcher": [],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      }
+    }
+  ]
+}
