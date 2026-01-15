@@ -1,5 +1,6 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
+// 1. Added 'Target' icon for the boards
 import { LayoutDashboard, Users, Trophy, LogOut, Activity, Target } from 'lucide-react';
 
 const Sidebar = () => {
@@ -12,11 +13,11 @@ const Sidebar = () => {
     navigate('/login');
   };
 
+  // 2. Added 'Manage Boards' to the menu list
   const menuItems = [
     { icon: LayoutDashboard, label: 'Dashboard', path: '/dashboard' },
     { icon: Users, label: 'Manage Players', path: '/dashboard/players' },
-    // 2. ADD THIS BLOCK
-    { icon: Target, label: 'Manage Boards', path: '/dashboard/boards' }, 
+    { icon: Target, label: 'Manage Boards', path: '/dashboard/boards' }, // <--- NEW LINK
     { icon: Trophy, label: 'Create Tournament', path: '/dashboard/create-tournament' },
     { icon: Activity, label: 'System Logs', path: '/dashboard/logs' },
   ];
@@ -25,9 +26,9 @@ const Sidebar = () => {
     <div className="bg-slate-900 text-white w-64 min-h-screen flex flex-col">
       <div className="p-6 border-b border-slate-700">
         <h1 className="text-2xl font-bold text-blue-400">Dart Manager</h1>
-        {/* Updated to use first_name since we deleted username */}
+        {/* 3. Fixed user display (username no longer exists) */}
         <p className="text-xs text-slate-400 mt-1">
-          Logged in as: {user?.first_name || 'Admin'}
+           Logged in as: {user?.first_name || 'Admin'}
         </p>
       </div>
 

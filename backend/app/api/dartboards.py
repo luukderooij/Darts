@@ -5,7 +5,7 @@ from sqlmodel import Session, select
 from app.db.session import get_session
 from app.models.dartboard import Dartboard
 from app.schemas.dartboard import DartboardCreate, DartboardRead
-from app.api.users import get_current_user 
+from app.api.users import get_current_user # Auth check
 
 router = APIRouter()
 

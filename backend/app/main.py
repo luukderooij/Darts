@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.db.session import init_db
 
+# Import API route modules
 from app.api import auth, users, players, tournaments, matches, websockets, dartboards
 
 @asynccontextmanager
@@ -51,6 +52,10 @@ app.include_router(users.router, prefix="/api/users", tags=["Users"])
 app.include_router(players.router, prefix="/api/players", tags=["Players"])
 app.include_router(tournaments.router, prefix="/api/tournaments", tags=["Tournaments"])
 app.include_router(matches.router, prefix="/api/matches", tags=["Matches"])
+app.include_router(dartboards.router, prefix="/api/dartboards", tags=["Dartboards"])
+
+# WebSocket router for real-time logs
+# Note: The frontend will connect via ws://localhost:8000/ws/logs
 app.include_router(websockets.router, prefix="/ws", tags=["WebSockets"])
 app.include_router(dartboards.router, prefix="/api/dartboards", tags=["Dartboards"])
 
