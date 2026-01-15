@@ -24,4 +24,9 @@ export interface Tournament {
   public_uuid?: string;
 }
 
+export interface Dartboard {
+  id: number;
+  name: string;
+  number: number;
+}
 // We will add 'Match' and 'Leg' definitions here later when we build the scoreboard!
