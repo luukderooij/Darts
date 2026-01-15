@@ -15,8 +15,10 @@ def init_db():
     Creates all tables defined in SQLModel models.
     Called during startup in main.py.
     """
-    # Import all models here so SQLModel knows about them before creating tables
-    from app.models import user, player, tournament, match  # noqa: F401
+    # Import ALL models here so SQLModel knows about them before creating tables
+    # --- FIX: Added 'dartboard' and 'links' to this list ---
+    from app.models import user, player, tournament, match, dartboard, links # noqa: F401
+    
     SQLModel.metadata.create_all(engine)
 
 def get_session():

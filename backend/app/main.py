@@ -16,8 +16,6 @@ async def lifespan(app: FastAPI):
     """
     # --- Startup ---
     print("Starting up Dart Tournament Manager...")
-    # Initialize database tables (creates them if they don't exist)
-    # Note: In a strict production env, you might rely solely on Alembic migrations.
     init_db()
     
     yield
@@ -33,12 +31,11 @@ app = FastAPI(
 )
 
 # --- CORS Configuration ---
-# This allows your React frontend (usually on port 5173) to communicate with this backend.
 origins = [
-    "http://localhost:5173",  # Vite default
+    "http://localhost:5173",
     "http://localhost:3000",
     "http://127.0.0.1:5173",
-    "*"  # Open to all for development ease; restrict in production
+    "*" 
 ]
 
 app.add_middleware(
@@ -50,7 +47,6 @@ app.add_middleware(
 )
 
 # --- Register Routers ---
-# We group routes by functionality for cleaner code
 app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])
 app.include_router(users.router, prefix="/api/users", tags=["Users"])
 app.include_router(players.router, prefix="/api/players", tags=["Players"])
@@ -61,6 +57,7 @@ app.include_router(dartboards.router, prefix="/api/dartboards", tags=["Dartboard
 # WebSocket router for real-time logs
 # Note: The frontend will connect via ws://localhost:8000/ws/logs
 app.include_router(websockets.router, prefix="/ws", tags=["WebSockets"])
+app.include_router(dartboards.router, prefix="/api/dartboards", tags=["Dartboards"])
 
 # --- Root Endpoint (Health Check) ---
 @app.get("/")
@@ -68,5 +65,5 @@ def read_root():
     return {
         "status": "online",
         "message": "Dart Tournament Manager API is running",
-        "docs_url": "/docs"  # Hint for the developer
+        "docs_url": "/docs" 
     }

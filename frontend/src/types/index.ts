@@ -1,5 +1,3 @@
-// This file defines the shape of our data so TypeScript can help us catch errors.
-
 export interface User {
   id: number;
   email: string;
@@ -10,10 +8,16 @@ export interface User {
 export interface Player {
   id: number;
   first_name: string;
-  last_name?: string; // The '?' means it is optional
+  last_name?: string;
   nickname?: string;
   email?: string;
-  name: string;       // This is the formatted name from the backend (e.g. 'Luke "The Nuke" Littler')
+  name: string;
+}
+
+export interface Dartboard {
+  id: number;
+  name: string;
+  number: number;
 }
 
 export interface Tournament {
