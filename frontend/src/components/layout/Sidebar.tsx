@@ -1,6 +1,6 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
-import { LayoutDashboard, Users, Trophy, LogOut, Activity } from 'lucide-react';
+import { LayoutDashboard, Users, Trophy, LogOut, Activity, Target } from 'lucide-react';
 
 const Sidebar = () => {
   const { logout, user } = useAuth();
@@ -15,6 +15,8 @@ const Sidebar = () => {
   const menuItems = [
     { icon: LayoutDashboard, label: 'Dashboard', path: '/dashboard' },
     { icon: Users, label: 'Manage Players', path: '/dashboard/players' },
+    // 2. ADD THIS BLOCK
+    { icon: Target, label: 'Manage Boards', path: '/dashboard/boards' }, 
     { icon: Trophy, label: 'Create Tournament', path: '/dashboard/create-tournament' },
     { icon: Activity, label: 'System Logs', path: '/dashboard/logs' },
   ];
@@ -23,7 +25,10 @@ const Sidebar = () => {
     <div className="bg-slate-900 text-white w-64 min-h-screen flex flex-col">
       <div className="p-6 border-b border-slate-700">
         <h1 className="text-2xl font-bold text-blue-400">Dart Manager</h1>
-        <p className="text-xs text-slate-400 mt-1">Logged in as: {user?.username}</p>
+        {/* Updated to use first_name since we deleted username */}
+        <p className="text-xs text-slate-400 mt-1">
+          Logged in as: {user?.first_name || 'Admin'}
+        </p>
       </div>
 
       <nav className="flex-1 p-4">

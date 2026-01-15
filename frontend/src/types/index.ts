@@ -1,5 +1,3 @@
-// This file defines the shape of our data so TypeScript can help us catch errors.
-
 export interface User {
   id: number;
   email: string;
@@ -10,18 +8,26 @@ export interface User {
 export interface Player {
   id: number;
   first_name: string;
-  last_name?: string; // The '?' means it is optional
+  last_name?: string;
   nickname?: string;
   email?: string;
-  name: string;       // This is the formatted name from the backend (e.g. 'Luke "The Nuke" Littler')
+  name: string;
+}
+
+export interface Dartboard {
+  id: number;
+  name: string;
+  number: number;
 }
 
 export interface Tournament {
   id: number;
   name: string;
   date: string;
-  status: string; // 'draft', 'active', 'completed'
-  public_uuid?: string;
+  number_of_poules: number;
+  status: string;
+  public_uuid: string;
+  scorer_uuid: string;
+  player_count?: number;
+  board_count?: number;
 }
-
-// We will add 'Match' and 'Leg' definitions here later when we build the scoreboard!

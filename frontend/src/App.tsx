@@ -9,6 +9,7 @@ import Register from './pages/auth/Register'; // <--- Added this
 import ManagePlayers from './pages/admin/ManagePlayers';
 import CreateTournament from './pages/admin/CreateTournament';
 import SystemLogs from './pages/admin/SystemLogs';
+import ManageBoards from './pages/admin/ManageBoards';
 
 // Public Pages
 import TournamentView from './pages/public/TournamentView';
@@ -45,6 +46,7 @@ function App() {
           <Route path="/dashboard/players" element={<ManagePlayers />} />
           <Route path="/dashboard/create-tournament" element={<CreateTournament />} />
           <Route path="/dashboard/logs" element={<SystemLogs />} />
+          <Route path="/dashboard/boards" element={<ManageBoards />} />
 
           {/* Scorer Routes (Tablet View) */}
           <Route path="/board/:scorer_uuid" element={<ScorerMatchList />} />
