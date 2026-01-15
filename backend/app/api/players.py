@@ -1,28 +1,30 @@
 from typing import List
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
 
 from app.db.session import get_session
 from app.models.player import Player
 from app.schemas.player import PlayerCreate, PlayerRead
+
+# --- THE FIX IS HERE ---
+# We import from 'users', not 'auth'
+from app.api.users import get_current_user 
 from app.models.user import User
-from app.api.users import get_current_user
 
 router = APIRouter()
 
-@router.post("/", response_model=PlayerRead, status_code=status.HTTP_201_CREATED)
+@router.post("/", response_model=PlayerRead)
 def create_player(
     player_in: PlayerCreate,
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user)
 ):
-    """
-    Create a new player assigned to the currently logged-in user.
-    """
-    # Create the DB model instance
     player = Player(
-        name=player_in.name,
-        user_id=current_user.id  # Automatically link to the logged-in user
+        first_name=player_in.first_name,
+        last_name=player_in.last_name,
+        nickname=player_in.nickname,
+        email=player_in.email,
+        # user_id=current_user.id (Uncomment if you want to link players to the admin who created them)
     )
     
     session.add(player)
@@ -32,38 +34,25 @@ def create_player(
 
 @router.get("/", response_model=List[PlayerRead])
 def read_players(
+    skip: int = 0,
+    limit: int = 100,
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user)
 ):
-    """
-    Get all players belonging to the current user.
-    """
-    statement = select(Player).where(Player.user_id == current_user.id)
-    results = session.exec(statement)
-    return results.all()
+    statement = select(Player).offset(skip).limit(limit)
+    players = session.exec(statement).all()
+    return players
 
-@router.delete("/{player_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{player_id}")
 def delete_player(
     player_id: int,
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user)
 ):
-    """
-    Delete a player. 
-    Strictly checks that the player belongs to the current user before deleting.
-    """
-    statement = select(Player).where(Player.id == player_id)
-    player = session.exec(statement).first()
-    
+    player = session.get(Player, player_id)
     if not player:
         raise HTTPException(status_code=404, detail="Player not found")
         
-    if player.user_id != current_user.id:
-        raise HTTPException(
-            status_code=403, 
-            detail="Not authorized to delete this player"
-        )
-        
     session.delete(player)
     session.commit()
-    return None
+    return {"ok": True}

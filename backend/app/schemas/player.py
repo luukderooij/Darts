@@ -1,15 +1,22 @@
 from typing import Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr, field_validator
 
-# What the user sends to create a player
-class PlayerCreate(BaseModel):
-    name: str
+class PlayerBase(BaseModel):
+    first_name: str
+    last_name: Optional[str] = None
+    nickname: Optional[str] = None
+    email: Optional[EmailStr] = None
 
-# What the API returns to the user
-class PlayerRead(BaseModel):
+class PlayerCreate(PlayerBase):
+    # This magic function converts empty strings "" into None (null)
+    # automatically, preventing validation errors.
+    @field_validator('email', 'nickname', 'last_name', mode='before')
+    @classmethod
+    def empty_to_none(cls, v):
+        if v == "":
+            return None
+        return v
+
+class PlayerRead(PlayerBase):
     id: int
     name: str
-    
-    class Config:
-        # Tells Pydantic to read data even if it's not a dict, but an ORM model
-        from_attributes = True
