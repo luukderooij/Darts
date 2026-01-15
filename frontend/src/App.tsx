@@ -3,13 +3,15 @@ import { AuthProvider } from './context/AuthContext';
 
 // Auth Pages
 import Login from './pages/auth/Login';
-import Register from './pages/auth/Register'; // <--- Added this
+import Register from './pages/auth/Register';
 
 // Admin Pages
 import ManagePlayers from './pages/admin/ManagePlayers';
 import CreateTournament from './pages/admin/CreateTournament';
 import SystemLogs from './pages/admin/SystemLogs';
 import ManageBoards from './pages/admin/ManageBoards';
+// This is the real file we want to use!
+import Dashboard from './pages/admin/Dashboard';
 
 // Public Pages
 import TournamentView from './pages/public/TournamentView';
@@ -18,17 +20,6 @@ import TournamentView from './pages/public/TournamentView';
 import ScorerMatchList from './pages/scorer/MatchList';
 import Scoreboard from './pages/scorer/Scoreboard';
 
-// Components
-import AdminLayout from './components/layout/AdminLayout';
-
-// Simple placeholder for the Dashboard Home
-const DashboardHome = () => (
-  <AdminLayout>
-    <h2 className="text-3xl font-bold text-gray-800">Welcome Back</h2>
-    <p className="text-gray-600 mt-2">Select an option from the sidebar to get started.</p>
-  </AdminLayout>
-);
-
 function App() {
   return (
     <AuthProvider>
@@ -36,13 +27,15 @@ function App() {
         <Routes>
           {/* Auth Routes */}
           <Route path="/login" element={<Login />} />
-          <Route path="/register" element={<Register />} /> {/* <--- Added this */}
+          <Route path="/register" element={<Register />} />
           
           {/* Public Routes (No Login Required) */}
           <Route path="/t/:public_uuid" element={<TournamentView />} />
 
           {/* Admin Routes */}
-          <Route path="/dashboard" element={<DashboardHome />} />
+          {/* FIX: Use 'Dashboard', not 'DashboardHome' */}
+          <Route path="/dashboard" element={<Dashboard />} />
+          
           <Route path="/dashboard/players" element={<ManagePlayers />} />
           <Route path="/dashboard/create-tournament" element={<CreateTournament />} />
           <Route path="/dashboard/logs" element={<SystemLogs />} />
