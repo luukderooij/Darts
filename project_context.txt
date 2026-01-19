@@ -1,0 +1,3175 @@
+
+==================================================
+FILE: backend/app\main.py
+==================================================
+
+from contextlib import asynccontextmanager
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+# Import core settings and database logic
+from app.core.config import settings
+from app.db.session import init_db
+
+# Import API route modules
+from app.api import auth, users, players, tournaments, matches, websockets, dartboards
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Lifespan context manager for handling startup and shutdown events.
+    """
+    # --- Startup ---
+    print("Starting up Dart Tournament Manager...")
+    init_db()
+    
+    yield
+    
+    # --- Shutdown ---
+    print("Shutting down...")
+
+app = FastAPI(
+    title="Dart Tournament Manager API",
+    description="Backend for managing dart tournaments, players, and real-time scores.",
+    version="1.0.0",
+    lifespan=lifespan
+)
+
+# --- CORS Configuration ---
+origins = [
+    "http://localhost:5173",
+    "http://localhost:3000",
+    "http://127.0.0.1:5173",
+    "*" 
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# --- Register Routers ---
+app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])
+app.include_router(users.router, prefix="/api/users", tags=["Users"])
+app.include_router(players.router, prefix="/api/players", tags=["Players"])
+app.include_router(tournaments.router, prefix="/api/tournaments", tags=["Tournaments"])
+app.include_router(matches.router, prefix="/api/matches", tags=["Matches"])
+app.include_router(dartboards.router, prefix="/api/dartboards", tags=["Dartboards"])
+
+# WebSocket router for real-time logs
+# Note: The frontend will connect via ws://localhost:8000/ws/logs
+app.include_router(websockets.router, prefix="/ws", tags=["WebSockets"])
+app.include_router(dartboards.router, prefix="/api/dartboards", tags=["Dartboards"])
+
+# --- Root Endpoint (Health Check) ---
+@app.get("/")
+def read_root():
+    return {
+        "status": "online",
+        "message": "Dart Tournament Manager API is running",
+        "docs_url": "/docs" 
+    }
+
+==================================================
+FILE: backend/app\__init__.py
+==================================================
+
+__version__ = "0.0.1"
+
+==================================================
+FILE: backend/app\api\auth.py
+==================================================
+
+from datetime import timedelta
+from typing import Annotated
+from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordRequestForm
+from sqlmodel import Session, select
+
+from app.db.session import get_session
+from app.core.security import (
+    create_access_token,
+    get_password_hash,
+    verify_password,
+    ACCESS_TOKEN_EXPIRE_MINUTES
+)
+from app.models.user import User
+from app.schemas.user import UserCreate, UserRead
+from app.schemas.token import Token
+
+router = APIRouter()
+
+# --- Helper Function ---
+def authenticate_user(session: Session, email: str, password: str):
+    # We look up the user by EMAIL
+    statement = select(User).where(User.email == email)
+    user = session.exec(statement).first()
+    if not user:
+        return False
+    if not verify_password(password, user.hashed_password):
+        return False
+    return user
+
+# --- Endpoints ---
+
+@router.post("/login", response_model=Token)
+def login_for_access_token(
+    form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
+    session: Session = Depends(get_session)
+):
+    # Note: OAuth2PasswordRequestForm always has a field named 'username'.
+    # We are using that field to carry the 'email' address.
+    user = authenticate_user(session, form_data.username, form_data.password)
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect email or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+        
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    
+    # We store the EMAIL in the 'sub' (subject) of the token
+    access_token = create_access_token(
+        data={"sub": user.email}, 
+        expires_delta=access_token_expires
+    )
+    
+    return {"access_token": access_token, "token_type": "bearer"}
+
+@router.post("/register", response_model=UserRead)
+def register_user(user_in: UserCreate, session: Session = Depends(get_session)):
+    # 1. Check if email already exists
+    existing_user = session.exec(select(User).where(User.email == user_in.email)).first()
+    if existing_user:
+        raise HTTPException(
+            status_code=400, 
+            detail="Email already registered"
+        )
+    
+    # 2. Create new user
+    user = User(
+        first_name=user_in.first_name,
+        last_name=user_in.last_name,
+        email=user_in.email,
+        hashed_password=get_password_hash(user_in.password)
+    )
+    
+    session.add(user)
+    session.commit()
+    session.refresh(user)
+    
+    return user
+
+==================================================
+FILE: backend/app\api\dartboards.py
+==================================================
+
+from typing import List
+from fastapi import APIRouter, Depends, HTTPException
+from sqlmodel import Session, select
+
+from app.db.session import get_session
+from app.models.dartboard import Dartboard
+from app.schemas.dartboard import DartboardCreate, DartboardRead
+from app.api.users import get_current_user # Auth check
+
+router = APIRouter()
+
+@router.post("/", response_model=DartboardRead)
+def create_board(
+    board_in: DartboardCreate,
+    session: Session = Depends(get_session),
+    current_user = Depends(get_current_user)
+):
+    board = Dartboard(name=board_in.name, number=board_in.number)
+    session.add(board)
+    session.commit()
+    session.refresh(board)
+    return board
+
+@router.get("/", response_model=List[DartboardRead])
+def read_boards(
+    session: Session = Depends(get_session),
+    current_user = Depends(get_current_user)
+):
+    # Sort by number automatically (1, 2, 3...)
+    statement = select(Dartboard).order_by(Dartboard.number)
+    boards = session.exec(statement).all()
+    return boards
+
+@router.delete("/{board_id}")
+def delete_board(
+    board_id: int,
+    session: Session = Depends(get_session),
+    current_user = Depends(get_current_user)
+):
+    board = session.get(Dartboard, board_id)
+    if not board:
+        raise HTTPException(status_code=404, detail="Board not found")
+    session.delete(board)
+    session.commit()
+    return {"ok": True}
+
+==================================================
+FILE: backend/app\api\matches.py
+==================================================
+
+import logging
+from typing import List, Optional
+from fastapi import APIRouter, Depends, HTTPException, status, Header
+from sqlmodel import Session, select
+
+from app.db.session import get_session
+from app.models.match import Match
+from app.models.player import Player
+from app.models.tournament import Tournament
+from app.models.user import User
+from app.schemas.match import MatchRead, MatchScoreUpdate
+from app.api.users import get_current_user
+
+logger = logging.getLogger("dart_app")
+
+router = APIRouter()
+
+# --- Helpers ---
+
+def get_match_or_404(match_id: int, session: Session) -> Match:
+    match = session.get(Match, match_id)
+    if not match:
+        raise HTTPException(status_code=404, detail="Match not found")
+    return match
+
+# --- Endpoints ---
+
+@router.put("/{match_id}/score", response_model=MatchRead)
+def update_match_score(
+    match_id: int,
+    score_in: MatchScoreUpdate,
+    current_user: Optional[User] = Depends(get_current_user), 
+    x_scorer_token: Optional[str] = Header(None, alias="X-Scorer-Token"),
+    session: Session = Depends(get_session)
+):
+    match = get_match_or_404(match_id, session)
+    tournament = session.get(Tournament, match.tournament_id)
+    
+    # Auth Logic
+    is_authorized = False
+    if current_user and tournament.user_id == current_user.id:
+        is_authorized = True
+    if not is_authorized and x_scorer_token:
+        if x_scorer_token == tournament.scorer_uuid:
+            is_authorized = True
+            
+    if not is_authorized:
+        raise HTTPException(status_code=403, detail="Not authorized.")
+
+    # Update
+    match.score_p1 = score_in.score_p1
+    match.score_p2 = score_in.score_p2
+    match.is_completed = score_in.is_completed
+    
+    session.add(match)
+    session.commit()
+    session.refresh(match)
+    
+    # Logging
+    logger.info(f"MATCH {match.id}: {match.score_p1} - {match.score_p2}")
+    
+    # Return with names (simple fetch for single update)
+    p1 = session.get(Player, match.player1_id) if match.player1_id else None
+    p2 = session.get(Player, match.player2_id) if match.player2_id else None
+    
+    # Convert to dictionary and add names manually
+    match_dict = match.model_dump()
+    match_dict['player1_name'] = p1.name if p1 else "Bye"
+    match_dict['player2_name'] = p2.name if p2 else "Bye"
+
+    return match_dict
+
+@router.get("/by-tournament/{public_uuid}", response_model=List[MatchRead])
+def get_matches_public(
+    public_uuid: str,
+    session: Session = Depends(get_session)
+):
+    # 1. Resolve Tournament
+    statement = select(Tournament).where(Tournament.public_uuid == public_uuid)
+    tournament = session.exec(statement).first()
+    
+    if not tournament:
+        # Check scorer UUID too
+        statement_scorer = select(Tournament).where(Tournament.scorer_uuid == public_uuid)
+        tournament = session.exec(statement_scorer).first()
+        
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+        
+    # 2. Get Matches
+    statement_matches = select(Match).where(Match.tournament_id == tournament.id).order_by(Match.id)
+    matches = session.exec(statement_matches).all()
+    
+    # 3. Bulk Fetch Player Names
+    player_ids = set()
+    for m in matches:
+        if m.player1_id: player_ids.add(m.player1_id)
+        if m.player2_id: player_ids.add(m.player2_id)
+        
+    players = session.exec(select(Player).where(Player.id.in_(player_ids))).all()
+    player_map = {p.id: p.name for p in players}
+    
+    # 4. Attach names to response
+    results = []
+    for m in matches:
+        # Convert the SQLModel to a dict so we can add extra fields
+        m_data = m.model_dump()
+        m_data['player1_name'] = player_map.get(m.player1_id, "Bye")
+        m_data['player2_name'] = player_map.get(m.player2_id, "Bye")
+        results.append(m_data)
+        
+    return results
+
+==================================================
+FILE: backend/app\api\players.py
+==================================================
+
+from typing import List
+from fastapi import APIRouter, Depends, HTTPException
+from sqlmodel import Session, select
+
+from app.db.session import get_session
+from app.models.player import Player
+from app.schemas.player import PlayerCreate, PlayerRead
+
+# --- THE FIX IS HERE ---
+# We import from 'users', not 'auth'
+from app.api.users import get_current_user 
+from app.models.user import User
+
+router = APIRouter()
+
+@router.post("/", response_model=PlayerRead)
+def create_player(
+    player_in: PlayerCreate,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user)
+):
+    player = Player(
+        first_name=player_in.first_name,
+        last_name=player_in.last_name,
+        nickname=player_in.nickname,
+        email=player_in.email,
+        # user_id=current_user.id (Uncomment if you want to link players to the admin who created them)
+    )
+    
+    session.add(player)
+    session.commit()
+    session.refresh(player)
+    return player
+
+@router.get("/", response_model=List[PlayerRead])
+def read_players(
+    skip: int = 0,
+    limit: int = 100,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user)
+):
+    statement = select(Player).offset(skip).limit(limit)
+    players = session.exec(statement).all()
+    return players
+
+@router.delete("/{player_id}")
+def delete_player(
+    player_id: int,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user)
+):
+    player = session.get(Player, player_id)
+    if not player:
+        raise HTTPException(status_code=404, detail="Player not found")
+        
+    session.delete(player)
+    session.commit()
+    return {"ok": True}
+
+==================================================
+FILE: backend/app\api\tournaments.py
+==================================================
+
+from typing import List, Any, Dict
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlmodel import Session, select
+from sqlalchemy.orm import selectinload
+import uuid
+
+from app.db.session import get_session
+from app.models.tournament import Tournament
+from app.models.player import Player
+from app.models.match import Match
+from app.models.user import User
+from app.models.dartboard import Dartboard
+from app.api.users import get_current_user
+from app.schemas.tournament import TournamentCreate, TournamentRead
+from app.services.tournament_gen import generate_round_robin_global, generate_knockout, generate_poule_phase
+
+router = APIRouter()
+
+@router.post("/", response_model=TournamentRead)
+def create_tournament(
+    tourn_in: TournamentCreate,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user)
+):
+    # 1. Verify Players
+    players_to_link = []
+    for pid in tourn_in.player_ids:
+        p = session.get(Player, pid)
+        if not p:
+            raise HTTPException(status_code=400, detail=f"Invalid player ID: {pid}")
+        players_to_link.append(p)
+        
+    if len(players_to_link) < 2:
+        raise HTTPException(status_code=400, detail="Need at least 2 players")
+
+    # 2. Verify Boards
+    boards_to_link = []
+    for bid in tourn_in.board_ids:
+        b = session.get(Dartboard, bid)
+        if b:
+            boards_to_link.append(b)
+
+    if len(boards_to_link) == 0:
+        raise HTTPException(status_code=400, detail="Need at least 1 board")
+
+    # 3. Create Tournament Record
+    tournament = Tournament(
+        name=tourn_in.name,
+        date=tourn_in.date,
+        number_of_poules=tourn_in.number_of_poules,
+        qualifiers_per_poule=tourn_in.qualifiers_per_poule, # NIEUW
+        format=tourn_in.format,
+        starting_legs_group=tourn_in.starting_legs_group,   # NIEUW
+        starting_legs_ko=tourn_in.starting_legs_ko,         # NIEUW
+        sets_per_match=tourn_in.sets_per_match,
+        user_id=current_user.id,
+        status="active",
+        public_uuid=str(uuid.uuid4()) 
+    )
+    
+    tournament.players = players_to_link
+    tournament.boards = boards_to_link
+
+    session.add(tournament)
+    session.commit()
+    session.refresh(tournament)
+    
+    # 4. Generate Matches based on Format
+    if tourn_in.format == "hybrid":
+        # Dit is de nieuwe standaard: Eerst poules
+        generate_poule_phase(
+            tournament.id, 
+            players_to_link, 
+            tourn_in.number_of_poules,
+            tourn_in.starting_legs_group, # Gebruik de Poule-settings
+            tourn_in.sets_per_match,
+            session
+        )
+        
+    elif tourn_in.format == "round_robin":
+        # Klassiek: alles in 1 groep
+        generate_round_robin_global(
+            tournament.id, 
+            players_to_link, 
+            tourn_in.starting_legs_group,
+            tourn_in.sets_per_match,
+            session
+        )
+        
+    elif tourn_in.format == "knockout":
+        # Direct naar KO
+        generate_knockout(
+            tournament.id, 
+            players_to_link, 
+            tourn_in.starting_legs_ko, # Gebruik de KO-settings
+            tourn_in.sets_per_match,
+            session
+        )
+        
+    return TournamentRead(
+        id=tournament.id,
+        name=tournament.name,
+        date=tournament.date,
+        number_of_poules=tournament.number_of_poules,
+        status=tournament.status,
+        format=tournament.format,
+        created_at=tournament.created_at,
+        public_uuid=tournament.public_uuid,
+        scorer_uuid=tournament.scorer_uuid,
+        player_count=len(tournament.players),
+        board_count=len(tournament.boards)
+    )
+
+@router.get("/", response_model=List[TournamentRead])
+def list_tournaments(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user)
+):
+    statement = select(Tournament).where(Tournament.user_id == current_user.id).options(
+        selectinload(Tournament.players), 
+        selectinload(Tournament.boards)
+    )
+    tournaments = session.exec(statement).all()
+    
+    results = []
+    for t in tournaments:
+        results.append(TournamentRead(
+            id=t.id,
+            name=t.name,
+            date=t.date,
+            number_of_poules=t.number_of_poules,
+            status=t.status,
+            format=t.format,
+            created_at=t.created_at,
+            public_uuid=t.public_uuid,
+            scorer_uuid=t.scorer_uuid,
+            player_count=len(t.players),
+            board_count=len(t.boards)
+        ))
+    return results
+
+@router.get("/public/{public_uuid}", response_model=Dict[str, Any])
+def get_public_tournament(public_uuid: str, session: Session = Depends(get_session)):
+    
+    statement = select(Tournament).where(Tournament.public_uuid == public_uuid).options(
+        selectinload(Tournament.players),
+        selectinload(Tournament.boards)
+    )
+    tournament = session.exec(statement).first()
+    
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+    
+    matches_statement = select(Match).where(Match.tournament_id == tournament.id).order_by(Match.id)
+    matches = session.exec(matches_statement).all()
+    
+    player_ids = set()
+    for m in matches:
+        if m.player1_id: player_ids.add(m.player1_id)
+        if m.player2_id: player_ids.add(m.player2_id)
+        
+    players = session.exec(select(Player).where(Player.id.in_(player_ids))).all()
+    player_map = {p.id: p.name for p in players}
+    
+    matches_data = []
+    for m in matches:
+        matches_data.append({
+            "id": m.id,
+            "round_number": m.round_number,
+            "poule_number": m.poule_number, # NIEUW: Frontend heeft dit nodig om te groeperen
+            "player1_name": player_map.get(m.player1_id, "Bye"),
+            "player2_name": player_map.get(m.player2_id, "Bye"),
+            "score_p1": m.score_p1,
+            "score_p2": m.score_p2,
+            "best_of_legs": m.best_of_legs, # NIEUW: Handig voor weergave (Bijv "First to 3")
+            "is_completed": m.is_completed
+        })
+
+    response_data = {
+        "id": tournament.id,
+        "name": tournament.name,
+        "date": tournament.date,
+        "number_of_poules": tournament.number_of_poules,
+        "status": tournament.status,
+        "format": tournament.format,
+        "created_at": tournament.created_at,
+        "public_uuid": tournament.public_uuid,
+        "scorer_uuid": tournament.scorer_uuid,
+        "matches": matches_data,
+        "player_count": len(tournament.players),
+        "board_count": len(tournament.boards)
+    }
+    
+    return response_data
+
+==================================================
+FILE: backend/app\api\users.py
+==================================================
+
+from typing import Annotated
+from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordBearer
+from jose import JWTError, jwt
+from sqlmodel import Session, select
+
+from app.db.session import get_session
+from app.models.user import User
+from app.core.security import SECRET_KEY, ALGORITHM
+from app.schemas.token import TokenData
+
+router = APIRouter()
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/auth/login")
+
+async def get_current_user(
+    token: Annotated[str, Depends(oauth2_scheme)],
+    session: Session = Depends(get_session)
+):
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        # We stored the email in the 'sub' field in auth.py
+        email: str = payload.get("sub")
+        if email is None:
+            raise credentials_exception
+        token_data = TokenData(email=email)
+    except JWTError:
+        raise credentials_exception
+        
+    # FIX: Look up by email, NOT username
+    statement = select(User).where(User.email == token_data.email)
+    user = session.exec(statement).first()
+    
+    if user is None:
+        raise credentials_exception
+    return user
+
+@router.get("/me", response_model=User)
+async def read_users_me(
+    current_user: Annotated[User, Depends(get_current_user)]
+):
+    return current_user
+
+==================================================
+FILE: backend/app\api\websockets.py
+==================================================
+
+import asyncio
+import logging
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from app.core.logging_config import log_buffer
+
+router = APIRouter()
+logger = logging.getLogger("dart_app")
+
+@router.websocket("/logs")
+async def websocket_endpoint(websocket: WebSocket):
+    await websocket.accept()
+    
+    # 1. Send existing logs immediately upon connection
+    # Convert deque to list so it is JSON serializable
+    await websocket.send_json(list(log_buffer))
+    
+    try:
+        while True:
+            # 2. Wait a bit (Poll)
+            # In a production app, we would use an event trigger, 
+            # but polling the buffer every 2 seconds is fine for this.
+            await asyncio.sleep(2)
+            
+            # Send the current buffer state
+            await websocket.send_json(list(log_buffer))
+            
+    except WebSocketDisconnect:
+        logger.info("Logs Client disconnected")
+
+==================================================
+FILE: backend/app\api\__init__.py
+==================================================
+
+from . import auth, users, players, tournaments, matches, websockets, dartboards
+
+==================================================
+FILE: backend/app\core\config.py
+==================================================
+
+from pydantic_settings import BaseSettings
+
+class Settings(BaseSettings):
+    # Application Info
+    PROJECT_NAME: str = "Dart Tournament Manager"
+    
+    # Database
+    # Default to SQLite for dev, but ready for Postgres
+    DATABASE_URL: str = "sqlite:///./darts.db"
+    
+    # Security
+    # In production, this should be a long, random string!
+    SECRET_KEY: str = "change_this_secret_in_production_9823749823"
+    ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440  # 24 hours
+
+    class Config:
+        case_sensitive = True
+        env_file = ".env"
+
+settings = Settings()
+
+==================================================
+FILE: backend/app\core\logging_config.py
+==================================================
+
+import logging
+import sys
+from collections import deque
+
+# 1. The Shared Buffer
+# This holds the last 100 log messages in memory.
+# It is exported so websockets.py can import it and send it to the frontend.
+log_buffer = deque(maxlen=100)
+
+class BufferHandler(logging.Handler):
+    """Custom handler that pushes logs into the deque."""
+    def emit(self, record):
+        try:
+            msg = self.format(record)
+            log_buffer.append(msg)
+        except Exception:
+            self.handleError(record)
+
+def setup_logging():
+    """Configures the logger to write to Console, File, and WebSocket Buffer."""
+    logger = logging.getLogger("dart_app")
+    logger.setLevel(logging.INFO)
+    
+    # Prevent adding handlers multiple times if the app reloads
+    if logger.hasHandlers():
+        return logger
+
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+
+    # A. Console Handler (Print to terminal)
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
+
+    # B. File Handler (Save to disk)
+    # The 'logs' folder was created by our structure script
+    try:
+        file_handler = logging.FileHandler("logs/app.log")
+        file_handler.setFormatter(formatter)
+        logger.addHandler(file_handler)
+    except FileNotFoundError:
+        print("Warning: logs directory not found. Skipping file logging.")
+
+    # C. Buffer Handler (For WebSockets)
+    buffer_handler = BufferHandler()
+    buffer_handler.setFormatter(formatter)
+    logger.addHandler(buffer_handler)
+
+    return logger
+
+# Initialize immediately so it runs on import
+logger = setup_logging()
+
+==================================================
+FILE: backend/app\core\security.py
+==================================================
+
+from datetime import datetime, timedelta
+from typing import Any, Union
+from jose import jwt
+from passlib.context import CryptContext
+
+# --- Configuration ---
+# In a real production app, you would load these from an environment variable
+SECRET_KEY = "CHANGE_THIS_TO_A_SECURE_RANDOM_STRING_IN_PRODUCTION"
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 30  # <--- This is the missing line causing your error!
+
+# --- Password Hashing Setup ---
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+def verify_password(plain_password, hashed_password):
+    return pwd_context.verify(plain_password, hashed_password)
+
+def get_password_hash(password):
+    return pwd_context.hash(password)
+
+# --- Token Generation ---
+def create_access_token(data: dict, expires_delta: Union[timedelta, None] = None):
+    to_encode = data.copy()
+    if expires_delta:
+        expire = datetime.utcnow() + expires_delta
+    else:
+        expire = datetime.utcnow() + timedelta(minutes=15)
+    
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return encoded_jwt
+
+==================================================
+FILE: backend/app\core\__init__.py
+==================================================
+
+
+
+==================================================
+FILE: backend/app\db\session.py
+==================================================
+
+from sqlmodel import SQLModel, create_engine, Session
+from app.core.config import settings
+
+# check_same_thread=False is needed only for SQLite
+connect_args = {"check_same_thread": False} if "sqlite" in settings.DATABASE_URL else {}
+
+engine = create_engine(
+    settings.DATABASE_URL, 
+    echo=True, # Set to False in production to reduce log noise
+    connect_args=connect_args
+)
+
+def init_db():
+    """
+    Creates all tables defined in SQLModel models.
+    Called during startup in main.py.
+    """
+    # Import ALL models here so SQLModel knows about them before creating tables
+    # --- FIX: Added 'dartboard' and 'links' to this list ---
+    from app.models import user, player, tournament, match, dartboard, links # noqa: F401
+    
+    SQLModel.metadata.create_all(engine)
+
+def get_session():
+    """
+    Dependency to be used in FastAPI endpoints.
+    Yields a database session and closes it automatically.
+    """
+    with Session(engine) as session:
+        yield session
+
+==================================================
+FILE: backend/app\db\__init__.py
+==================================================
+
+
+
+==================================================
+FILE: backend/app\models\dartboard.py
+==================================================
+
+from typing import Optional
+from sqlmodel import Field, SQLModel
+
+class Dartboard(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str  # e.g., "Main Stage"
+    number: int # e.g., 1
+
+==================================================
+FILE: backend/app\models\links.py
+==================================================
+
+from typing import Optional
+from sqlmodel import Field, SQLModel
+
+class TournamentPlayerLink(SQLModel, table=True):
+    tournament_id: Optional[int] = Field(default=None, foreign_key="tournament.id", primary_key=True)
+    player_id: Optional[int] = Field(default=None, foreign_key="player.id", primary_key=True)
+
+class TournamentBoardLink(SQLModel, table=True):
+    tournament_id: Optional[int] = Field(default=None, foreign_key="tournament.id", primary_key=True)
+    board_id: Optional[int] = Field(default=None, foreign_key="dartboard.id", primary_key=True)
+
+==================================================
+FILE: backend/app\models\match.py
+==================================================
+
+from typing import Optional
+from sqlmodel import SQLModel, Field, Relationship
+
+class Match(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    
+    # --- Structure info ---
+    round_number: int 
+    poule_number: Optional[int] = None # NIEUW: Als dit ingevuld is, is het een groepswedstrijd
+    board_number: Optional[int] = None 
+    
+    # --- Game Settings (Per match opgeslagen voor flexibiliteit) ---
+    best_of_legs: int = Field(default=5) # NIEUW: Bijv. "5" (betekent first to 3)
+    best_of_sets: int = Field(default=1) # NIEUW
+    
+    # --- Status ---
+    is_completed: bool = False
+    
+    # --- Scores ---
+    score_p1: int = 0
+    score_p2: int = 0
+    
+    # --- Relationships ---
+    tournament_id: int = Field(foreign_key="tournament.id")
+    tournament: Optional["Tournament"] = Relationship(back_populates="matches")
+    
+    player1_id: Optional[int] = Field(foreign_key="player.id")
+    player2_id: Optional[int] = Field(foreign_key="player.id")
+
+==================================================
+FILE: backend/app\models\player.py
+==================================================
+
+from typing import Optional
+from sqlmodel import Field, SQLModel, Relationship
+
+class Player(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    
+    first_name: str
+    last_name: Optional[str] = None
+    nickname: Optional[str] = None
+    email: Optional[str] = None # We keep this loose as a string in the DB
+    
+    user_id: Optional[int] = Field(default=None, foreign_key="user.id")
+    user: Optional["User"] = Relationship(back_populates="players")
+
+    @property
+    def name(self) -> str:
+        full_name = self.first_name
+        if self.nickname:
+            full_name += f' "{self.nickname}"'
+        if self.last_name:
+            full_name += f" {self.last_name}"
+        return full_name
+
+==================================================
+FILE: backend/app\models\tournament.py
+==================================================
+
+import uuid
+from typing import Optional, List
+from sqlmodel import SQLModel, Field, Relationship
+from datetime import datetime
+from app.models.links import TournamentPlayerLink, TournamentBoardLink
+
+class Tournament(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    # Default name logic wordt hieronder in de frontend afgevangen, maar backend fallback blijft handig
+    name: str = Field(default_factory=lambda: f"Toernooi {datetime.now().strftime('%Y-%m-%d')}")
+    date: str 
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    status: str = Field(default="draft") # draft, active, knockout_ready, finished
+    
+    # --- Format Settings ---
+    # We maken 'hybrid' de standaard.
+    format: str = Field(default="hybrid") 
+    
+    number_of_poules: int = Field(default=1)
+    
+    # NIEUW: Hoeveel spelers gaan er per poule door naar de KO?
+    qualifiers_per_poule: int = Field(default=2) 
+    
+    # --- Game Settings (Best of X) ---
+    # We splitsen de lengte op voor poule en knockout. 
+    # Dit zijn de 'default' waarden voor die fase. 
+    # (Specifieke finales kunnen we later in de 'Match' tabel overschrijven).
+    starting_legs_group: int = Field(default=3) # Bijv. Best of 3
+    starting_legs_ko: int = Field(default=3)    # Bijv. Best of 3
+    
+    # Sets laten we voor nu even generiek, tenzij je ook sets per fase wilt?
+    sets_per_match: int = Field(default=1)
+    
+    # --- Access Control ---
+    public_uuid: str = Field(default_factory=lambda: str(uuid.uuid4()), index=True, unique=True)
+    scorer_uuid: str = Field(default_factory=lambda: str(uuid.uuid4()), index=True, unique=True)
+    
+    # --- Ownership ---
+    user_id: Optional[int] = Field(default=None, foreign_key="user.id")
+    user: Optional["User"] = Relationship(back_populates="tournaments")
+    
+    # --- Relationships ---
+    players: List["Player"] = Relationship(back_populates=None, link_model=TournamentPlayerLink)
+    boards: List["Dartboard"] = Relationship(back_populates=None, link_model=TournamentBoardLink)
+    matches: List["Match"] = Relationship(back_populates="tournament")
+
+==================================================
+FILE: backend/app\models\user.py
+==================================================
+
+from typing import Optional
+from sqlmodel import Field, SQLModel, Relationship
+
+class User(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    
+    first_name: str
+    last_name: str
+    email: str = Field(unique=True, index=True)
+    
+    hashed_password: str
+
+    players: list["Player"] = Relationship(back_populates="user")
+    tournaments: list["Tournament"] = Relationship(back_populates="user")
+
+==================================================
+FILE: backend/app\models\__init__.py
+==================================================
+
+from .user import User
+from .player import Player
+from .tournament import Tournament
+from .match import Match
+
+==================================================
+FILE: backend/app\schemas\auth.py
+==================================================
+
+from typing import Optional
+from pydantic import BaseModel
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
+class TokenData(BaseModel):
+    username: Optional[str] = None
+
+class UserCreate(BaseModel):
+    username: str
+    password: str
+
+class UserRead(BaseModel):
+    id: int
+    username: str
+
+==================================================
+FILE: backend/app\schemas\dartboard.py
+==================================================
+
+from pydantic import BaseModel
+
+class DartboardBase(BaseModel):
+    name: str
+    number: int
+
+class DartboardCreate(DartboardBase):
+    pass
+
+class DartboardRead(DartboardBase):
+    id: int
+
+==================================================
+FILE: backend/app\schemas\match.py
+==================================================
+
+from typing import Optional
+from pydantic import BaseModel
+
+class MatchScoreUpdate(BaseModel):
+    score_p1: int
+    score_p2: int
+    is_completed: bool = False
+
+class MatchRead(BaseModel):
+    id: int
+    tournament_id: int
+    round_number: int
+    player1_id: Optional[int]
+    player2_id: Optional[int]
+    player1_name: Optional[str] = "Bye"
+    player2_name: Optional[str] = "Bye"
+    
+    score_p1: int
+    score_p2: int
+    is_completed: bool
+    
+    class Config:
+        from_attributes = True
+
+==================================================
+FILE: backend/app\schemas\player.py
+==================================================
+
+from typing import Optional
+from pydantic import BaseModel, EmailStr, field_validator
+
+class PlayerBase(BaseModel):
+    first_name: str
+    last_name: Optional[str] = None
+    nickname: Optional[str] = None
+    email: Optional[EmailStr] = None
+
+class PlayerCreate(PlayerBase):
+    # This magic function converts empty strings "" into None (null)
+    # automatically, preventing validation errors.
+    @field_validator('email', 'nickname', 'last_name', mode='before')
+    @classmethod
+    def empty_to_none(cls, v):
+        if v == "":
+            return None
+        return v
+
+class PlayerRead(PlayerBase):
+    id: int
+    name: str
+
+==================================================
+FILE: backend/app\schemas\token.py
+==================================================
+
+from typing import Optional
+from pydantic import BaseModel
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
+class TokenData(BaseModel):
+    email: Optional[str] = None
+
+==================================================
+FILE: backend/app\schemas\tournament.py
+==================================================
+
+from typing import List, Optional
+from pydantic import BaseModel
+from datetime import datetime
+
+# --- Input Schema (Create) ---
+class TournamentCreate(BaseModel):
+    name: str
+    date: str  
+    number_of_poules: int = 1  
+    format: str = "round_robin"
+    legs_per_match: int = 5
+    sets_per_match: int = 1
+    
+    # Selection Lists
+    player_ids: List[int]
+    board_ids: List[int]  
+
+# --- Output Schema (Read) ---
+class TournamentRead(BaseModel):
+    id: int
+    name: str
+    date: str 
+    status: str
+    format: str
+    number_of_poules: int  
+    created_at: datetime
+    public_uuid: str
+    scorer_uuid: str
+    
+    # Helper counts for the dashboard
+    player_count: int = 0
+    board_count: int = 0
+    
+    class Config:
+        from_attributes = True
+
+# --- Detailed View (Public Page) ---
+# We keep this exactly as you had it so the public page doesn't break
+class MatchReadSimple(BaseModel):
+    id: int
+    round_number: int
+    player1_name: Optional[str] = None
+    player2_name: Optional[str] = None
+    score_p1: int
+    score_p2: int
+    is_completed: bool
+
+class TournamentReadWithMatches(TournamentRead):
+    matches: List[MatchReadSimple] = []
+
+==================================================
+FILE: backend/app\schemas\user.py
+==================================================
+
+from typing import Optional
+from pydantic import BaseModel, EmailStr
+
+class UserCreate(BaseModel):
+    first_name: str
+    last_name: str
+    email: EmailStr
+    password: str  # No username here
+
+class UserRead(BaseModel):
+    id: int
+    first_name: str
+    last_name: str
+    email: str 
+    # No username here
+
+class UserUpdate(BaseModel):
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    email: Optional[EmailStr] = None
+
+==================================================
+FILE: backend/app\schemas\__init__.py
+==================================================
+
+
+
+==================================================
+FILE: backend/app\services\tournament_gen.py
+==================================================
+
+from typing import List
+import random
+from sqlmodel import Session
+from app.models.match import Match
+from app.models.player import Player
+
+def generate_poule_phase(
+    tournament_id: int,
+    players: List[Player],
+    num_poules: int,
+    legs_best_of: int,
+    sets_best_of: int,
+    session: Session
+):
+    """
+    Verdeelt spelers over N poules en genereert voor elke poule een Round Robin schema.
+    """
+    if len(players) < num_poules:
+        # Fallback: als er minder spelers zijn dan poules, stop alles in 1 poule
+        num_poules = 1
+
+    # 1. Spelers husselen voor willekeurige indeling
+    # (Later kunnen we hier 'seeding' logica toevoegen)
+    shuffled_players = list(players)
+    random.shuffle(shuffled_players)
+
+    # 2. Verdeel over poules (Modulo verdeling)
+    # Speler 0 -> Poule 1, Speler 1 -> Poule 2, Speler 2 -> Poule 1, etc.
+    poules_map = {i: [] for i in range(1, num_poules + 1)}
+    
+    for idx, player in enumerate(shuffled_players):
+        target_poule = (idx % num_poules) + 1
+        poules_map[target_poule].append(player)
+
+    # 3. Genereer wedstrijden per poule
+    matches_to_add = []
+    
+    for poule_num, pool_players in poules_map.items():
+        # Genereer matches voor deze specifieke groep
+        new_matches = _create_round_robin_matches(
+            tournament_id=tournament_id,
+            players=pool_players,
+            poule_number=poule_num,
+            legs=legs_best_of,
+            sets=sets_best_of
+        )
+        matches_to_add.extend(new_matches)
+
+    session.add_all(matches_to_add)
+    session.commit()
+
+
+def generate_round_robin_global(
+    tournament_id: int, 
+    players: List[Player], 
+    legs_best_of: int,
+    sets_best_of: int,
+    session: Session
+):
+    """
+    Oude functie voor puur Round Robin (alles in 1 grote groep zonder poule nummer).
+    """
+    matches = _create_round_robin_matches(tournament_id, players, None, legs_best_of, sets_best_of)
+    session.add_all(matches)
+    session.commit()
+
+
+def _create_round_robin_matches(
+    tournament_id: int, 
+    players: List[Player], 
+    poule_number: int | None,
+    legs: int,
+    sets: int
+) -> List[Match]:
+    """
+    Interne helper die de 'Circle Method' toepast op een gegeven lijst spelers.
+    """
+    matches = []
+    if len(players) < 2:
+        return matches
+
+    # Dummy toevoegen bij oneven aantal
+    rotation = list(players)
+    if len(rotation) % 2 != 0:
+        rotation.append(None)
+    
+    num_players = len(rotation)
+    num_rounds = num_players - 1
+    half = num_players // 2
+
+    for round_idx in range(num_rounds):
+        round_num = round_idx + 1
+        
+        for i in range(half):
+            p1 = rotation[i]
+            p2 = rotation[num_players - 1 - i]
+            
+            if p1 and p2:
+                match = Match(
+                    tournament_id=tournament_id,
+                    round_number=round_num,
+                    poule_number=poule_number, # Hier koppelen we de wedstrijd aan de poule
+                    player1_id=p1.id,
+                    player2_id=p2.id,
+                    best_of_legs=legs,
+                    best_of_sets=sets,
+                    is_completed=False
+                )
+                matches.append(match)
+
+        # Rotate (Speler op index 0 blijft staan, de rest draait)
+        rotation.insert(1, rotation.pop())
+    
+    return matches
+
+
+def generate_knockout(
+    tournament_id: int, 
+    players: List[Player], 
+    legs_best_of: int,
+    sets_best_of: int,
+    session: Session
+):
+    """
+    Simpele Direct Knockout generator (zonder poules vooraf).
+    """
+    import random
+    random.shuffle(players)
+    
+    n = len(players)
+    # Bracket size berekenen (macht van 2: 2, 4, 8, 16, 32...)
+    bracket_size = 1
+    while bracket_size < n:
+        bracket_size *= 2
+        
+    matches_to_add = []
+    round_num = 1
+    
+    # Simpele pairing 0 vs 1, 2 vs 3. 
+    # (In een perfect systeem handel je hier Byes af, voor nu skippen we dat voor eenvoud)
+    for i in range(0, n - 1, 2):
+        p1 = players[i]
+        p2 = players[i+1]
+        
+        match = Match(
+            tournament_id=tournament_id,
+            round_number=round_num,
+            player1_id=p1.id,
+            player2_id=p2.id,
+            best_of_legs=legs_best_of,
+            best_of_sets=sets_best_of
+        )
+        matches_to_add.append(match)
+        
+    session.add_all(matches_to_add)
+    session.commit()
+
+==================================================
+FILE: backend/app\services\__init__.py
+==================================================
+
+
+
+==================================================
+FILE: frontend/src\App.tsx
+==================================================
+
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { AuthProvider } from './context/AuthContext';
+
+// Auth Pages
+import Login from './pages/auth/Login';
+import Register from './pages/auth/Register';
+
+// Admin Pages
+import ManagePlayers from './pages/admin/ManagePlayers';
+import CreateTournament from './pages/admin/CreateTournament';
+import SystemLogs from './pages/admin/SystemLogs';
+import ManageBoards from './pages/admin/ManageBoards';
+// This is the real file we want to use!
+import Dashboard from './pages/admin/Dashboard';
+
+// Public Pages
+import TournamentView from './pages/public/TournamentView';
+
+// Scorer Pages
+import ScorerMatchList from './pages/scorer/MatchList';
+import Scoreboard from './pages/scorer/Scoreboard';
+
+function App() {
+  return (
+    <AuthProvider>
+      <BrowserRouter>
+        <Routes>
+          {/* Auth Routes */}
+          <Route path="/login" element={<Login />} />
+          <Route path="/register" element={<Register />} />
+          
+          {/* Public Routes (No Login Required) */}
+          <Route path="/t/:public_uuid" element={<TournamentView />} />
+
+          {/* Admin Routes */}
+          {/* FIX: Use 'Dashboard', not 'DashboardHome' */}
+          <Route path="/dashboard" element={<Dashboard />} />
+          
+          <Route path="/dashboard/players" element={<ManagePlayers />} />
+          <Route path="/dashboard/create-tournament" element={<CreateTournament />} />
+          <Route path="/dashboard/logs" element={<SystemLogs />} />
+          <Route path="/dashboard/boards" element={<ManageBoards />} />
+
+          {/* Scorer Routes (Tablet View) */}
+          <Route path="/board/:scorer_uuid" element={<ScorerMatchList />} />
+          <Route path="/board/:scorer_uuid/match/:match_id" element={<Scoreboard />} />
+
+          {/* Default Redirect */}
+          <Route path="/" element={<Navigate to="/dashboard" replace />} />
+        </Routes>
+      </BrowserRouter>
+    </AuthProvider>
+  );
+}
+
+export default App;
+
+==================================================
+FILE: frontend/src\index.css
+==================================================
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+==================================================
+FILE: frontend/src\main.tsx
+==================================================
+
+import React from 'react'
+import ReactDOM from 'react-dom/client'
+import App from './App.tsx'
+import './index.css'
+
+ReactDOM.createRoot(document.getElementById('root')!).render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>,
+)
+
+==================================================
+FILE: frontend/src\components\layout\AdminLayout.tsx
+==================================================
+
+import { ReactNode } from 'react';
+import Sidebar from './Sidebar';
+
+interface AdminLayoutProps {
+  children: ReactNode;
+}
+
+const AdminLayout = ({ children }: AdminLayoutProps) => {
+  return (
+    <div className="flex h-screen bg-gray-100">
+      <Sidebar />
+      <main className="flex-1 overflow-auto p-8">
+        {children}
+      </main>
+    </div>
+  );
+};
+
+export default AdminLayout;
+
+==================================================
+FILE: frontend/src\components\layout\Sidebar.tsx
+==================================================
+
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { useAuth } from '../../hooks/useAuth';
+// 1. Added 'Target' icon for the boards
+import { LayoutDashboard, Users, Trophy, LogOut, Activity, Target } from 'lucide-react';
+
+const Sidebar = () => {
+  const { logout, user } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  const handleLogout = () => {
+    logout();
+    navigate('/login');
+  };
+
+  // 2. Added 'Manage Boards' to the menu list
+  const menuItems = [
+    { icon: LayoutDashboard, label: 'Dashboard', path: '/dashboard' },
+    { icon: Users, label: 'Manage Players', path: '/dashboard/players' },
+    { icon: Target, label: 'Manage Boards', path: '/dashboard/boards' }, // <--- NEW LINK
+    { icon: Trophy, label: 'Create Tournament', path: '/dashboard/create-tournament' },
+    { icon: Activity, label: 'System Logs', path: '/dashboard/logs' },
+  ];
+
+  return (
+    <div className="bg-slate-900 text-white w-64 min-h-screen flex flex-col">
+      <div className="p-6 border-b border-slate-700">
+        <h1 className="text-2xl font-bold text-blue-400">Dart Manager</h1>
+        {/* 3. Fixed user display (username no longer exists) */}
+        <p className="text-xs text-slate-400 mt-1">
+           Logged in as: {user?.first_name || 'Admin'}
+        </p>
+      </div>
+
+      <nav className="flex-1 p-4">
+        <ul className="space-y-2">
+          {menuItems.map((item) => {
+            const Icon = item.icon;
+            const isActive = location.pathname === item.path;
+            return (
+              <li key={item.path}>
+                <Link
+                  to={item.path}
+                  className={`flex items-center space-x-3 p-3 rounded-lg transition-colors ${
+                    isActive 
+                      ? 'bg-blue-600 text-white' 
+                      : 'text-slate-300 hover:bg-slate-800'
+                  }`}
+                >
+                  <Icon size={20} />
+                  <span>{item.label}</span>
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
+      </nav>
+
+      <div className="p-4 border-t border-slate-700">
+        <button
+          onClick={handleLogout}
+          className="flex items-center space-x-3 text-red-400 hover:text-red-300 w-full p-3 hover:bg-slate-800 rounded-lg transition-colors"
+        >
+          <LogOut size={20} />
+          <span>Sign Out</span>
+        </button>
+      </div>
+    </div>
+  );
+};
+
+export default Sidebar;
+
+==================================================
+FILE: frontend/src\context\AuthContext.tsx
+==================================================
+
+import { createContext, useState, useEffect, ReactNode } from 'react';
+import api from '../services/api';
+
+// Define the shape of our User object (matches Python UserRead schema)
+interface User {
+  id: number;
+  username: string;
+}
+
+// Define what functions/data we want to expose to the app
+interface AuthContextType {
+  user: User | null;
+  login: (token: string) => void;
+  logout: () => void;
+  isLoading: boolean;
+}
+
+// Create the context (starts empty)
+export const AuthContext = createContext<AuthContextType | null>(null);
+
+// The Provider Component (wraps the whole app)
+export const AuthProvider = ({ children }: { children: ReactNode }) => {
+  const [user, setUser] = useState<User | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+
+  // This runs once when the app starts (like __init__)
+  useEffect(() => {
+    const initAuth = async () => {
+      const token = localStorage.getItem('token');
+      if (token) {
+        try {
+          // If we find a token, ask the backend "Who am I?"
+          const response = await api.get('/users/me');
+          setUser(response.data);
+        } catch (error) {
+          // If token is invalid/expired, clear it
+          console.error("Token invalid", error);
+          localStorage.removeItem('token');
+        }
+      }
+      setIsLoading(false);
+    };
+    initAuth();
+  }, []);
+
+  // Function to run when user logs in
+  const login = async (token: string) => {
+    localStorage.setItem('token', token); // Save to browser
+    try {
+      const response = await api.get('/users/me'); // Fetch user details
+      setUser(response.data);
+    } catch (error) {
+      console.error("Login failed fetching user", error);
+    }
+  };
+
+  // Function to run when user logs out
+  const logout = () => {
+    localStorage.removeItem('token');
+    setUser(null);
+  };
+
+  return (
+    <AuthContext.Provider value={{ user, login, logout, isLoading }}>
+      {children}
+    </AuthContext.Provider>
+  );
+};
+
+==================================================
+FILE: frontend/src\hooks\useAuth.ts
+==================================================
+
+import { useContext } from 'react';
+import { AuthContext } from '../context/AuthContext';
+
+export const useAuth = () => {
+  const context = useContext(AuthContext);
+  if (!context) {
+    throw new Error('useAuth must be used within an AuthProvider');
+  }
+  return context;
+};
+
+==================================================
+FILE: frontend/src\hooks\useWebSocket.ts
+==================================================
+
+
+
+==================================================
+FILE: frontend/src\pages\SystemLogs.tsx
+==================================================
+
+
+
+==================================================
+FILE: frontend/src\pages\admin\CreateTournament.tsx
+==================================================
+
+import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import api from '../../services/api';
+import AdminLayout from '../../components/layout/AdminLayout';
+import { Player, Dartboard } from '../../types';
+import { Trophy, AlertCircle, LayoutGrid, Users, Target, ArrowRight } from 'lucide-react';
+
+const CreateTournament = () => {
+  const navigate = useNavigate();
+  
+  // --- Data State ---
+  const [allPlayers, setAllPlayers] = useState<Player[]>([]);
+  const [allBoards, setAllBoards] = useState<Dartboard[]>([]);
+  const [loading, setLoading] = useState(true);
+  
+  // --- Selection State ---
+  const [selectedPlayerIds, setSelectedPlayerIds] = useState<number[]>([]);
+  const [selectedBoardIds, setSelectedBoardIds] = useState<number[]>([]);
+  
+  // --- Form State ---
+  // Standaard naam logica:
+  const defaultName = `Toernooi ${new Date().toLocaleDateString('nl-NL')}`;
+  const [name, setName] = useState(defaultName);
+  const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
+  
+  // Format settings
+  const [format, setFormat] = useState('hybrid'); // Standaard Hybrid
+  const [poules, setPoules] = useState(1);
+  const [qualifiersPerPoule, setQualifiersPerPoule] = useState(2); // Nieuw
+  
+  // Match length settings (Best of X)
+  const [groupLegs, setGroupLegs] = useState(3); // Best of 3
+  const [koLegs, setKoLegs] = useState(5);       // Knockout vaak langer (bijv. 5)
+  const [sets, setSets] = useState(1);
+  
+  const [error, setError] = useState<string | null>(null);
+
+  // --- Load Data ---
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        const [pRes, bRes] = await Promise.all([
+          api.get('/players/'),
+          api.get('/dartboards/')
+        ]);
+        setAllPlayers(pRes.data);
+        setAllBoards(bRes.data);
+      } catch (err) {
+        console.error(err);
+        setError("Kon data niet laden. Staat de backend aan?");
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchData();
+  }, []);
+
+  // --- Helpers ---
+  const togglePlayer = (id: number) => setSelectedPlayerIds(prev => prev.includes(id) ? prev.filter(p => p !== id) : [...prev, id]);
+  const toggleBoard = (id: number) => setSelectedBoardIds(prev => prev.includes(id) ? prev.filter(b => b !== id) : [...prev, id]);
+
+  // --- Submission ---
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+
+    // Validatie
+    if (selectedBoardIds.length === 0) {
+      setError("Selecteer minimaal 1 dartbord.");
+      window.scrollTo(0,0);
+      return;
+    }
+
+    // Minimaal aantal spelers check (globaal)
+    const totalQualifiers = poules * qualifiersPerPoule;
+    if (selectedPlayerIds.length < totalQualifiers) {
+       // Waarschuwing als er minder spelers zijn dan plekken in de KO
+       // (Technisch mag het, maar geeft rare byes in de poule fase)
+    }
+
+    try {
+        // Naam fallback als de gebruiker het leeg heeft gemaakt
+        const finalName = name.trim() === "" ? defaultName : name;
+
+        const payload = {
+            name: finalName,
+            date,
+            format,
+            number_of_poules: poules,
+            qualifiers_per_poule: qualifiersPerPoule,
+            starting_legs_group: groupLegs, // Mapping naar backend veld
+            starting_legs_ko: koLegs,       // Mapping naar backend veld
+            sets_per_match: sets,
+            player_ids: selectedPlayerIds,
+            board_ids: selectedBoardIds
+        };
+
+        await api.post('/tournaments/', payload);
+        navigate('/dashboard'); 
+    } catch (err) {
+      console.error(err);
+      setError("Er is iets misgegaan bij het aanmaken.");
+      window.scrollTo(0,0);
+    }
+  };
+
+  return (
+    <AdminLayout>
+      <div className="max-w-6xl mx-auto pb-20">
+        <h2 className="text-3xl font-bold text-gray-800 mb-6 flex items-center gap-2">
+          <Trophy className="text-yellow-500" /> Nieuw Toernooi
+        </h2>
+
+        {error && (
+          <div className="bg-red-50 text-red-600 p-4 rounded-lg mb-6 flex items-center gap-2 border border-red-200">
+            <AlertCircle size={20} /> <span className="font-medium">{error}</span>
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit} className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          
+          {/* --- SETTINGS KOLOM --- */}
+          <div className="lg:col-span-4 space-y-6">
+            
+            {/* Basis Info */}
+            <div className="bg-white p-5 rounded-lg shadow-sm border border-gray-100">
+              <h3 className="font-bold text-gray-700 mb-4 border-b pb-2">1. Algemeen</h3>
+              <div className="space-y-4">
+                <div>
+                  <label className="label">Toernooinaam</label>
+                  <input type="text" className="input-field" value={name} onChange={e => setName(e.target.value)} placeholder={defaultName} />
+                </div>
+                <div>
+                   <label className="label">Datum</label>
+                   <input type="date" required className="input-field" value={date} onChange={e => setDate(e.target.value)} />
+                </div>
+              </div>
+            </div>
+
+            {/* Spelformat */}
+            <div className="bg-white p-5 rounded-lg shadow-sm border border-gray-100">
+              <h3 className="font-bold text-gray-700 mb-4 border-b pb-2 flex items-center gap-2">
+                <LayoutGrid size={18} /> Format
+              </h3>
+              <div className="space-y-4">
+                <div>
+                   <label className="label">Toernooitype</label>
+                   <select className="input-field" value={format} onChange={e => setFormat(e.target.value)}>
+                     <option value="hybrid">Hybride (Poules + KO)</option>
+                     <option value="knockout">Direct Knockout</option>
+                     <option value="round_robin">Alleen Poules</option>
+                   </select>
+                </div>
+
+                {format === 'hybrid' && (
+                    <>
+                        <div className="grid grid-cols-2 gap-3">
+                            <div>
+                                <label className="label">Aantal Poules</label>
+                                <input type="number" min="1" max="16" className="input-field" 
+                                value={poules} onChange={e => setPoules(parseInt(e.target.value))} />
+                            </div>
+                            <div>
+                                <label className="label">Doorgaan per poule</label>
+                                <input type="number" min="1" max="8" className="input-field" 
+                                value={qualifiersPerPoule} onChange={e => setQualifiersPerPoule(parseInt(e.target.value))} />
+                            </div>
+                        </div>
+                        <p className="text-xs text-gray-500 mt-1">
+                            {poules * qualifiersPerPoule} spelers gaan door naar de Knockout fase.
+                        </p>
+                    </>
+                )}
+              </div>
+            </div>
+
+            {/* Wedstrijd Lengte */}
+            <div className="bg-white p-5 rounded-lg shadow-sm border border-gray-100">
+              <h3 className="font-bold text-gray-700 mb-4 border-b pb-2 flex items-center gap-2">
+                <Target size={18} /> Wedstrijd Lengte
+              </h3>
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-3">
+                    <div>
+                        <label className="label">Poules (Best of)</label>
+                        <input type="number" min="1" className="input-field" 
+                        value={groupLegs} onChange={e => setGroupLegs(Number(e.target.value))} />
+                    </div>
+                    <div>
+                        <label className="label">Knockout (Best of)</label>
+                        <input type="number" min="1" className="input-field" 
+                        value={koLegs} onChange={e => setKoLegs(Number(e.target.value))} />
+                    </div>
+                </div>
+                <p className="text-xs text-gray-400 italic">
+                    Je kunt de lengte van de finale later handmatig aanpassen in het schema.
+                </p>
+              </div>
+            </div>
+
+            {/* Borden Selectie (Verkort weergegeven voor overzicht) */}
+            <div className="bg-white p-5 rounded-lg shadow-sm border border-gray-100">
+                <div className="flex justify-between items-center mb-2">
+                    <h3 className="font-bold text-gray-700">2. Borden</h3>
+                    <span className="badge-blue">{selectedBoardIds.length}</span>
+                </div>
+                <div className="max-h-32 overflow-y-auto space-y-1">
+                    {allBoards.map(board => (
+                        <label key={board.id} className={`flex items-center p-2 rounded border cursor-pointer text-sm ${selectedBoardIds.includes(board.id) ? 'bg-blue-50 border-blue-500' : 'hover:bg-gray-50'}`}>
+                            <input type="checkbox" className="mr-2" checked={selectedBoardIds.includes(board.id)} onChange={() => toggleBoard(board.id)} />
+                            Bord {board.number}
+                        </label>
+                    ))}
+                </div>
+            </div>
+
+          </div>
+
+          {/* --- SPELERS KOLOM --- */}
+          <div className="lg:col-span-8 flex flex-col h-full">
+            <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-100 flex-1 flex flex-col">
+              <div className="flex justify-between items-center mb-4 border-b pb-2">
+                <h3 className="font-bold text-gray-700 flex items-center gap-2">
+                  <Users size={18} className="text-green-600"/> 3. Selecteer Spelers
+                </h3>
+                <span className={`text-xs px-3 py-1.5 rounded-full font-bold bg-green-100 text-green-700`}>
+                  Geselecteerd: {selectedPlayerIds.length}
+                </span>
+              </div>
+              
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 overflow-y-auto pr-2 max-h-[600px]">
+                {allPlayers.map(player => (
+                  <label key={player.id} className={`flex items-center p-2 rounded border cursor-pointer select-none text-sm transition-all ${
+                      selectedPlayerIds.includes(player.id) ? 'bg-green-50 border-green-500 shadow-sm' : 'hover:bg-gray-50 border-gray-200'
+                    }`}>
+                    <input type="checkbox" className="w-4 h-4 text-green-600 rounded accent-green-600"
+                      checked={selectedPlayerIds.includes(player.id)}
+                      onChange={() => togglePlayer(player.id)}
+                    />
+                    <div className="ml-2 font-medium text-gray-800 truncate">{player.name}</div>
+                  </label>
+                ))}
+              </div>
+
+              <div className="mt-6 pt-4 border-t">
+                 <button type="submit" disabled={loading} className="w-full bg-blue-600 text-white font-bold py-3 rounded-lg hover:bg-blue-700 transition shadow-lg flex justify-center items-center gap-2">
+                  <Trophy size={20} /> Toernooi Aanmaken
+                </button>
+              </div>
+            </div>
+          </div>
+
+        </form>
+      </div>
+    </AdminLayout>
+  );
+};
+
+// Kleine CSS helper classes voor herbruikbaarheid
+// (In een echt project zou je dit in index.css zetten of Tailwind @apply gebruiken)
+const css = `
+  .label { display: block; font-size: 0.75rem; font-weight: 700; color: #6b7280; text-transform: uppercase; margin-bottom: 0.25rem; }
+  .input-field { width: 100%; border: 1px solid #e5e7eb; border-radius: 0.25rem; padding: 0.5rem; font-size: 0.875rem; }
+  .badge-blue { font-size: 0.75rem; padding: 0.25rem 0.5rem; border-radius: 9999px; font-weight: 700; background-color: #dbeafe; color: #1d4ed8; }
+`;
+
+export default CreateTournament;
+
+==================================================
+FILE: frontend/src\pages\admin\Dashboard.tsx
+==================================================
+
+import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
+import api from '../../services/api';
+import AdminLayout from '../../components/layout/AdminLayout';
+import { Trophy, Calendar, Users, ExternalLink, Copy, Target, LayoutGrid } from 'lucide-react';
+import { Tournament } from '../../types';
+
+const Dashboard = () => {
+  const [tournaments, setTournaments] = useState<Tournament[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  // 1. Fetch tournaments from the Backend
+  useEffect(() => {
+    const fetchTournaments = async () => {
+      try {
+        const res = await api.get('/tournaments/');
+        // Sort by newest first
+        const sorted = res.data.sort((a: Tournament, b: Tournament) => 
+          new Date(b.date).getTime() - new Date(a.date).getTime()
+        );
+        setTournaments(sorted);
+      } catch (error) {
+        console.error("Failed to load tournaments");
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchTournaments();
+  }, []);
+
+  // Helper to copy the public link
+  const copyToClipboard = (uuid: string) => {
+    const url = `${window.location.origin}/t/${uuid}`;
+    navigator.clipboard.writeText(url);
+    alert("Public link copied to clipboard!");
+  };
+
+  return (
+    <AdminLayout>
+      <div className="flex justify-between items-center mb-8">
+        <div>
+          <h2 className="text-3xl font-bold text-gray-800">Dashboard</h2>
+          <p className="text-gray-500">Welcome back to your tournament center.</p>
+        </div>
+        <Link 
+          to="/dashboard/create-tournament" 
+          className="bg-blue-600 text-white px-4 py-2 rounded-lg font-bold hover:bg-blue-700 transition flex items-center gap-2 shadow-sm"
+        >
+          <Trophy size={18} />
+          New Tournament
+        </Link>
+      </div>
+
+      {loading ? (
+        <div className="text-center py-12 text-gray-400">Loading tournaments...</div>
+      ) : (
+        <div className="grid gap-6">
+          {tournaments.length === 0 ? (
+            <div className="bg-white p-12 rounded-lg shadow-sm text-center border-2 border-dashed border-gray-200">
+              <Trophy className="mx-auto h-12 w-12 text-gray-300 mb-4" />
+              <h3 className="text-lg font-medium text-gray-900">No tournaments yet</h3>
+              <p className="mt-1 text-gray-500">Get started by creating your first tournament.</p>
+            </div>
+          ) : (
+            tournaments.map((t) => (
+              <div key={t.id} className="bg-white p-6 rounded-lg shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
+                <div className="flex flex-col md:flex-row justify-between md:items-center gap-4">
+                  
+                  {/* Left: Info */}
+                  <div>
+                    <div className="flex items-center gap-3 mb-1">
+                      <h3 className="text-xl font-bold text-blue-900">{t.name}</h3>
+                      <span className={`text-xs px-2 py-1 rounded-full uppercase font-bold tracking-wide ${
+                        t.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'
+                      }`}>
+                        {t.status}
+                      </span>
+                    </div>
+                    
+                    <div className="flex flex-wrap items-center gap-4 text-sm text-gray-500 mt-2">
+                      <span className="flex items-center gap-1">
+                        <Calendar size={14} />
+                        {new Date(t.date).toLocaleDateString()}
+                      </span>
+                      <span className="flex items-center gap-1" title="Players">
+                        <Users size={14} />
+                        {t.player_count || 0} Players
+                      </span>
+                      <span className="flex items-center gap-1" title="Boards">
+                        <Target size={14} />
+                        {t.board_count || 0} Boards
+                      </span>
+                      <span className="flex items-center gap-1" title="Poules">
+                        <LayoutGrid size={14} />
+                        {t.number_of_poules || 1} Poules
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Right: Actions */}
+                  <div className="flex items-center gap-3">
+                    <button 
+                      onClick={() => copyToClipboard(t.public_uuid || '')}
+                      className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded transition"
+                      title="Copy Public Link"
+                    >
+                      <Copy size={20} />
+                    </button>
+                    
+                    <Link 
+                      to={`/t/${t.public_uuid}`}
+                      target="_blank"
+                      className="flex items-center gap-2 px-4 py-2 border border-gray-200 rounded text-gray-600 font-medium hover:bg-gray-50 transition"
+                    >
+                      <ExternalLink size={18} />
+                      Public View
+                    </Link>
+
+                    <button 
+                      className="bg-slate-800 text-white px-5 py-2 rounded font-medium hover:bg-slate-900 transition shadow-sm"
+                      onClick={() => alert("Coming soon: Match Control Panel")}
+                    >
+                      Manage
+                    </button>
+                  </div>
+
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+    </AdminLayout>
+  );
+};
+
+export default Dashboard;
+
+==================================================
+FILE: frontend/src\pages\admin\ManageBoards.tsx
+==================================================
+
+import { useEffect, useState } from 'react';
+import api from '../../services/api';
+import { Trash2, Target } from 'lucide-react';
+import AdminLayout from '../../components/layout/AdminLayout';
+import { Dartboard } from '../../types';
+
+const ManageBoards = () => {
+  const [boards, setBoards] = useState<Dartboard[]>([]);
+  const [formData, setFormData] = useState({ name: '', number: '' });
+
+  useEffect(() => { loadBoards(); }, []);
+
+  const loadBoards = async () => {
+    try {
+      const response = await api.get('/dartboards/');
+      setBoards(response.data);
+    } catch (err) { console.error(err); }
+  };
+
+  const handleAdd = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      await api.post('/dartboards/', {
+        name: formData.name,
+        number: parseInt(formData.number)
+      });
+      setFormData({ name: '', number: '' });
+      loadBoards();
+    } catch (err) { alert("Error adding board"); }
+  };
+
+  const handleDelete = async (id: number) => {
+    if(!confirm("Delete this board?")) return;
+    try { await api.delete(`/dartboards/${id}`); loadBoards(); }
+    catch (err) { alert("Error deleting board"); }
+  };
+
+  return (
+    <AdminLayout>
+      <h2 className="text-3xl font-bold text-gray-800 mb-8">Manage Dartboards</h2>
+      
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+        {/* Form */}
+        <div className="bg-white p-6 rounded-lg shadow-sm h-fit">
+          <h3 className="font-semibold mb-4 flex items-center gap-2">
+            <Target className="text-blue-600" /> Add Board
+          </h3>
+          <form onSubmit={handleAdd} className="space-y-4">
+            <div>
+              <label className="block text-xs font-bold text-gray-700 mb-1">Board Number</label>
+              <input type="number" required className="w-full border rounded p-2"
+                value={formData.number}
+                onChange={e => setFormData({...formData, number: e.target.value})}
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-gray-700 mb-1">Location Name</label>
+              <input type="text" required placeholder="e.g. Main Stage" className="w-full border rounded p-2"
+                value={formData.name}
+                onChange={e => setFormData({...formData, name: e.target.value})}
+              />
+            </div>
+            <button type="submit" className="w-full bg-blue-600 text-white font-bold py-2 rounded hover:bg-blue-700">
+              Add Board
+            </button>
+          </form>
+        </div>
+
+        {/* List */}
+        <div className="md:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {boards.map(board => (
+            <div key={board.id} className="bg-white p-4 rounded-lg shadow-sm border-l-4 border-blue-500 flex justify-between items-center">
+              <div>
+                <span className="text-xs font-bold text-gray-400 uppercase">Board {board.number}</span>
+                <div className="text-lg font-bold text-gray-800">{board.name}</div>
+              </div>
+              <button onClick={() => handleDelete(board.id)} className="text-gray-400 hover:text-red-500">
+                <Trash2 size={20} />
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
+    </AdminLayout>
+  );
+};
+
+export default ManageBoards;
+
+==================================================
+FILE: frontend/src\pages\admin\ManagePlayers.tsx
+==================================================
+
+import { useEffect, useState } from 'react';
+import api from '../../services/api';
+import { Trash2, UserPlus } from 'lucide-react';
+import AdminLayout from '../../components/layout/AdminLayout';
+import { Player } from '../../types';
+
+const ManagePlayers = () => {
+  const [players, setPlayers] = useState<Player[]>([]);
+  const [loading, setLoading] = useState(true);
+  
+  // State for the 4 input fields
+  const [formData, setFormData] = useState({
+    first_name: '',
+    last_name: '',
+    nickname: '',
+    email: ''
+  });
+
+  // Load players when page opens
+  useEffect(() => {
+    loadPlayers();
+  }, []);
+
+  const loadPlayers = async () => {
+    try {
+      const response = await api.get('/players/');
+      setPlayers(response.data);
+    } catch (error) {
+      console.error("Failed to load players");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleAddPlayer = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    // DATA CLEANING:
+    // We must convert empty strings "" to null, otherwise the backend
+    // will think we are sending an invalid email address.
+    const payload = {
+      first_name: formData.first_name,
+      last_name: formData.last_name.trim() === '' ? null : formData.last_name,
+      nickname: formData.nickname.trim() === '' ? null : formData.nickname,
+      email: formData.email.trim() === '' ? null : formData.email
+    };
+
+    try {
+      await api.post('/players/', payload);
+      
+      // Clear the form
+      setFormData({
+        first_name: '',
+        last_name: '',
+        nickname: '',
+        email: ''
+      });
+      
+      // Refresh the list
+      loadPlayers(); 
+    } catch (error: any) {
+      console.error("Error adding player:", error.response?.data);
+      alert("Error adding player. Please check that the email is valid (or leave it empty).");
+    }
+  };
+
+  const handleDelete = async (id: number) => {
+    if (!confirm("Are you sure you want to delete this player?")) return;
+    try {
+      await api.delete(`/players/${id}`);
+      loadPlayers();
+    } catch (error) {
+      alert("Error deleting player");
+    }
+  };
+
+  return (
+    <AdminLayout>
+      <div className="max-w-4xl mx-auto">
+        <h2 className="text-3xl font-bold text-gray-800 mb-8">Manage Players</h2>
+
+        {/* --- Add Player Form --- */}
+        <div className="bg-white p-6 rounded-lg shadow-sm mb-8">
+          <h3 className="text-lg font-semibold mb-4 text-gray-700">Add New Player</h3>
+          
+          <form onSubmit={handleAddPlayer} className="space-y-4">
+            
+            {/* Row 1: First & Last Name */}
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-bold text-gray-700 mb-1">First Name*</label>
+                <input 
+                  type="text" 
+                  required
+                  className="w-full border rounded p-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                  value={formData.first_name}
+                  onChange={(e) => setFormData({...formData, first_name: e.target.value})}
+                  placeholder="Luke"
+                />
+              </div>
+              
+              <div>
+                <label className="block text-xs font-bold text-gray-700 mb-1">Last Name</label>
+                <input 
+                  type="text" 
+                  className="w-full border rounded p-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                  value={formData.last_name}
+                  onChange={(e) => setFormData({...formData, last_name: e.target.value})}
+                  placeholder="Littler"
+                />
+              </div>
+            </div>
+
+            {/* Row 2: Nickname & Email */}
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-bold text-gray-700 mb-1">Nickname</label>
+                <input 
+                  type="text" 
+                  className="w-full border rounded p-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                  value={formData.nickname}
+                  onChange={(e) => setFormData({...formData, nickname: e.target.value})}
+                  placeholder='e.g. "The Nuke"'
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-gray-700 mb-1">Email</label>
+                <input 
+                  type="email" 
+                  className="w-full border rounded p-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                  value={formData.email}
+                  onChange={(e) => setFormData({...formData, email: e.target.value})}
+                  placeholder="luke@darts.com"
+                />
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              className="w-full bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 flex items-center justify-center gap-2 font-medium mt-4 transition-colors"
+            >
+              <UserPlus size={20} />
+              Add Player
+            </button>
+          </form>
+        </div>
+
+        {/* --- Players List --- */}
+        <div className="bg-white rounded-lg shadow-sm overflow-hidden">
+          <div className="p-4 border-b bg-gray-50 font-medium text-gray-500 flex justify-between items-center">
+            <span>Total Players: {players.length}</span>
+          </div>
+          
+          {loading ? (
+             <div className="p-8 text-center text-gray-500">Loading players...</div>
+          ) : players.length === 0 ? (
+            <div className="p-8 text-center text-gray-500">No players found. Add one above!</div>
+          ) : (
+            <ul className="divide-y divide-gray-100">
+              {players.map((player) => (
+                <li key={player.id} className="p-4 flex items-center justify-between hover:bg-gray-50 transition">
+                  <div>
+                    {/* The 'name' property comes formatted from the backend (e.g. Luke "The Nuke" Littler) */}
+                    <div className="text-lg text-gray-800 font-medium">{player.name}</div>
+                    
+                    <div className="text-xs text-gray-400">
+                       {player.email ? player.email : "No email linked"}
+                    </div>
+                  </div>
+                  
+                  <button
+                    onClick={() => handleDelete(player.id)}
+                    className="text-gray-400 hover:text-red-600 p-2 rounded-full hover:bg-red-50 transition"
+                    title="Delete Player"
+                  >
+                    <Trash2 size={20} />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+    </AdminLayout>
+  );
+};
+
+export default ManagePlayers;
+
+==================================================
+FILE: frontend/src\pages\admin\SystemLogs.tsx
+==================================================
+
+import { useEffect, useState, useRef } from 'react';
+import AdminLayout from '../../components/layout/AdminLayout';
+import { Terminal, Wifi, WifiOff } from 'lucide-react';
+
+const SystemLogs = () => {
+  const [logs, setLogs] = useState<string[]>([]);
+  const [isConnected, setIsConnected] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    // 1. Open the Connection
+    const ws = new WebSocket('ws://localhost:8000/api/ws/logs');
+
+    ws.onopen = () => {
+      setIsConnected(true);
+      console.log('Connected to Log Stream');
+    };
+
+    ws.onmessage = (event) => {
+      // 2. Receive Data (it comes as a JSON array of strings)
+      const data = JSON.parse(event.data);
+      setLogs(data);
+    };
+
+    ws.onclose = () => setIsConnected(false);
+
+    // Cleanup when leaving the page
+    return () => {
+      ws.close();
+    };
+  }, []);
+
+  // Auto-scroll to bottom when new logs arrive
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [logs]);
+
+  return (
+    <AdminLayout>
+      <div className="max-w-6xl mx-auto h-[calc(100vh-100px)] flex flex-col">
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-2xl font-bold text-gray-800 flex items-center gap-3">
+            <Terminal className="text-gray-600" />
+            System Live Logs
+          </h2>
+          
+          <div className={`flex items-center gap-2 px-3 py-1 rounded-full text-sm font-medium ${isConnected ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+            {isConnected ? <Wifi size={16} /> : <WifiOff size={16} />}
+            {isConnected ? 'Live Stream Active' : 'Disconnected'}
+          </div>
+        </div>
+
+        <div className="flex-1 bg-black rounded-lg shadow-2xl p-4 overflow-hidden border border-gray-700 flex flex-col font-mono text-sm">
+          {/* Terminal Header */}
+          <div className="flex gap-2 mb-4 border-b border-gray-800 pb-2">
+            <div className="w-3 h-3 rounded-full bg-red-500"></div>
+            <div className="w-3 h-3 rounded-full bg-yellow-500"></div>
+            <div className="w-3 h-3 rounded-full bg-green-500"></div>
+          </div>
+
+          {/* Logs Output */}
+          <div ref={scrollRef} className="flex-1 overflow-y-auto space-y-1 pr-2 custom-scrollbar">
+            {logs.length === 0 ? (
+              <span className="text-gray-500 italic">Waiting for logs...</span>
+            ) : (
+              logs.map((log, index) => (
+                <div key={index} className="text-green-400 break-words hover:bg-gray-900 transition-colors p-0.5 rounded">
+                  <span className="text-gray-600 mr-2">$</span>
+                  {log}
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      </div>
+    </AdminLayout>
+  );
+};
+
+export default SystemLogs;
+
+==================================================
+FILE: frontend/src\pages\auth\Login.tsx
+==================================================
+
+import { useState } from 'react';
+import { useAuth } from '../../hooks/useAuth';
+import { loginUser } from '../../services/authService';
+import { useNavigate } from 'react-router-dom';
+
+const Login = () => {
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  
+  // Get the login function from our global context
+  const { login } = useAuth();
+  
+  // Hook to redirect the user after login
+  const navigate = useNavigate();
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault(); // Stop page refresh
+    setError('');
+
+    try {
+      // 1. Call Python API
+      const data = await loginUser(username, password);
+      
+      // 2. Save token to Context/LocalStorage
+      await login(data.access_token);
+      
+      // 3. Redirect to Dashboard
+      navigate('/dashboard');
+    } catch (err) {
+      setError('Invalid username or password');
+    }
+  };
+
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-gray-100">
+      <div className="bg-white p-8 rounded-lg shadow-md w-96">
+        <h2 className="text-2xl font-bold mb-6 text-center text-blue-600">Dart Manager</h2>
+        
+        {error && (
+          <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-2 rounded mb-4">
+            {error}
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit}>
+          <div className="mb-4">
+            <label className="block text-gray-700 text-sm font-bold mb-2">
+              Username
+            </label>
+            <input
+              type="text"
+              className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              required
+            />
+          </div>
+          
+          <div className="mb-6">
+            <label className="block text-gray-700 text-sm font-bold mb-2">
+              Password
+            </label>
+            <input
+              type="password"
+              className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+            />
+          </div>
+          
+          <button
+            type="submit"
+            className="w-full bg-blue-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-blue-700 transition duration-200"
+          >
+            Sign In
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+};
+
+export default Login;
+
+==================================================
+FILE: frontend/src\pages\auth\Register.tsx
+==================================================
+
+import { useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { registerUser } from '../../services/authService';
+
+const Register = () => {
+  const navigate = useNavigate();
+  const [error, setError] = useState('');
+  
+  const [formData, setFormData] = useState({
+    first_name: '',
+    last_name: '',
+    email: '',
+    password: ''
+  });
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setFormData({ ...formData, [e.target.name]: e.target.value });
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+
+    try {
+      await registerUser(formData);
+      // Success! Redirect to login
+      alert("Registration successful! You can now sign in.");
+      navigate('/login');
+    } catch (err: any) {
+      // If the backend says "Email already registered", show that here
+      if (err.response && err.response.data && err.response.data.detail) {
+        setError(err.response.data.detail);
+      } else {
+        setError('Registration failed. Please try again.');
+      }
+    }
+  };
+
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-gray-100">
+      <div className="bg-white p-8 rounded-lg shadow-md w-96">
+        <h2 className="text-2xl font-bold mb-6 text-center text-blue-600">Create Account</h2>
+        
+        {error && (
+          <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-2 rounded mb-4 text-sm">
+            {error}
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="block text-gray-700 text-xs font-bold mb-1">First Name</label>
+              <input
+                name="first_name"
+                type="text"
+                required
+                className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                onChange={handleChange}
+                placeholder="Michael"
+              />
+            </div>
+            <div>
+              <label className="block text-gray-700 text-xs font-bold mb-1">Last Name</label>
+              <input
+                name="last_name"
+                type="text"
+                required
+                className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                onChange={handleChange}
+                placeholder="Smith"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-gray-700 text-xs font-bold mb-1">Email</label>
+            <input
+              name="email"
+              type="email"
+              required
+              className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              onChange={handleChange}
+              placeholder="name@example.com"
+            />
+          </div>
+          
+          <div>
+            <label className="block text-gray-700 text-xs font-bold mb-1">Password</label>
+            <input
+              name="password"
+              type="password"
+              required
+              className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              onChange={handleChange}
+              placeholder="••••••••"
+            />
+          </div>
+          
+          <button
+            type="submit"
+            className="w-full bg-green-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-green-700 transition duration-200 mt-4"
+          >
+            Sign Up
+          </button>
+        </form>
+
+        <div className="mt-4 text-center text-sm">
+          <span className="text-gray-600">Already have an account? </span>
+          <Link to="/login" className="text-blue-600 hover:underline">
+            Login here
+          </Link>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default Register;
+
+==================================================
+FILE: frontend/src\pages\public\Standings.tsx
+==================================================
+
+
+
+==================================================
+FILE: frontend/src\pages\public\TournamentView.tsx
+==================================================
+
+import { useEffect, useState } from 'react';
+import { useParams, Link } from 'react-router-dom';
+import api from '../../services/api';
+import { Trophy, Calendar, Tablet, ExternalLink } from 'lucide-react';
+import { useAuth } from '../../hooks/useAuth';
+
+// Types matching the backend response
+interface Match {
+  id: number;
+  round_number: number;
+  player1_name: string;
+  player2_name: string;
+  score_p1: number;
+  score_p2: number;
+  is_completed: boolean;
+}
+
+interface Tournament {
+  id: number;
+  name: string;
+  status: string;
+  format: string;
+  scorer_uuid: string; // We need this for the button!
+  matches: Match[];
+}
+
+// Helper to calculate standings
+const calculateStandings = (matches: Match[]) => {
+  const stats: Record<string, { p: number, w: number, l: number, pts: number, ld: number }> = {};
+
+  matches.forEach(m => {
+    if (m.player1_name && !stats[m.player1_name]) stats[m.player1_name] = { p:0, w:0, l:0, pts:0, ld:0 };
+    if (m.player2_name && !stats[m.player2_name]) stats[m.player2_name] = { p:0, w:0, l:0, pts:0, ld:0 };
+
+    if (m.is_completed && m.player1_name && m.player2_name) {
+      const p1 = stats[m.player1_name];
+      const p2 = stats[m.player2_name];
+
+      p1.p++; p2.p++; 
+      p1.ld += (m.score_p1 - m.score_p2); 
+      p2.ld += (m.score_p2 - m.score_p1);
+
+      if (m.score_p1 > m.score_p2) {
+        p1.w++; p1.pts += 2; 
+        p2.l++;
+      } else {
+        p2.w++; p2.pts += 2;
+        p1.l++;
+      }
+    }
+  });
+
+  return Object.entries(stats)
+    .map(([name, data]) => ({ name, ...data }))
+    .sort((a, b) => b.pts - a.pts || b.ld - a.ld); 
+};
+
+const TournamentView = () => {
+  const { public_uuid } = useParams();
+  const { user } = useAuth(); // Check if admin is viewing
+  const [tournament, setTournament] = useState<Tournament | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState<'matches' | 'table'>('table');
+
+  useEffect(() => {
+    const loadData = async () => {
+      try {
+        const res = await api.get(`/tournaments/public/${public_uuid}`);
+        setTournament(res.data);
+      } catch (err) {
+        console.error("Error loading tournament", err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    loadData();
+    
+    // Optional: Poll for updates every 10 seconds so the public view updates live!
+    const interval = setInterval(loadData, 10000);
+    return () => clearInterval(interval);
+  }, [public_uuid]);
+
+  if (loading) return <div className="p-10 text-center">Loading Tournament...</div>;
+  if (!tournament) return <div className="p-10 text-center text-red-500">Tournament not found</div>;
+
+  const standings = calculateStandings(tournament.matches);
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      {/* Header */}
+      <header className="bg-blue-900 text-white p-6 shadow-md">
+        <div className="max-w-4xl mx-auto">
+          <div className="flex flex-col md:flex-row justify-between items-center gap-4">
+            <div>
+               <h1 className="text-3xl font-bold flex items-center gap-3">
+                <Trophy className="text-yellow-400" />
+                {tournament.name}
+              </h1>
+              <span className="inline-block mt-2 px-3 py-1 bg-blue-800 rounded-full text-xs uppercase tracking-wider">
+                {tournament.format.replace('_', ' ')}
+              </span>
+            </div>
+
+            {/* Admin Only Button */}
+            {user && (
+              <Link 
+                to={`/board/${tournament.scorer_uuid}`} 
+                target="_blank"
+                className="bg-yellow-500 hover:bg-yellow-400 text-blue-900 font-bold py-2 px-4 rounded-lg flex items-center gap-2 transition shadow-lg"
+              >
+                <Tablet size={20} />
+                Launch Scorer
+              </Link>
+            )}
+          </div>
+        </div>
+      </header>
+
+      {/* Tabs */}
+      <div className="max-w-4xl mx-auto mt-6 px-4">
+        <div className="flex border-b border-gray-300 mb-6">
+          <button
+            onClick={() => setActiveTab('table')}
+            className={`px-6 py-3 font-medium ${activeTab === 'table' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500'}`}
+          >
+            Standings
+          </button>
+          <button
+            onClick={() => setActiveTab('matches')}
+            className={`px-6 py-3 font-medium ${activeTab === 'matches' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500'}`}
+          >
+            Matches
+          </button>
+        </div>
+
+        {/* VIEW: STANDINGS TABLE */}
+        {activeTab === 'table' && (
+          <div className="bg-white rounded-lg shadow overflow-hidden">
+            <table className="w-full text-left">
+              <thead className="bg-gray-100 border-b">
+                <tr>
+                  <th className="p-4 font-semibold text-gray-600">Pos</th>
+                  <th className="p-4 font-semibold text-gray-600">Player</th>
+                  <th className="p-4 font-semibold text-gray-600 text-center">P</th>
+                  <th className="p-4 font-semibold text-gray-600 text-center">W</th>
+                  <th className="p-4 font-semibold text-gray-600 text-center">L</th>
+                  <th className="p-4 font-semibold text-gray-600 text-center">+/-</th>
+                  <th className="p-4 font-semibold text-gray-800 text-center">Pts</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {standings.map((row, index) => (
+                  <tr key={row.name} className="hover:bg-gray-50">
+                    <td className="p-4 text-gray-400 font-mono">{index + 1}</td>
+                    <td className="p-4 font-medium text-gray-900">{row.name}</td>
+                    <td className="p-4 text-center text-gray-600">{row.p}</td>
+                    <td className="p-4 text-center text-green-600">{row.w}</td>
+                    <td className="p-4 text-center text-red-400">{row.l}</td>
+                    <td className="p-4 text-center text-gray-500 text-sm">{row.ld > 0 ? `+${row.ld}` : row.ld}</td>
+                    <td className="p-4 text-center font-bold text-blue-700 text-lg">{row.pts}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* VIEW: MATCH LIST */}
+        {activeTab === 'matches' && (
+          <div className="grid gap-4">
+            {tournament.matches.map((match) => (
+              <div key={match.id} className="bg-white p-4 rounded-lg shadow-sm border border-gray-100 flex justify-between items-center">
+                <div className="text-sm text-gray-400 font-medium w-16">R{match.round_number}</div>
+                <div className="flex-1 flex items-center justify-between px-4">
+                  <span className={`font-medium ${match.score_p1 > match.score_p2 ? 'text-gray-900' : 'text-gray-500'}`}>
+                    {match.player1_name || 'Bye'}
+                  </span>
+                  <div className="bg-gray-100 px-4 py-1 rounded text-lg font-bold font-mono">
+                    {match.is_completed ? `${match.score_p1} - ${match.score_p2}` : 'vs'}
+                  </div>
+                  <span className={`font-medium ${match.score_p2 > match.score_p1 ? 'text-gray-900' : 'text-gray-500'}`}>
+                    {match.player2_name || 'Bye'}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+export default TournamentView;
+
+==================================================
+FILE: frontend/src\pages\scorer\MatchList.tsx
+==================================================
+
+import { useEffect, useState } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import api from '../../services/api';
+import { PlayCircle, CheckCircle } from 'lucide-react';
+
+interface Match {
+  id: number;
+  round_number: number;
+  player1_name: string;
+  player2_name: string;
+  is_completed: boolean;
+}
+
+const ScorerMatchList = () => {
+  const { scorer_uuid } = useParams();
+  const navigate = useNavigate();
+  const [matches, setMatches] = useState<Match[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    // We reuse the public endpoint logic but fetch via the Scorer UUID
+    // The backend logic we wrote handles looking up by Scorer UUID too
+    const loadMatches = async () => {
+      try {
+        const res = await api.get(`/matches/by-tournament/${scorer_uuid}`);
+        setMatches(res.data);
+      } catch (err) {
+        alert("Invalid Scorer Link");
+      } finally {
+        setLoading(false);
+      }
+    };
+    loadMatches();
+  }, [scorer_uuid]);
+
+  if (loading) return <div className="p-8 text-center">Loading Matches...</div>;
+
+  return (
+    <div className="min-h-screen bg-slate-900 text-white p-4">
+      <h1 className="text-2xl font-bold mb-6 text-center text-blue-400">Select Match to Score</h1>
+      
+      <div className="space-y-3 max-w-lg mx-auto">
+        {matches.map((match) => (
+          <div 
+            key={match.id}
+            onClick={() => navigate(`/board/${scorer_uuid}/match/${match.id}`)}
+            className={`p-4 rounded-xl border border-slate-700 flex justify-between items-center cursor-pointer transition-transform active:scale-95 ${
+              match.is_completed ? 'bg-slate-800 opacity-60' : 'bg-slate-800 hover:bg-slate-700 shadow-lg'
+            }`}
+          >
+            <div className="flex-1 text-center">
+              <div className="font-bold text-lg">{match.player1_name || 'Bye'}</div>
+              <div className="text-xs text-slate-400">VS</div>
+              <div className="font-bold text-lg">{match.player2_name || 'Bye'}</div>
+            </div>
+            
+            <div className="ml-4">
+              {match.is_completed ? (
+                <CheckCircle className="text-green-500" size={32} />
+              ) : (
+                <PlayCircle className="text-blue-400" size={32} />
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+export default ScorerMatchList;
+
+==================================================
+FILE: frontend/src\pages\scorer\Scoreboard.tsx
+==================================================
+
+import { useEffect, useState } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import api from '../../services/api';
+import { ArrowLeft, Save } from 'lucide-react';
+
+const Scoreboard = () => {
+  const { scorer_uuid, match_id } = useParams();
+  const navigate = useNavigate();
+
+  // Game State
+  // Simplified for MVP: Just tracking legs won (Best of X)
+  // In a full app, you'd track 501 countdown here.
+  const [scoreP1, setScoreP1] = useState(0);
+  const [scoreP2, setScoreP2] = useState(0);
+  const [isCompleted, setIsCompleted] = useState(false);
+  const [playerNames, setPlayerNames] = useState({ p1: 'Player 1', p2: 'Player 2' });
+
+  // Load Match Data
+  useEffect(() => {
+    // We fetch the match list again to find OUR match names
+    // (A dedicated single-match endpoint would be better for prod, but this works)
+    api.get(`/matches/by-tournament/${scorer_uuid}`).then(res => {
+      const match = res.data.find((m: any) => m.id === Number(match_id));
+      if (match) {
+        setPlayerNames({ p1: match.player1_name, p2: match.player2_name });
+        setScoreP1(match.score_p1);
+        setScoreP2(match.score_p2);
+        setIsCompleted(match.is_completed);
+      }
+    });
+  }, [scorer_uuid, match_id]);
+
+  const updateScore = async (p1: number, p2: number, completed: boolean) => {
+    setScoreP1(p1);
+    setScoreP2(p2);
+    setIsCompleted(completed);
+
+    try {
+      await api.put(
+        `/matches/${match_id}/score`, 
+        {
+          score_p1: p1,
+          score_p2: p2,
+          is_completed: completed
+        },
+        {
+          headers: { 'X-Scorer-Token': scorer_uuid } // Auth Magic!
+        }
+      );
+    } catch (err) {
+      console.error("Failed to sync score");
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-black text-white flex flex-col">
+      {/* Header */}
+      <div className="p-4 bg-slate-900 flex items-center justify-between">
+        <button onClick={() => navigate(-1)} className="text-slate-400">
+          <ArrowLeft />
+        </button>
+        <span className="font-mono text-yellow-400 font-bold">MATCH {match_id}</span>
+        <div className="w-6" /> {/* Spacer */}
+      </div>
+
+      {/* Score Display */}
+      <div className="flex-1 flex flex-col justify-center items-center gap-8 p-4">
+        
+        {/* Player 1 */}
+        <div className="w-full bg-slate-800 rounded-2xl p-6 flex justify-between items-center border border-slate-700">
+          <span className="text-xl font-bold text-blue-300 truncate w-32">{playerNames.p1}</span>
+          <div className="flex items-center gap-4">
+             <button 
+                onClick={() => updateScore(Math.max(0, scoreP1 - 1), scoreP2, false)}
+                className="w-12 h-12 rounded-full bg-slate-700 text-2xl font-bold text-white hover:bg-slate-600"
+             >-</button>
+             <span className="text-6xl font-mono font-bold w-24 text-center">{scoreP1}</span>
+             <button 
+                onClick={() => updateScore(scoreP1 + 1, scoreP2, false)}
+                className="w-12 h-12 rounded-full bg-blue-600 text-2xl font-bold text-white hover:bg-blue-500"
+             >+</button>
+          </div>
+        </div>
+
+        {/* VS Divider */}
+        <div className="text-slate-500 font-bold">LEGS WON</div>
+
+        {/* Player 2 */}
+        <div className="w-full bg-slate-800 rounded-2xl p-6 flex justify-between items-center border border-slate-700">
+          <span className="text-xl font-bold text-blue-300 truncate w-32">{playerNames.p2}</span>
+          <div className="flex items-center gap-4">
+             <button 
+                onClick={() => updateScore(scoreP1, Math.max(0, scoreP2 - 1), false)}
+                className="w-12 h-12 rounded-full bg-slate-700 text-2xl font-bold text-white hover:bg-slate-600"
+             >-</button>
+             <span className="text-6xl font-mono font-bold w-24 text-center">{scoreP2}</span>
+             <button 
+                onClick={() => updateScore(scoreP1, scoreP2 + 1, false)}
+                className="w-12 h-12 rounded-full bg-blue-600 text-2xl font-bold text-white hover:bg-blue-500"
+             >+</button>
+          </div>
+        </div>
+      </div>
+
+      {/* Footer Controls */}
+      <div className="p-6 bg-slate-900 border-t border-slate-800">
+        <button 
+          onClick={() => {
+            updateScore(scoreP1, scoreP2, !isCompleted);
+            if (!isCompleted) navigate(-1); // Go back if finishing
+          }}
+          className={`w-full py-4 rounded-xl text-xl font-bold flex items-center justify-center gap-3 transition-colors ${
+            isCompleted 
+              ? 'bg-slate-700 text-slate-300' 
+              : 'bg-green-600 text-white hover:bg-green-500'
+          }`}
+        >
+          <Save size={24} />
+          {isCompleted ? 'Mark as In Progress' : 'Finish Match'}
+        </button>
+      </div>
+    </div>
+  );
+};
+
+export default Scoreboard;
+
+==================================================
+FILE: frontend/src\services\api.ts
+==================================================
+
+import axios from 'axios';
+
+// 1. Create the instance (like requests.Session())
+const api = axios.create({
+  baseURL: 'http://localhost:8000/api', // Point to your FastAPI backend
+  headers: {
+    'Content-Type': 'application/json',
+  },
+});
+
+// 2. Add an "Interceptor" (Middleware)
+// Before every request is sent, check if we have a token in LocalStorage (browser memory)
+api.interceptors.request.use(
+  (config) => {
+    const token = localStorage.getItem('token');
+    if (token) {
+      // If token exists, attach it: Authorization: Bearer <token>
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+    return config;
+  },
+  (error) => {
+    return Promise.reject(error);
+  }
+);
+
+export default api;
+
+==================================================
+FILE: frontend/src\services\authService.ts
+==================================================
+
+import api from './api';
+
+// The data shape expected by FastAPI's OAuth2PasswordRequestForm
+// It expects form-data, not JSON!
+export const loginUser = async (username: string, password: string) => {
+  const formData = new FormData();
+  formData.append('username', username);
+  formData.append('password', password);
+
+  const response = await api.post('/auth/login', formData, {
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+  });
+  return response.data; // Returns { access_token: "...", token_type: "bearer" }
+};
+
+export const registerUser = async (userData: any) => {
+    const response = await api.post('/auth/register', userData);
+    return response.data;
+};
+
+==================================================
+FILE: frontend/src\types\index.ts
+==================================================
+
+export interface User {
+  id: number;
+  email: string;
+  first_name: string;
+  last_name: string;
+}
+
+export interface Player {
+  id: number;
+  first_name: string;
+  last_name?: string;
+  nickname?: string;
+  email?: string;
+  name: string;
+}
+
+export interface Dartboard {
+  id: number;
+  name: string;
+  number: number;
+}
+
+export interface Tournament {
+  id: number;
+  name: string;
+  date: string;
+  status: string; // 'draft', 'active', 'completed'
+  public_uuid?: string;
+}
+
+export interface Dartboard {
+  id: number;
+  name: string;
+  number: number;
+}
+// We will add 'Match' and 'Leg' definitions here later when we build the scoreboard!

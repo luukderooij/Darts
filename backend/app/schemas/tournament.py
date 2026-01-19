@@ -7,8 +7,14 @@ class TournamentCreate(BaseModel):
     name: str
     date: str  
     number_of_poules: int = 1  
-    format: str = "round_robin"
-    legs_per_match: int = 5
+    format: str = "hybrid"
+    
+    # --- NIEUWE VELDEN ---
+    # Deze misten, waardoor de backend ze niet ontving
+    qualifiers_per_poule: int = 2
+    starting_legs_group: int = 3
+    starting_legs_ko: int = 5
+    
     sets_per_match: int = 1
     
     # Selection Lists
@@ -27,6 +33,11 @@ class TournamentRead(BaseModel):
     public_uuid: str
     scorer_uuid: str
     
+    # Nieuwe velden ook terugsturen (handig voor frontend)
+    qualifiers_per_poule: int = 2
+    starting_legs_group: int = 3
+    starting_legs_ko: int = 5
+    
     # Helper counts for the dashboard
     player_count: int = 0
     board_count: int = 0
@@ -35,7 +46,6 @@ class TournamentRead(BaseModel):
         from_attributes = True
 
 # --- Detailed View (Public Page) ---
-# We keep this exactly as you had it so the public page doesn't break
 class MatchReadSimple(BaseModel):
     id: int
     round_number: int
