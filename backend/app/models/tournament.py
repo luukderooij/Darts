@@ -7,7 +7,7 @@ from app.models.links import TournamentPlayerLink, TournamentBoardLink
 # Note: We use string forward references like "Player" to avoid circular imports
 class Tournament(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    name: str
+    name: str = Field(default_factory=lambda: f"Toernooi {datetime.now().strftime('%Y-%m-%d')}")
     date: str # <--- Added (Matches UI Date Picker)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     status: str = Field(default="draft")

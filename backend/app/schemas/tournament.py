@@ -5,24 +5,24 @@ from datetime import datetime
 # --- Input Schema (Create) ---
 class TournamentCreate(BaseModel):
     name: str
-    date: str  # <--- NEW
-    number_of_poules: int = 1  # <--- NEW
+    date: str  
+    number_of_poules: int = 1  
     format: str = "round_robin"
     legs_per_match: int = 5
     sets_per_match: int = 1
     
     # Selection Lists
     player_ids: List[int]
-    board_ids: List[int]  # <--- NEW
+    board_ids: List[int]  
 
 # --- Output Schema (Read) ---
 class TournamentRead(BaseModel):
     id: int
     name: str
-    date: str  # <--- NEW
+    date: str 
     status: str
     format: str
-    number_of_poules: int  # <--- NEW
+    number_of_poules: int  
     created_at: datetime
     public_uuid: str
     scorer_uuid: str

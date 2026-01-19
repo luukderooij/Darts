@@ -59,7 +59,7 @@ const CreateTournament = () => {
     );
   };
 
-  // --- Submission Handler ---
+// --- Submission Handler ---
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -71,7 +71,7 @@ const CreateTournament = () => {
       return;
     }
 
-    // 2. Validate Players (Rule: 2 players per board minimum)
+    // 2. Validate Players
     const requiredPlayers = selectedBoardIds.length * 2;
     if (selectedPlayerIds.length < requiredPlayers) {
       setError(`Not enough players! You selected ${selectedBoardIds.length} board(s), so you need at least ${requiredPlayers} players.`);
@@ -80,8 +80,15 @@ const CreateTournament = () => {
     }
 
     try {
+      // FIX: Genereer de naam hier in de frontend als hij leeg is.
+      // Zo sturen we altijd een string naar de backend en voorkomen we de 422 error.
+      let finalName = name.trim();
+      if (!finalName) {
+         finalName = `Toernooi ${new Date().toISOString().split('T')[0]}`;
+      }
+
       const payload = {
-        name,
+        name: finalName, // Hier sturen we nu altijd een string
         date,
         number_of_poules: poules,
         format,
@@ -92,7 +99,7 @@ const CreateTournament = () => {
       };
 
       await api.post('/tournaments/', payload);
-      navigate('/dashboard'); // Go back to dashboard on success
+      navigate('/dashboard'); 
     } catch (err) {
       console.error(err);
       setError("Failed to create tournament. Please check the console for details.");
@@ -124,8 +131,13 @@ const CreateTournament = () => {
               <div className="space-y-4">
                 <div>
                   <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Name</label>
-                  <input type="text" required className="w-full border rounded p-2 text-sm" 
-                    value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Winter Cup 2026" />
+                  <input 
+                    type="text" 
+                    className="w-full border rounded p-2 text-sm" 
+                    value={name} 
+                    onChange={e => setName(e.target.value)} 
+                    placeholder="Laat leeg voor standaard naam" 
+                  />
                 </div>
                 
                 <div className="grid grid-cols-2 gap-3">
