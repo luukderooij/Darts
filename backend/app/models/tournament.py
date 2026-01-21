@@ -4,23 +4,34 @@ from sqlmodel import SQLModel, Field, Relationship
 from datetime import datetime
 from app.models.links import TournamentPlayerLink, TournamentBoardLink
 
-# Note: We use string forward references like "Player" to avoid circular imports
 class Tournament(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
+    # Default name logic wordt hieronder in de frontend afgevangen, maar backend fallback blijft handig
     name: str = Field(default_factory=lambda: f"Toernooi {datetime.now().strftime('%Y-%m-%d')}")
-    date: str # <--- Added (Matches UI Date Picker)
+    date: str 
     created_at: datetime = Field(default_factory=datetime.utcnow)
-    status: str = Field(default="draft")
+    status: str = Field(default="draft") # draft, active, knockout_ready, finished
     
-    # --- New Setting ---
+    # --- Format Settings ---
+    # We maken 'hybrid' de standaard.
+    format: str = Field(default="hybrid") 
+    
     number_of_poules: int = Field(default=1)
-
-    # --- Existing Settings (Preserved) ---
-    format: str = Field(default="round_robin") 
-    legs_per_match: int = Field(default=5)
+    
+    # NIEUW: Hoeveel spelers gaan er per poule door naar de KO?
+    qualifiers_per_poule: int = Field(default=2) 
+    
+    # --- Game Settings (Best of X) ---
+    # We splitsen de lengte op voor poule en knockout. 
+    # Dit zijn de 'default' waarden voor die fase. 
+    # (Specifieke finales kunnen we later in de 'Match' tabel overschrijven).
+    starting_legs_group: int = Field(default=3) # Bijv. Best of 3
+    starting_legs_ko: int = Field(default=3)    # Bijv. Best of 3
+    
+    # Sets laten we voor nu even generiek, tenzij je ook sets per fase wilt?
     sets_per_match: int = Field(default=1)
     
-    # --- Access Control UUIDs ---
+    # --- Access Control ---
     public_uuid: str = Field(default_factory=lambda: str(uuid.uuid4()), index=True, unique=True)
     scorer_uuid: str = Field(default_factory=lambda: str(uuid.uuid4()), index=True, unique=True)
     
@@ -29,7 +40,6 @@ class Tournament(SQLModel, table=True):
     user: Optional["User"] = Relationship(back_populates="tournaments")
     
     # --- Relationships ---
-    # We use the Link models defined in Step 1
     players: List["Player"] = Relationship(back_populates=None, link_model=TournamentPlayerLink)
     boards: List["Dartboard"] = Relationship(back_populates=None, link_model=TournamentBoardLink)
     matches: List["Match"] = Relationship(back_populates="tournament")
