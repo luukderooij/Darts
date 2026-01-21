@@ -22,6 +22,9 @@ interface Tournament {
   status: string;
   format: string;
   scorer_uuid: string;
+  qualifiers_per_poule?: number; 
+  starting_legs_group?: number;
+  starting_legs_ko?: number;
   matches: Match[];
 }
 
