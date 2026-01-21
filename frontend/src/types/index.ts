@@ -25,12 +25,18 @@ export interface Tournament {
   name: string;
   date: string;
   status: string; // 'draft', 'active', 'completed'
+  format: string;
   public_uuid?: string;
+  
+  // Nieuwe velden die het dashboard nodig heeft:
+  number_of_poules?: number;
+  player_count?: number;
+  board_count?: number;
+  allow_byes?: boolean; // <--- Nieuw toegevoegd
 }
 
-export interface Dartboard {
-  id: number;
-  name: string;
-  number: number;
+// We voegen Match en Leg later toe
+export interface Match {
+    id: number;
+    // ... later invullen
 }
-// We will add 'Match' and 'Leg' definitions here later when we build the scoreboard!

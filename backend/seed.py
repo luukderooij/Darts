@@ -118,9 +118,6 @@ def simulate_match_scores(session: Session, tournament_id: int, legs_to_win: int
             continue
             
         # Simuleer een winnaar
-        # Best of 3 (first to 2) -> Uitslag kan zijn 2-0 of 2-1
-        # Best of 5 (first to 3) -> Uitslag kan zijn 3-0, 3-1, 3-2
-        
         loser_score = random.randint(0, legs_to_win - 1)
         
         if random.random() > 0.5:
@@ -146,6 +143,7 @@ def create_tournament_1(session: Session, user: User, players: list, boards: lis
         qualifiers_per_poule=2,
         starting_legs_group=3, # First to 2
         starting_legs_ko=5,
+        allow_byes=True,       # <--- TOEGEVOEGD
         user_id=user.id,
         status="active"
     )
@@ -168,7 +166,7 @@ def create_tournament_1(session: Session, user: User, players: list, boards: lis
         session=session
     )
     
-    # Vul de scores in (First to 2, want starting_legs_group=3)
+    # Vul de scores in
     legs_needed = (t.starting_legs_group // 2) + 1
     simulate_match_scores(session, t.id, legs_needed)
     print("Toernooi 1 aangemaakt en gespeeld.")
@@ -184,11 +182,12 @@ def create_tournament_2(session: Session, user: User, players: list, boards: lis
         qualifiers_per_poule=2,
         starting_legs_group=5, # First to 3
         starting_legs_ko=7,    # First to 4
+        allow_byes=True,       # <--- TOEGEVOEGD
         user_id=user.id,
         status="active"
     )
     
-    # Koppel 9 spelers (De eerste 9 uit de lijst) en alle borden
+    # Koppel 9 spelers en alle borden
     t.players = players[:9]
     t.boards = boards
     
@@ -196,7 +195,7 @@ def create_tournament_2(session: Session, user: User, players: list, boards: lis
     session.commit()
     session.refresh(t)
     
-    # Genereer wedstrijden (Automatische verdeling: Poule 1=5 spelers, Poule 2=4 spelers)
+    # Genereer wedstrijden
     generate_poule_phase(
         tournament_id=t.id,
         players=t.players,
@@ -206,7 +205,7 @@ def create_tournament_2(session: Session, user: User, players: list, boards: lis
         session=session
     )
     
-    # Vul de scores in (First to 3)
+    # Vul de scores in
     legs_needed = (t.starting_legs_group // 2) + 1
     simulate_match_scores(session, t.id, legs_needed)
     print("Toernooi 2 aangemaakt en gespeeld.")
@@ -231,7 +230,7 @@ def main():
         # 5. Toernooi 2
         create_tournament_2(session, admin, players, boards)
         
-        # --- FIX: Print statements BINNEN de sessie verplaatst ---
+        # Print statements BINNEN de sessie
         print("\n=== SEEDING SUCCESVOL ===")
         print(f"Gebruiker: {admin.email}")
         print(f"Wachtwoord: lderooij")

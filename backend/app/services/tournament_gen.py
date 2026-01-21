@@ -1,5 +1,6 @@
 from typing import List, Dict
 import random
+import math
 from sqlmodel import Session, select
 from app.models.match import Match
 from app.models.player import Player
@@ -115,10 +116,15 @@ def _create_round_robin_matches(
 
 def generate_knockout_from_poules(tournament: Tournament, session: Session):
     """
-    Berekent de stand in de poules en genereert de eerste knockout ronde.
+    Genereert een dynamische knockout fase op basis van Global Seeding.
+    Werkt voor elk aantal poules en qualifiers.
     """
-    # 1. Haal alle poule wedstrijden op
-    matches = session.exec(select(Match).where(Match.tournament_id == tournament.id).where(Match.poule_number != None)).all()
+    # 1. Haal alle gespeelde poule wedstrijden op
+    matches = session.exec(
+        select(Match)
+        .where(Match.tournament_id == tournament.id)
+        .where(Match.poule_number != None)
+    ).all()
     
     # 2. Bereken statistieken per speler
     stats = {} 
@@ -128,12 +134,15 @@ def generate_knockout_from_poules(tournament: Tournament, session: Session):
             continue
             
         p1, p2 = m.player1_id, m.player2_id
+        # Init stats als ze nog niet bestaan
         if p1 not in stats: stats[p1] = {'id': p1, 'w': 0, 'pts': 0, 'ld': 0, 'poule': m.poule_number}
         if p2 not in stats: stats[p2] = {'id': p2, 'w': 0, 'pts': 0, 'ld': 0, 'poule': m.poule_number}
         
+        # Leg Difference (Saldo)
         stats[p1]['ld'] += (m.score_p1 - m.score_p2)
         stats[p2]['ld'] += (m.score_p2 - m.score_p1)
         
+        # Punten (2 voor winst)
         if m.score_p1 > m.score_p2:
             stats[p1]['w'] += 1
             stats[p1]['pts'] += 2
@@ -141,71 +150,101 @@ def generate_knockout_from_poules(tournament: Tournament, session: Session):
             stats[p2]['w'] += 1
             stats[p2]['pts'] += 2
 
-    # 3. Sorteer per poule
-    poules_results = {}
-    
+    # 3. Groepeer per poule en sorteer DAARBINNEN
+    poules_map = {}
     for pid, data in stats.items():
         p_num = data['poule']
-        if p_num not in poules_results: poules_results[p_num] = []
-        poules_results[p_num].append(data)
+        if p_num not in poules_map: poules_map[p_num] = []
+        poules_map[p_num].append(data)
         
-    for p_num in poules_results:
-        poules_results[p_num].sort(key=lambda x: (x['pts'], x['ld'], x['w']), reverse=True)
+    for p_num in poules_map:
+        # Sorteren: Meeste punten -> Hoogste saldo -> Meeste winstpartijen
+        poules_map[p_num].sort(key=lambda x: (x['pts'], x['ld'], x['w']), reverse=True)
 
-    # 4. Selecteer de qualifiers
+    # 4. Global Seeding (Buckets maken)
+    # We zetten alle nummers 1 bij elkaar, alle nummers 2 bij elkaar, etc.
     limit = tournament.qualifiers_per_poule
-    active_poules = sorted(poules_results.keys())
-    
-    # Verzamelen per positie (alle 1e plekken, alle 2e plekken)
     ranked_buckets = [[] for _ in range(limit)]
     
-    for p_num in active_poules:
-        players_in_poule = poules_results[p_num]
-        for i in range(min(len(players_in_poule), limit)):
-            ranked_buckets[i].append(players_in_poule[i]['id'])
+    sorted_poule_numbers = sorted(poules_map.keys())
+    
+    for p_num in sorted_poule_numbers:
+        players_in_poule = poules_map[p_num]
+        for rank_idx in range(min(len(players_in_poule), limit)):
+            ranked_buckets[rank_idx].append(players_in_poule[rank_idx])
+
+    # Sorteer nu de buckets zelf (zodat de Beste #1 bovenaan staat)
+    for bucket in ranked_buckets:
+        bucket.sort(key=lambda x: (x['pts'], x['ld'], x['w']), reverse=True)
+
+    # 5. Maak één lange ranglijst (Flatten)
+    final_seed_list = []
+    for bucket in ranked_buckets:
+        for p_data in bucket:
+            final_seed_list.append(p_data['id'])
             
-    # 5. Maak de pairings
+    if not final_seed_list:
+        return 
+
+    # --- NIEUWE LOGICA: Check op Byes ---
+    if not tournament.allow_byes:
+        num_qualifiers = len(final_seed_list)
+        # Bereken de grootste macht van 2 die in het aantal past (Floor)
+        # Voorbeeld: 10 spelers -> log2(10)=3.32 -> floor=3 -> 2^3 = 8 spelers.
+        # Voorbeeld: 7 spelers -> log2(7)=2.8 -> floor=2 -> 2^2 = 4 spelers.
+        power_of_two = math.floor(math.log2(num_qualifiers))
+        target_size = 2 ** power_of_two
+        
+        # Als we minder dan 2 spelers overhouden, is er geen KO mogelijk
+        if target_size < 2:
+             # Fallback: doe niets of pak minimaal 2 als die er zijn
+             pass 
+        elif target_size < num_qualifiers:
+            # We snijden de lijst af. Omdat de lijst al gesorteerd is op sterkte,
+            # vallen automatisch de zwakste qualifiers af.
+            final_seed_list = final_seed_list[:target_size]
+
+    # 6. Bracket Grootte Berekenen (Macht van 2)
+    num_qualifiers = len(final_seed_list)
+    # Zoekt de eerstvolgende macht van 2 (bijv 10 spelers -> 16 bracket size)
+    bracket_size = 2 ** math.ceil(math.log2(num_qualifiers))
+    
+    # Vul aan met None (dit zijn de Byes)
+    padded_players = list(final_seed_list)
+    while len(padded_players) < bracket_size:
+        padded_players.append(None)
+
+    # 7. Wedstrijden Genereren (Hoogste Seed vs Laagste Seed)
     knockout_matches = []
+    half_size = bracket_size // 2
     
-    # SCENARIO: 1 POULE
-    if tournament.number_of_poules == 1:
-        # Alles op een hoop gooien en bracket maken
-        flat_list = []
-        if 1 in poules_results:
-            poule1 = poules_results[1]
-            for i in range(min(len(poule1), limit)):
-                flat_list.append(poule1[i]['id'])
+    for i in range(half_size):
+        # Seed 1 speelt tegen Seed 16 (of Bye), Seed 2 tegen 15, etc.
+        p1_id = padded_players[i]
+        p2_id = padded_players[bracket_size - 1 - i]
         
-        _create_bracket_matches(tournament, flat_list, session)
-        return
+        if p1_id and p2_id:
+            # Echte wedstrijd (Speler vs Speler)
+            match = _create_ko_match(tournament, p1_id, p2_id)
+            knockout_matches.append(match)
+            
+        elif p1_id and p2_id is None:
+            # Speler vs Bye -> We maken een wedstrijd die DIRECT AFGEROND is.
+            # Hierdoor verschijnt hij in de bracket als gewonnen en gaat de speler door.
+            bye_match = Match(
+                tournament_id=tournament.id,
+                round_number=1,
+                poule_number=None,
+                player1_id=p1_id,
+                player2_id=None, # Geen tegenstander
+                score_p1=tournament.starting_legs_ko, # Automatische winst score
+                score_p2=0,
+                is_completed=True, # Direct klaar!
+                best_of_legs=tournament.starting_legs_ko,
+                best_of_sets=tournament.sets_per_match
+            )
+            knockout_matches.append(bye_match)
 
-    # SCENARIO: 2 POULES (Kruisfinale)
-    if tournament.number_of_poules == 2:
-        group_winners = ranked_buckets[0]
-        runners_up = ranked_buckets[1]
-        
-        if len(group_winners) > 0 and len(runners_up) > 1:
-            knockout_matches.append(_create_ko_match(tournament, group_winners[0], runners_up[1]))
-            
-        if len(group_winners) > 1 and len(runners_up) > 0:
-            knockout_matches.append(_create_ko_match(tournament, group_winners[1], runners_up[0]))
-            
-        session.add_all(knockout_matches)
-        session.commit()
-        return
-
-    # SCENARIO: OVERIG (Simpele pairing 1 vs 2)
-    winners = ranked_buckets[0]
-    runners = ranked_buckets[1] if len(ranked_buckets) > 1 else []
-    
-    runners.reverse() # Spreiding
-    
-    for i in range(len(winners)):
-        p1 = winners[i]
-        if i < len(runners):
-            p2 = runners[i]
-            knockout_matches.append(_create_ko_match(tournament, p1, p2))
-            
     session.add_all(knockout_matches)
     session.commit()
 
@@ -272,3 +311,87 @@ def _create_ko_match(tournament, p1_id, p2_id):
         best_of_sets=tournament.sets_per_match,
         is_completed=False
     )
+
+def check_and_advance_knockout(tournament_id: int, current_round: int, session: Session):
+    """
+    Checkt of een knockout ronde compleet is. 
+    Zo ja: Genereert de volgende ronde.
+    """
+    # 1. Haal alle wedstrijden van deze ronde op
+    matches = session.exec(
+        select(Match)
+        .where(Match.tournament_id == tournament_id)
+        .where(Match.round_number == current_round)
+        .where(Match.poule_number == None) 
+    ).all()
+    
+    if not matches:
+        return
+
+    # 2. Check of ALLES compleet is
+    if not all(m.is_completed for m in matches):
+        return # Nog niet iedereen is klaar
+
+    # --- NIEUWE CHECK: Bestaat de volgende ronde al? ---
+    # Dit voorkomt dat we dubbele wedstrijden aanmaken als je per ongeluk 2x opslaat.
+    next_round = current_round + 1
+    existing_next_round = session.exec(
+        select(Match)
+        .where(Match.tournament_id == tournament_id)
+        .where(Match.round_number == next_round)
+        .where(Match.poule_number == None)
+    ).first()
+    
+    if existing_next_round:
+        print(f"Ronde {next_round} bestaat al, we genereren niets nieuws.")
+        return
+    # ---------------------------------------------------
+
+    print(f"--- Ronde {current_round} compleet! Genereren Ronde {current_round + 1} ---")
+
+    # 3. Verzamel winnaars
+    matches.sort(key=lambda x: x.id)
+    
+    winners = []
+    for m in matches:
+        if m.score_p1 > m.score_p2:
+            winners.append(m.player1_id)
+        else:
+            winners.append(m.player2_id)
+            
+    # Als er maar 1 winnaar over is, is het toernooi klaar!
+    if len(winners) < 2:
+        print(f"Toernooi {tournament_id} is afgelopen. Winnaar ID: {winners[0]}")
+        t = session.get(Tournament, tournament_id)
+        if t:
+            t.status = "finished"
+            session.add(t)
+            session.commit()
+        return
+
+    # 4. Maak wedstrijden voor de volgende ronde
+    t = session.get(Tournament, tournament_id)
+    legs = t.starting_legs_ko if t else 5
+    sets = t.sets_per_match if t else 1
+    
+    new_matches = []
+    for i in range(0, len(winners), 2):
+        p1 = winners[i]
+        p2 = winners[i+1]
+        
+        new_match = Match(
+            tournament_id=tournament_id,
+            round_number=next_round,
+            poule_number=None,
+            player1_id=p1,
+            player2_id=p2,
+            score_p1=0,
+            score_p2=0,
+            is_completed=False,
+            best_of_legs=legs,
+            best_of_sets=sets
+        )
+        new_matches.append(new_match)
+        
+    session.add_all(new_matches)
+    session.commit()

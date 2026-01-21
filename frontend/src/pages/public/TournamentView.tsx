@@ -1,7 +1,7 @@
 import { useEffect, useState, useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import api from '../../services/api';
-import { Trophy, Tablet, LayoutGrid, GitMerge, AlertCircle, Medal } from 'lucide-react';
+import { Trophy, Tablet, LayoutGrid, GitMerge, AlertCircle, Medal, RefreshCw } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
 
 // --- Types ---
@@ -14,6 +14,7 @@ interface Match {
   score_p1: number;
   score_p2: number;
   is_completed: boolean;
+  best_of_legs?: number;
 }
 
 interface Tournament {
@@ -30,7 +31,7 @@ interface Tournament {
 
 // --- Helper Components ---
 
-// 1. De "Bracket" Weergave (Nieuw!)
+// 1. De "Bracket" Weergave (Met verticale lijnen fix) [cite: 364]
 const BracketView = ({ matches }: { matches: Match[] }) => {
     // Groepeer wedstrijden per ronde
     const rounds = useMemo(() => {
@@ -43,6 +44,15 @@ const BracketView = ({ matches }: { matches: Match[] }) => {
     }, [matches]);
 
     const roundNumbers = Object.keys(rounds).map(Number).sort((a, b) => a - b);
+    
+    // Helper voor ronde namen
+    const getRoundName = (matchCount: number, roundIndex: number) => {
+        if (matchCount === 1) return "FINALE";
+        if (matchCount === 2) return "HALVE FINALE";
+        if (matchCount === 4) return "KWARTFINALE";
+        if (matchCount === 8) return "LAATSTE 16";
+        return `RONDE ${roundIndex + 1}`;
+    };
 
     if (matches.length === 0) {
         return (
@@ -53,53 +63,95 @@ const BracketView = ({ matches }: { matches: Match[] }) => {
         );
     }
 
+    // Basis hoogte voor de eerste ronde (in pixels). Pas dit aan als je kaarten groter/kleiner zijn.
+    const BASE_HEIGHT = 160; 
+
     return (
         <div className="overflow-x-auto pb-8 pt-4">
-            <div className="flex gap-8 min-w-max px-4">
-                {roundNumbers.map((roundNum, index) => {
-                    const isFinal = index === roundNumbers.length - 1;
+            <div className="flex px-4">
+                {roundNumbers.map((roundNum, colIndex) => {
+                    const currentRoundMatches = rounds[roundNum];
+                    const roundName = getRoundName(currentRoundMatches.length, colIndex);
+                    const isLastColumn = colIndex === roundNumbers.length - 1;
+
+                    // De hoogte van de 'slot' verdubbelt elke ronde zodat alles uitlijnt
+                    const slotHeight = BASE_HEIGHT * Math.pow(2, colIndex);
+
                     return (
-                        <div key={roundNum} className="flex flex-col w-64">
+                        <div key={roundNum} className="flex flex-col w-72">
                             {/* Ronde Titel */}
-                            <div className="text-center font-bold text-gray-500 uppercase text-xs mb-4 tracking-wider">
-                                {isFinal ? 'FINALE' : `Ronde ${roundNum}`}
+                            <div className="text-center font-bold text-gray-500 uppercase text-xs mb-6 tracking-wider border-b border-gray-200 pb-2 mx-4">
+                                {roundName}
                             </div>
                             
-                            {/* De kolom met wedstrijden - Space Around zorgt voor de "Boom" look */}
-                            <div className="flex flex-col justify-around flex-1 gap-4">
-                                {rounds[roundNum].map(match => (
-                                    <div key={match.id} className="relative flex items-center">
-                                        {/* Connector lijn links (behalve eerste ronde) */}
-                                        {index > 0 && (
-                                            <div className="absolute -left-4 w-4 h-0.5 bg-gray-300"></div>
-                                        )}
+                            {/* De kolom met wedstrijden (Gebruik justify-center ipv around) */}
+                            <div className="flex flex-col justify-center flex-1">
+                                {currentRoundMatches.map((match, matchIndex) => {
+                                    // Bepaal of dit de bovenste of onderste van een setje is
+                                    const isTop = matchIndex % 2 === 0;
+                                    const isBottom = matchIndex % 2 !== 0;
 
-                                        {/* Match Card */}
-                                        <div className={`w-full bg-white border rounded shadow-sm overflow-hidden text-sm relative z-10 
-                                            ${match.is_completed ? 'border-gray-300' : 'border-blue-200 ring-1 ring-blue-50'}
-                                        `}>
-                                            {/* Status streepje */}
-                                            <div className={`h-1 w-full ${match.is_completed ? 'bg-gray-400' : 'bg-blue-500'}`}></div>
+                                    return (
+                                        <div 
+                                            key={match.id} 
+                                            className="relative flex items-center justify-center"
+                                            style={{ height: `${slotHeight}px` }} // Vaste berekende hoogte
+                                        >
                                             
-                                            {/* Speler 1 */}
-                                            <div className={`px-3 py-2 flex justify-between items-center border-b border-gray-50 ${match.score_p1 > match.score_p2 && match.is_completed ? 'bg-green-50 font-bold text-gray-900' : ''}`}>
-                                                <span className="truncate">{match.player1_name || 'TBD'}</span>
-                                                <span className="font-mono font-bold ml-2">{match.is_completed ? match.score_p1 : '-'}</span>
+                                            {/* --- LINKS CONNECTOR (Inkomend) --- */}
+                                            {colIndex > 0 && (
+                                                <div className="absolute -left-6 w-6 h-0.5 bg-gray-300"></div>
+                                            )}
+
+                                            {/* --- RECHTS CONNECTOR (Uitgaand) --- */}
+                                            {/* Alleen tekenen als het NIET de finale is */}
+                                            {!isLastColumn && (
+                                                <>
+                                                    {/* Als het de BOVENSTE is: Lijn naar rechts en dan NAAR BENEDEN */}
+                                                    {isTop && (
+                                                        <div className="absolute -right-6 top-1/2 w-6 border-t-2 border-r-2 border-gray-300 rounded-tr-md" 
+                                                             style={{ height: '50%' }}>
+                                                        </div>
+                                                    )}
+
+                                                    {/* Als het de ONDERSTE is: Lijn naar rechts en dan NAAR BOVEN */}
+                                                    {isBottom && (
+                                                        <div className="absolute -right-6 top-0 w-6 border-b-2 border-r-2 border-gray-300 rounded-br-md" 
+                                                             style={{ height: '50%' }}>
+                                                        </div>
+                                                    )}
+                                                </>
+                                            )}
+
+                                            {/* --- MATCH CARD --- */}
+                                            <div className={`w-full mx-2 bg-white border rounded-lg shadow-sm overflow-hidden text-sm relative z-10 
+                                                ${match.is_completed ? 'border-gray-300' : 'border-blue-300 ring-1 ring-blue-100'}
+                                            `}>
+                                                {/* Header balkje */}
+                                                <div className={`h-1.5 w-full ${match.is_completed ? 'bg-gray-400' : 'bg-blue-500'}`}></div>
+                                                
+                                                {/* Speler 1 */}
+                                                <div className={`px-3 py-2 flex justify-between items-center border-b border-gray-100 ${match.score_p1 > match.score_p2 && match.is_completed ? 'bg-green-50/50 font-bold text-gray-900' : ''}`}>
+                                                    <span className="truncate font-medium">{match.player1_name || 'TBD'}</span>
+                                                    <span className="font-mono font-bold ml-2 bg-gray-50 px-2 py-0.5 rounded text-gray-700">
+                                                        {match.is_completed ? match.score_p1 : '-'}
+                                                    </span>
+                                                </div>
+
+                                                {/* Speler 2 */}
+                                                <div className={`px-3 py-2 flex justify-between items-center ${match.score_p2 > match.score_p1 && match.is_completed ? 'bg-green-50/50 font-bold text-gray-900' : ''}`}>
+                                                    <span className={`truncate font-medium ${!match.player2_name ? 'text-gray-400 italic' : ''}`}>
+                                                        {match.player2_name ? match.player2_name : (match.is_completed ? 'BYE' : 'TBD')}
+                                                    </span>
+                                                    <span className="font-mono font-bold ml-2 bg-gray-50 px-2 py-0.5 rounded text-gray-700">
+                                                        {match.is_completed ? match.score_p2 : '-'}
+                                                    </span>
+                                                </div>
                                             </div>
 
-                                            {/* Speler 2 */}
-                                            <div className={`px-3 py-2 flex justify-between items-center ${match.score_p2 > match.score_p1 && match.is_completed ? 'bg-green-50 font-bold text-gray-900' : ''}`}>
-                                                <span className="truncate">{match.player2_name || 'TBD'}</span>
-                                                <span className="font-mono font-bold ml-2">{match.is_completed ? match.score_p2 : '-'}</span>
-                                            </div>
                                         </div>
-
-                                        {/* Connector lijn rechts (behalve finale) */}
-                                        {!isFinal && (
-                                            <div className="absolute -right-4 w-4 h-0.5 bg-gray-300"></div>
-                                        )}
-                                    </div>
-                                ))}
+                                    );
+                                })}
                             </div>
                         </div>
                     );
@@ -150,19 +202,20 @@ const TournamentView = () => {
   const [activeTab, setActiveTab] = useState<number | 'ko'>(1);
 
   // --- Data Laden ---
+  const loadData = async () => {
+    try {
+      const res = await api.get(`/tournaments/public/${public_uuid}`);
+      setTournament(res.data);
+    } catch (err) {
+      console.error("Error loading tournament", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
-    const loadData = async () => {
-      try {
-        const res = await api.get(`/tournaments/public/${public_uuid}`);
-        setTournament(res.data);
-      } catch (err) {
-        console.error("Error loading tournament", err);
-      } finally {
-        setLoading(false);
-      }
-    };
     loadData();
-    const interval = setInterval(loadData, 10000);
+    const interval = setInterval(loadData, 10000); // Auto refresh elke 10s
     return () => clearInterval(interval);
   }, [public_uuid]);
 
@@ -222,7 +275,7 @@ const TournamentView = () => {
         <div className="max-w-6xl mx-auto flex flex-col md:flex-row justify-between items-center gap-4">
             <div>
                <h1 className="text-3xl font-bold flex items-center gap-3">
-                <Trophy className="text-yellow-400" />
+                 <Trophy className="text-yellow-400" />
                 {tournament.name}
               </h1>
               <div className="flex items-center gap-3 mt-2">
@@ -236,6 +289,11 @@ const TournamentView = () => {
             </div>
 
             <div className="flex items-center gap-3">
+                {/* Refresh knop */}
+                <button onClick={loadData} className="bg-slate-800 p-2 rounded hover:bg-slate-700 text-slate-300" title="Verversen">
+                    <RefreshCw size={20} />
+                </button>
+
                 {showKnockoutButton && (
                     <button 
                         onClick={handleStartKnockout}
@@ -297,7 +355,7 @@ const TournamentView = () => {
         {activeTab !== 'ko' ? (
             // --- POULE VIEW (Tabel + Lijst) ---
             <div className="grid gap-8 lg:grid-cols-3">
-                {/* Kolom 1: Stand (Breder op desktop) */}
+                {/* Kolom 1: Stand */}
                 <div className="lg:col-span-2">
                     <div className="bg-white rounded-lg shadow-sm overflow-hidden border border-gray-200 mb-6">
                         <div className="bg-gray-50 p-3 border-b border-gray-200">
@@ -339,7 +397,7 @@ const TournamentView = () => {
 
                 {/* Kolom 2: Wedstrijden Lijst */}
                 <div>
-                     <div className="bg-white rounded-lg shadow-sm border border-gray-200">
+                      <div className="bg-white rounded-lg shadow-sm border border-gray-200">
                         <div className="bg-gray-50 p-3 border-b border-gray-200">
                             <h3 className="font-bold text-gray-700">Wedstrijden</h3>
                         </div>
@@ -360,7 +418,7 @@ const TournamentView = () => {
                                 </div>
                             ))}
                         </div>
-                     </div>
+                      </div>
                 </div>
             </div>
         ) : (
