@@ -10,6 +10,7 @@ from app.models.tournament import Tournament
 from app.models.user import User
 from app.schemas.match import MatchRead, MatchScoreUpdate
 from app.api.users import get_current_user
+from app.services.tournament_gen import check_and_advance_knockout
 
 logger = logging.getLogger("dart_app")
 
@@ -33,10 +34,11 @@ def update_match_score(
     x_scorer_token: Optional[str] = Header(None, alias="X-Scorer-Token"),
     session: Session = Depends(get_session)
 ):
+    # ... (Auth en ophalen match blijft hetzelfde) ...
     match = get_match_or_404(match_id, session)
     tournament = session.get(Tournament, match.tournament_id)
     
-    # Auth Logic
+    # ... (Auth checks blijven hetzelfde) ...
     is_authorized = False
     if current_user and tournament.user_id == current_user.id:
         is_authorized = True
@@ -45,7 +47,7 @@ def update_match_score(
             is_authorized = True
             
     if not is_authorized:
-        raise HTTPException(status_code=403, detail="Not authorized.")
+         raise HTTPException(status_code=403, detail="Not authorized.")
 
     # Update
     match.score_p1 = score_in.score_p1
@@ -56,14 +58,20 @@ def update_match_score(
     session.commit()
     session.refresh(match)
     
+    # --- NIEUWE LOGICA: Check of we door moeten naar de volgende ronde ---
+    if match.is_completed and match.poule_number is None:
+        # Dit is een Knockout wedstrijd die net is afgerond.
+        # Check of de hele ronde klaar is.
+        check_and_advance_knockout(match.tournament_id, match.round_number, session)
+    # ---------------------------------------------------------------------
+    
     # Logging
     logger.info(f"MATCH {match.id}: {match.score_p1} - {match.score_p2}")
     
-    # Return with names (simple fetch for single update)
+    # Return response (blijft hetzelfde)
     p1 = session.get(Player, match.player1_id) if match.player1_id else None
     p2 = session.get(Player, match.player2_id) if match.player2_id else None
     
-    # Convert to dictionary and add names manually
     match_dict = match.model_dump()
     match_dict['player1_name'] = p1.name if p1 else "Bye"
     match_dict['player2_name'] = p2.name if p2 else "Bye"

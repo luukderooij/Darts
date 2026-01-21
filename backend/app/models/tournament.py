@@ -20,6 +20,8 @@ class Tournament(SQLModel, table=True):
     
     # NIEUW: Hoeveel spelers gaan er per poule door naar de KO?
     qualifiers_per_poule: int = Field(default=2) 
+
+    allow_byes: bool = Field(default=True)
     
     # --- Game Settings (Best of X) ---
     # We splitsen de lengte op voor poule en knockout. 

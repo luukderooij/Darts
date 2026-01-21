@@ -3,10 +3,9 @@ import { useNavigate } from 'react-router-dom';
 import api from '../../services/api';
 import AdminLayout from '../../components/layout/AdminLayout';
 import { Player, Dartboard } from '../../types';
-import { Trophy, AlertCircle, LayoutGrid, Users, Target } from 'lucide-react';
+import { Trophy, AlertCircle, LayoutGrid, Users, Target, Scissors } from 'lucide-react'; // Scissors toegevoegd voor icoon
 
 // --- STYLING CONSTANTEN ---
-// Hier definiëren we de Tailwind stijlen één keer, zodat we ze overal kunnen hergebruiken.
 const LABEL_STYLE = "block text-xs font-bold text-gray-500 uppercase mb-1";
 const INPUT_STYLE = "w-full border border-gray-300 rounded-md p-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all shadow-sm";
 
@@ -31,6 +30,7 @@ const CreateTournament = () => {
   const [format, setFormat] = useState('hybrid');
   const [poules, setPoules] = useState(1);
   const [qualifiersPerPoule, setQualifiersPerPoule] = useState(2);
+  const [allowByes, setAllowByes] = useState(true); // <--- NIEUWE STATE
   
   // Match length settings
   const [groupLegs, setGroupLegs] = useState(3);
@@ -76,7 +76,18 @@ const CreateTournament = () => {
 
     const totalQualifiers = poules * qualifiersPerPoule;
     if (selectedPlayerIds.length < totalQualifiers) {
-       // Optional warning logic
+       setError(`Je wilt ${totalQualifiers} spelers laten doorgaan, maar je hebt er maar ${selectedPlayerIds.length} geselecteerd.`);
+       window.scrollTo(0,0);
+       return;
+    }
+
+    if (poules > 0) {
+        const playersPerPoule = Math.ceil(selectedPlayerIds.length / poules);
+        if (playersPerPoule > 7) {
+            if (!confirm(`Let op: Je hebt gemiddeld ${playersPerPoule} spelers per poule. Dit zorgt voor erg veel wedstrijden. We raden maximaal 7 aan. Wil je doorgaan?`)) {
+                return;
+            }
+        }
     }
 
     try {
@@ -86,6 +97,7 @@ const CreateTournament = () => {
             name: finalName,
             date,
             format,
+            allow_byes: allowByes, // <--- MEEGEVEN AAN BACKEND
             number_of_poules: poules,
             qualifiers_per_poule: qualifiersPerPoule,
             starting_legs_group: groupLegs,
@@ -97,9 +109,13 @@ const CreateTournament = () => {
 
         await api.post('/tournaments/', payload);
         navigate('/dashboard'); 
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      setError("Er is iets misgegaan bij het aanmaken.");
+      if (err.response && err.response.data && err.response.data.detail) {
+        setError(err.response.data.detail);
+      } else {
+        setError("Er is iets misgegaan bij het aanmaken.");
+      }
       window.scrollTo(0,0);
     }
   };
@@ -164,6 +180,30 @@ const CreateTournament = () => {
                    </select>
                 </div>
 
+                {/* NIEUW: BYES CHECKBOX */}
+                <div className="flex items-start gap-2 p-2 bg-gray-50 rounded border border-gray-100">
+                    <div className="mt-0.5">
+                        <input 
+                            type="checkbox" 
+                            id="allowByes"
+                            className="w-4 h-4 text-blue-600 rounded accent-blue-600"
+                            checked={allowByes}
+                            onChange={e => setAllowByes(e.target.checked)}
+                        />
+                    </div>
+                    <div>
+                        <label htmlFor="allowByes" className="text-sm font-bold text-gray-700 cursor-pointer select-none">
+                            Sta Byes (Vrijlotingen) toe
+                        </label>
+                        <p className="text-xs text-gray-500 mt-0.5 leading-tight">
+                            {allowByes 
+                                ? "Oneven aantal qualifiers krijgen een vrije ronde."
+                                : "Alleen de beste 2, 4, 8, 16... gaan door. De rest valt af."
+                            }
+                        </p>
+                    </div>
+                </div>
+
                 {format === 'hybrid' && (
                     <>
                         <div className="grid grid-cols-2 gap-3">
@@ -178,14 +218,20 @@ const CreateTournament = () => {
                             <div>
                                 <label className={LABEL_STYLE}>Doorgaan per poule</label>
                                 <input 
-                                  type="number" min="1" max="8" 
+                                  type="number" min="1" 
                                   className={INPUT_STYLE} 
                                   value={qualifiersPerPoule} onChange={e => setQualifiersPerPoule(parseInt(e.target.value))} 
                                 />
                             </div>
                         </div>
                         <p className="text-xs text-gray-500 mt-1 bg-blue-50 p-2 rounded text-center">
-                            <strong>{poules * qualifiersPerPoule}</strong> spelers gaan door naar de Knockout fase.
+                            Totaal <strong>{poules * qualifiersPerPoule}</strong> qualifiers.<br/>
+                            {!allowByes && (poules * qualifiersPerPoule) & (poules * qualifiersPerPoule - 1) ? (
+                                <span className="text-red-500 font-bold flex items-center justify-center gap-1 mt-1">
+                                    <Scissors size={12} />
+                                    Wordt afgesneden naar: {Math.pow(2, Math.floor(Math.log2(poules * qualifiersPerPoule)))}
+                                </span>
+                            ) : null}
                         </p>
                     </>
                 )}
