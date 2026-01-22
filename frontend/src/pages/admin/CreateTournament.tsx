@@ -65,6 +65,15 @@ const CreateTournament = () => {
                 ]);
                 setAllPlayers(pRes.data);
                 setAllBoards(bRes.data);
+
+                // --- NIEUW: Standaard 1e bord selecteren ---
+                // We checken eerst of de lijst niet leeg is, om errors te voorkomen.
+                if (bRes.data.length > 0) {
+                    // We pakken het ID van het eerste bord in de lijst
+                    setSelectedBoardIds([bRes.data[0].id]);
+                }
+                // ------------------------------------------
+
             } catch (err) {
                 console.error(err);
                 setError("Kon data niet laden. Staat de backend aan?");
