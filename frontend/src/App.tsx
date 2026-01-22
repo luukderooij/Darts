@@ -10,8 +10,8 @@ import ManagePlayers from './pages/admin/ManagePlayers';
 import CreateTournament from './pages/admin/CreateTournament';
 import SystemLogs from './pages/admin/SystemLogs';
 import ManageBoards from './pages/admin/ManageBoards';
-// This is the real file we want to use!
 import Dashboard from './pages/admin/Dashboard';
+import ManageTournament from './pages/admin/ManageTournament'; 
 
 // Public Pages
 import TournamentView from './pages/public/TournamentView';
@@ -33,9 +33,8 @@ function App() {
           <Route path="/t/:public_uuid" element={<TournamentView />} />
 
           {/* Admin Routes */}
-          {/* FIX: Use 'Dashboard', not 'DashboardHome' */}
           <Route path="/dashboard" element={<Dashboard />} />
-          
+          <Route path="/dashboard/tournament/:id" element={<ManageTournament />} />
           <Route path="/dashboard/players" element={<ManagePlayers />} />
           <Route path="/dashboard/create-tournament" element={<CreateTournament />} />
           <Route path="/dashboard/logs" element={<SystemLogs />} />

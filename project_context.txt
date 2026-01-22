@@ -422,6 +422,7 @@ from app.models.player import Player
 from app.models.match import Match
 from app.models.dartboard import Dartboard 
 from app.api.users import get_current_user 
+from app.schemas.tournament import TournamentUpdate
 
 from app.schemas.tournament import (
     TournamentCreate, 
@@ -519,6 +520,17 @@ def create_tournament(
     
     return tournament
 
+@router.get("/{tournament_id}", response_model=TournamentRead)
+def read_tournament_by_id(
+    tournament_id: int,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user)
+):
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+    return tournament
+
 @router.get("/", response_model=List[TournamentRead])
 def read_tournaments(
     offset: int = 0,
@@ -590,6 +602,61 @@ def start_knockout(
         
     generate_knockout_from_poules(t, session)
     return {"message": "Knockout phase generated"}
+
+
+@router.patch("/{tournament_id}", response_model=TournamentRead)
+def update_tournament_settings(
+    tournament_id: int,
+    tourn_update: TournamentUpdate,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Update toernooi instellingen (bijv. allow_byes) on the fly.
+    """
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+    
+    # Update alleen de velden die zijn meegegeven
+    tourn_data = tourn_update.model_dump(exclude_unset=True)
+    for key, value in tourn_data.items():
+        setattr(tournament, key, value)
+        
+    session.add(tournament)
+    session.commit()
+    session.refresh(tournament)
+    return tournament
+
+@router.post("/{tournament_id}/rounds/{round_number}/update-format")
+def update_round_format(
+    tournament_id: int,
+    round_number: int,
+    best_of_legs: int = Query(...),
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Batch update: Pas de 'Best of X' aan voor ALLE ongespeelde wedstrijden in een specifieke ronde.
+    """
+    # 1. Haal matches op
+    statement = select(Match).where(
+        Match.tournament_id == tournament_id,
+        Match.round_number == round_number,
+        Match.is_completed == False # Alleen ongespeelde aanpassen
+    )
+    matches = session.exec(statement).all()
+    
+    if not matches:
+        return {"message": "Geen ongespeelde wedstrijden gevonden in deze ronde om aan te passen."}
+        
+    # 2. Update ze allemaal
+    for match in matches:
+        match.best_of_legs = best_of_legs
+        session.add(match)
+        
+    session.commit()
+    return {"message": f"{len(matches)} wedstrijden geüpdatet naar Best of {best_of_legs} legs."}
 
 ==================================================
 FILE: backend/app\api\users.py
@@ -1572,6 +1639,7 @@ def check_and_advance_knockout(tournament_id: int, current_round: int, session: 
         select(Match)
         .where(Match.tournament_id == tournament_id)
         .where(Match.round_number == next_round)
+        .where(Match.poule_number == None)
     ).first()
     
     if existing_next_round:
@@ -1650,8 +1718,8 @@ import ManagePlayers from './pages/admin/ManagePlayers';
 import CreateTournament from './pages/admin/CreateTournament';
 import SystemLogs from './pages/admin/SystemLogs';
 import ManageBoards from './pages/admin/ManageBoards';
-// This is the real file we want to use!
 import Dashboard from './pages/admin/Dashboard';
+import ManageTournament from './pages/admin/ManageTournament'; 
 
 // Public Pages
 import TournamentView from './pages/public/TournamentView';
@@ -1673,9 +1741,8 @@ function App() {
           <Route path="/t/:public_uuid" element={<TournamentView />} />
 
           {/* Admin Routes */}
-          {/* FIX: Use 'Dashboard', not 'DashboardHome' */}
           <Route path="/dashboard" element={<Dashboard />} />
-          
+          <Route path="/dashboard/tournament/:id" element={<ManageTournament />} />
           <Route path="/dashboard/players" element={<ManagePlayers />} />
           <Route path="/dashboard/create-tournament" element={<CreateTournament />} />
           <Route path="/dashboard/logs" element={<SystemLogs />} />
@@ -2269,11 +2336,12 @@ import api from '../../services/api';
 import AdminLayout from '../../components/layout/AdminLayout';
 import { Trophy, Calendar, Users, ExternalLink, Copy, Target, LayoutGrid } from 'lucide-react';
 import { Tournament } from '../../types';
+import { useNavigate } from 'react-router-dom';
 
 const Dashboard = () => {
   const [tournaments, setTournaments] = useState<Tournament[]>([]);
   const [loading, setLoading] = useState(true);
-
+  const navigate = useNavigate();
   // 1. Fetch tournaments from the Backend
   useEffect(() => {
     const fetchTournaments = async () => {
@@ -2382,12 +2450,12 @@ const Dashboard = () => {
                       Public View
                     </Link>
 
-                    <button 
-                      className="bg-slate-800 text-white px-5 py-2 rounded font-medium hover:bg-slate-900 transition shadow-sm"
-                      onClick={() => alert("Coming soon: Match Control Panel")}
-                    >
-                      Manage
-                    </button>
+                  <button 
+                    onClick={() => navigate(`/dashboard/tournament/${t.id}`)}
+                    className="bg-slate-800 text-white px-5 py-2 rounded font-medium hover:bg-slate-900 transition shadow-sm"
+                  >
+                    Manage
+                  </button>
                   </div>
 
                 </div>
@@ -2687,6 +2755,328 @@ const ManagePlayers = () => {
 };
 
 export default ManagePlayers;
+
+==================================================
+FILE: frontend/src\pages\admin\ManageTournament.tsx
+==================================================
+
+import { useEffect, useState } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import api from '../../services/api';
+import AdminLayout from '../../components/layout/AdminLayout';
+import { Save, RefreshCcw, ShieldAlert, Settings, ChevronDown, ChevronRight, SaveAll } from 'lucide-react';
+import { Tournament, Match } from '../../types';
+
+interface MatchWithUI extends Match {
+  best_of_legs: number;
+  player1_name: string;
+  player2_name: string;
+  score_p1: number;
+  score_p2: number;
+  is_completed: boolean;
+  round_number: number;
+  poule_number: number | null;
+  is_saving?: boolean;
+  save_success?: boolean;
+}
+
+const ManageTournament = () => {
+  const { id } = useParams();
+  const navigate = useNavigate();
+  
+  const [tournament, setTournament] = useState<Tournament | null>(null);
+  const [matches, setMatches] = useState<MatchWithUI[]>([]);
+  const [loading, setLoading] = useState(true);
+  
+  // Settings State
+  const [allowByes, setAllowByes] = useState(true);
+  const [settingsDirty, setSettingsDirty] = useState(false);
+
+  // Round Collapses
+  const [openRounds, setOpenRounds] = useState<Record<number, boolean>>({});
+
+  useEffect(() => {
+    loadData();
+  }, [id]);
+
+  const loadData = async () => {
+    setLoading(true);
+    try {
+      const tournRes = await api.get(`/tournaments/${id}`);
+      const currentTourn = tournRes.data;
+      setTournament(currentTourn);
+      setAllowByes(currentTourn.allow_byes);
+
+      if (currentTourn.public_uuid) {
+          const matchesRes = await api.get(`/matches/by-tournament/${currentTourn.public_uuid}`);
+          setMatches(matchesRes.data);
+
+          if (matchesRes.data.length > 0) {
+              const maxRound = Math.max(...matchesRes.data.map((m: any) => m.round_number));
+              setOpenRounds((prev) => ({ ...prev, [maxRound]: true }));
+          }
+      }
+    } catch (error) {
+      console.error("Fout bij laden data:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // --- ACTIES ---
+
+  const handleUpdateSettings = async () => {
+    if (!tournament) return;
+    try {
+        await api.patch(`/tournaments/${tournament.id}`, { allow_byes: allowByes });
+        setSettingsDirty(false);
+        alert("Instellingen opgeslagen.");
+    } catch (err) {
+        alert("Fout bij opslaan instellingen.");
+    }
+  };
+
+  const handleResetMatch = async (matchId: number) => {
+    if (!confirm("Resetten naar 0-0 en open zetten?")) return;
+    try {
+        await api.put(`/matches/${matchId}/score`, {
+            score_p1: 0,
+            score_p2: 0,
+            is_completed: false
+        });
+        setMatches(prev => prev.map(m => m.id === matchId ? { ...m, score_p1: 0, score_p2: 0, is_completed: false } : m));
+    } catch (err) {
+        alert("Reset mislukt.");
+    }
+  };
+
+  const handleBatchUpdateRound = async (roundNum: number, legs: number) => {
+    if (!tournament) return;
+    if (!confirm(`Zet alle ONGESPEELDE wedstrijden in ronde ${roundNum} naar Best of ${legs}?`)) return;
+    try {
+        await api.post(`/tournaments/${tournament.id}/rounds/${roundNum}/update-format?best_of_legs=${legs}`);
+        loadData();
+    } catch (err) {
+        alert("Update mislukt.");
+    }
+  };
+
+  const toggleRound = (r: number) => setOpenRounds(prev => ({...prev, [r]: !prev[r]}));
+
+  // --- SPREADSHEET LOGICA ---
+
+  const handleScoreChange = (id: number, field: 'score_p1' | 'score_p2', value: string) => {
+      const numVal = value === '' ? 0 : parseInt(value);
+      setMatches(prev => prev.map(m => 
+          m.id === id ? { ...m, [field]: numVal, save_success: false } : m
+      ));
+  };
+
+  const saveMatchScore = async (match: MatchWithUI) => {
+      setMatches(prev => prev.map(m => m.id === match.id ? { ...m, is_saving: true } : m));
+
+      try {
+          await api.put(`/matches/${match.id}/score`, {
+              score_p1: match.score_p1,
+              score_p2: match.score_p2,
+              is_completed: true 
+          });
+
+          setMatches(prev => prev.map(m => m.id === match.id ? { ...m, is_saving: false, save_success: true, is_completed: true } : m));
+          
+          setTimeout(() => {
+            setMatches(prev => prev.map(m => m.id === match.id ? { ...m, save_success: false } : m));
+          }, 2000);
+
+      } catch (err) {
+          console.error(err);
+          setMatches(prev => prev.map(m => m.id === match.id ? { ...m, is_saving: false } : m));
+      }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent, match: MatchWithUI) => {
+      if (e.key === 'Enter') {
+          saveMatchScore(match);
+          (e.currentTarget as HTMLInputElement).blur(); 
+      }
+  };
+
+  const matchesByRound = matches.reduce((acc, match) => {
+    const r = match.round_number;
+    if (!acc[r]) acc[r] = [];
+    acc[r].push(match);
+    return acc;
+  }, {} as Record<number, MatchWithUI[]>);
+
+  // --- RENDERING ---
+
+  if (loading) {
+    return (
+      <AdminLayout>
+          <div className="flex justify-center items-center h-64 text-gray-500">
+              <span className="animate-pulse">Gegevens ophalen...</span>
+          </div>
+      </AdminLayout>
+    );
+  }
+
+  if (!tournament) {
+    return (
+      <AdminLayout>
+          <div className="max-w-5xl mx-auto mt-8 bg-red-50 text-red-600 p-6 rounded-lg border border-red-200">
+              <h3 className="font-bold text-lg flex items-center gap-2"><ShieldAlert /> Toernooi niet gevonden</h3>
+              <button onClick={() => navigate('/dashboard')} className="mt-4 text-blue-600 hover:underline">&larr; Terug</button>
+          </div>
+      </AdminLayout>
+    );
+  }
+
+  return (
+    <AdminLayout>
+      {/* CSS Hack om de pijltjes (spinners) van input[type=number] te verbergen */}
+      <style>{`
+        .no-spinner::-webkit-inner-spin-button, 
+        .no-spinner::-webkit-outer-spin-button { 
+          -webkit-appearance: none; 
+          margin: 0; 
+        } 
+        .no-spinner { 
+          -moz-appearance: textfield; 
+        }
+      `}</style>
+
+      <div className="max-w-5xl mx-auto pb-20">
+        <div className="flex justify-between items-center mb-6">
+            <h2 className="text-3xl font-bold text-gray-800 flex items-center gap-3">
+                <Settings className="text-gray-600" />
+                Beheer: <span className="text-blue-600">{tournament.name}</span>
+            </h2>
+            <button onClick={loadData} className="p-2 bg-gray-200 rounded hover:bg-gray-300">
+                <RefreshCcw size={20} />
+            </button>
+        </div>
+
+        {/* SETTINGS */}
+        <div className="bg-white p-6 rounded-lg shadow-sm border border-yellow-200 mb-8">
+            <h3 className="font-bold text-lg mb-4 flex items-center gap-2">
+                <ShieldAlert className="text-yellow-500" /> Instellingen
+            </h3>
+            <div className="flex items-center gap-6">
+                <label className="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" checked={allowByes} onChange={e => { setAllowByes(e.target.checked); setSettingsDirty(true); }} className="w-5 h-5 accent-blue-600"/>
+                    <span className="font-medium text-gray-700">Allow Byes</span>
+                </label>
+                {settingsDirty && (
+                    <button onClick={handleUpdateSettings} className="bg-blue-600 text-white px-4 py-1 rounded shadow hover:bg-blue-700 flex items-center gap-2 animate-pulse">
+                        <Save size={16} /> Opslaan
+                    </button>
+                )}
+            </div>
+        </div>
+
+        {/* MATCHES LIST */}
+        <div className="space-y-4">
+            {Object.keys(matchesByRound).map((roundKey) => {
+                const roundNum = Number(roundKey);
+                const roundMatches = matchesByRound[roundNum];
+                const isOpen = openRounds[roundNum];
+                const isPoule = roundMatches[0].poule_number !== null;
+
+                return (
+                    <div key={roundNum} className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+                        {/* HEADER */}
+                        <div className="bg-gray-50 p-4 flex justify-between items-center cursor-pointer select-none" onClick={() => toggleRound(roundNum)}>
+                            <div className="flex items-center gap-2 font-bold text-gray-700">
+                                {isOpen ? <ChevronDown size={20} /> : <ChevronRight size={20} />}
+                                {isPoule ? `Poule Fase - Ronde ${roundNum}` : `Knockout - Ronde ${roundNum}`}
+                                <span className="text-xs bg-gray-200 px-2 py-0.5 rounded text-gray-600 font-normal">{roundMatches.length} wedstrijden</span>
+                            </div>
+                            
+                            {isOpen && (
+                                <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
+                                    <span className="text-xs text-gray-500 font-bold">Zet Best of:</span>
+                                    <input type="number" min="1" className="w-12 text-center border rounded p-1 text-xs no-spinner" 
+                                        placeholder={roundMatches[0].best_of_legs?.toString() || "5"}
+                                        onKeyDown={(e) => e.key === 'Enter' && handleBatchUpdateRound(roundNum, parseInt(e.currentTarget.value))}
+                                    />
+                                </div>
+                            )}
+                        </div>
+
+                        {/* ROWS */}
+                        {isOpen && (
+                            <div className="divide-y divide-gray-100">
+                                {roundMatches.map(match => (
+                                    <div key={match.id} className={`p-3 transition-colors flex items-center justify-between ${match.save_success ? 'bg-green-50' : 'hover:bg-gray-50'}`}>
+                                        
+                                        {/* ID */}
+                                        <div className="w-8 text-xs text-gray-400 font-mono text-center">#{match.id}</div>
+
+                                        {/* PLAYERS & INPUTS */}
+                                        <div className="flex-1 flex items-center justify-center gap-2">
+                                            
+                                            <div className={`flex-1 text-right truncate font-medium ${match.score_p1 > match.score_p2 && match.is_completed ? 'text-green-700 font-bold' : 'text-gray-700'}`}>
+                                                {match.player1_name || <span className="italic text-gray-400">Bye</span>}
+                                            </div>
+
+                                            {/* INPUTS CONTAINER */}
+                                            <div className="flex items-center bg-white border rounded shadow-sm overflow-hidden focus-within:ring-2 focus-within:ring-blue-400 focus-within:border-blue-400 transition-all">
+                                                <input 
+                                                    type="number" 
+                                                    className={`w-12 text-center p-2 outline-none font-bold no-spinner ${match.save_success ? 'text-green-600' : 'text-gray-800'}`}
+                                                    value={match.score_p1}
+                                                    onChange={(e) => handleScoreChange(match.id, 'score_p1', e.target.value)}
+                                                    onFocus={(e) => e.target.select()} // Selecteer tekst bij klik
+                                                    onBlur={() => saveMatchScore(match)}
+                                                    onKeyDown={(e) => handleKeyDown(e, match)}
+                                                />
+                                                
+                                                <span className="text-gray-300 font-light px-1">|</span>
+
+                                                <input 
+                                                    type="number" 
+                                                    className={`w-12 text-center p-2 outline-none font-bold no-spinner ${match.save_success ? 'text-green-600' : 'text-gray-800'}`}
+                                                    value={match.score_p2}
+                                                    onChange={(e) => handleScoreChange(match.id, 'score_p2', e.target.value)}
+                                                    onFocus={(e) => e.target.select()} // Selecteer tekst bij klik
+                                                    onBlur={() => saveMatchScore(match)}
+                                                    onKeyDown={(e) => handleKeyDown(e, match)}
+                                                />
+                                            </div>
+
+                                            <div className={`flex-1 text-left truncate font-medium ${match.score_p2 > match.score_p1 && match.is_completed ? 'text-green-700 font-bold' : 'text-gray-700'}`}>
+                                                {match.player2_name || <span className="italic text-gray-400">Bye</span>}
+                                            </div>
+
+                                        </div>
+
+                                        {/* ACTIONS */}
+                                        <div className="w-20 flex justify-end gap-1">
+                                            {match.is_saving ? (
+                                                <span className="p-2 text-blue-500 animate-spin"><RefreshCcw size={16}/></span>
+                                            ) : match.save_success ? (
+                                                <span className="p-2 text-green-500"><SaveAll size={16}/></span>
+                                            ) : (
+                                                <button onClick={() => handleResetMatch(match.id)} className="p-2 text-gray-300 hover:text-red-500 transition" title="Reset">
+                                                    <RefreshCcw size={16} />
+                                                </button>
+                                            )}
+                                        </div>
+
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                );
+            })}
+        </div>
+      </div>
+    </AdminLayout>
+  );
+};
+
+export default ManageTournament;
 
 ==================================================
 FILE: frontend/src\pages\admin\SystemLogs.tsx
@@ -3033,7 +3423,7 @@ interface Tournament {
 
 // --- Helper Components ---
 
-// 1. De "Bracket" Weergave
+// 1. De "Bracket" Weergave (Met verticale lijnen fix) [cite: 364]
 const BracketView = ({ matches }: { matches: Match[] }) => {
     // Groepeer wedstrijden per ronde
     const rounds = useMemo(() => {
@@ -3046,9 +3436,9 @@ const BracketView = ({ matches }: { matches: Match[] }) => {
     }, [matches]);
 
     const roundNumbers = Object.keys(rounds).map(Number).sort((a, b) => a - b);
-
-    // Bepaal de naam van de ronde op basis van het aantal wedstrijden
-    const getRoundName = (matchCount: number, roundIndex: number, totalRounds: number) => {
+    
+    // Helper voor ronde namen
+    const getRoundName = (matchCount: number, roundIndex: number) => {
         if (matchCount === 1) return "FINALE";
         if (matchCount === 2) return "HALVE FINALE";
         if (matchCount === 4) return "KWARTFINALE";
@@ -3065,64 +3455,95 @@ const BracketView = ({ matches }: { matches: Match[] }) => {
         );
     }
 
+    // Basis hoogte voor de eerste ronde (in pixels). Pas dit aan als je kaarten groter/kleiner zijn.
+    const BASE_HEIGHT = 160; 
+
     return (
         <div className="overflow-x-auto pb-8 pt-4">
-            <div className="flex gap-12 min-w-max px-4">
-                {roundNumbers.map((roundNum, index) => {
+            <div className="flex px-4">
+                {roundNumbers.map((roundNum, colIndex) => {
                     const currentRoundMatches = rounds[roundNum];
-                    const roundName = getRoundName(currentRoundMatches.length, index, roundNumbers.length);
-                    // Het is de laatste ronde (voor connectors) als dit de laatste kolom is
-                    const isLastColumn = index === roundNumbers.length - 1;
+                    const roundName = getRoundName(currentRoundMatches.length, colIndex);
+                    const isLastColumn = colIndex === roundNumbers.length - 1;
+
+                    // De hoogte van de 'slot' verdubbelt elke ronde zodat alles uitlijnt
+                    const slotHeight = BASE_HEIGHT * Math.pow(2, colIndex);
 
                     return (
                         <div key={roundNum} className="flex flex-col w-72">
                             {/* Ronde Titel */}
-                            <div className="text-center font-bold text-gray-500 uppercase text-xs mb-6 tracking-wider border-b border-gray-200 pb-2">
+                            <div className="text-center font-bold text-gray-500 uppercase text-xs mb-6 tracking-wider border-b border-gray-200 pb-2 mx-4">
                                 {roundName}
                             </div>
                             
-                            {/* De kolom met wedstrijden */}
-                            <div className="flex flex-col justify-around flex-1 gap-8">
-                                {currentRoundMatches.map(match => (
-                                    <div key={match.id} className="relative flex items-center">
-                                        
-                                        {/* Connector LIJN LINKS (behalve eerste ronde) */}
-                                        {index > 0 && (
-                                            <div className="absolute -left-6 w-6 h-0.5 bg-gray-300"></div>
-                                        )}
+                            {/* De kolom met wedstrijden (Gebruik justify-center ipv around) */}
+                            <div className="flex flex-col justify-center flex-1">
+                                {currentRoundMatches.map((match, matchIndex) => {
+                                    // Bepaal of dit de bovenste of onderste van een setje is
+                                    const isTop = matchIndex % 2 === 0;
+                                    const isBottom = matchIndex % 2 !== 0;
 
-                                        {/* Match Card */}
-                                        <div className={`w-full bg-white border rounded-lg shadow-sm overflow-hidden text-sm relative z-10 
-                                            ${match.is_completed ? 'border-gray-300' : 'border-blue-300 ring-1 ring-blue-100'}
-                                        `}>
-                                            {/* Header met Best of X */}
-                                            <div className={`h-1.5 w-full ${match.is_completed ? 'bg-gray-400' : 'bg-blue-500'}`}></div>
+                                    return (
+                                        <div 
+                                            key={match.id} 
+                                            className="relative flex items-center justify-center"
+                                            style={{ height: `${slotHeight}px` }} // Vaste berekende hoogte
+                                        >
                                             
-                                            {/* Speler 1 */}
-                                            <div className={`px-4 py-3 flex justify-between items-center border-b border-gray-100 ${match.score_p1 > match.score_p2 && match.is_completed ? 'bg-green-50/50 font-bold text-gray-900' : ''}`}>
-                                                <span className="truncate font-medium">{match.player1_name || 'TBD'}</span>
-                                                <span className="font-mono font-bold ml-2 bg-gray-50 px-2 py-0.5 rounded text-gray-700">
-                                                    {match.is_completed ? match.score_p1 : '-'}
-                                                </span>
+                                            {/* --- LINKS CONNECTOR (Inkomend) --- */}
+                                            {colIndex > 0 && (
+                                                <div className="absolute -left-6 w-6 h-0.5 bg-gray-300"></div>
+                                            )}
+
+                                            {/* --- RECHTS CONNECTOR (Uitgaand) --- */}
+                                            {/* Alleen tekenen als het NIET de finale is */}
+                                            {!isLastColumn && (
+                                                <>
+                                                    {/* Als het de BOVENSTE is: Lijn naar rechts en dan NAAR BENEDEN */}
+                                                    {isTop && (
+                                                        <div className="absolute -right-6 top-1/2 w-6 border-t-2 border-r-2 border-gray-300 rounded-tr-md" 
+                                                             style={{ height: '50%' }}>
+                                                        </div>
+                                                    )}
+
+                                                    {/* Als het de ONDERSTE is: Lijn naar rechts en dan NAAR BOVEN */}
+                                                    {isBottom && (
+                                                        <div className="absolute -right-6 top-0 w-6 border-b-2 border-r-2 border-gray-300 rounded-br-md" 
+                                                             style={{ height: '50%' }}>
+                                                        </div>
+                                                    )}
+                                                </>
+                                            )}
+
+                                            {/* --- MATCH CARD --- */}
+                                            <div className={`w-full mx-2 bg-white border rounded-lg shadow-sm overflow-hidden text-sm relative z-10 
+                                                ${match.is_completed ? 'border-gray-300' : 'border-blue-300 ring-1 ring-blue-100'}
+                                            `}>
+                                                {/* Header balkje */}
+                                                <div className={`h-1.5 w-full ${match.is_completed ? 'bg-gray-400' : 'bg-blue-500'}`}></div>
+                                                
+                                                {/* Speler 1 */}
+                                                <div className={`px-3 py-2 flex justify-between items-center border-b border-gray-100 ${match.score_p1 > match.score_p2 && match.is_completed ? 'bg-green-50/50 font-bold text-gray-900' : ''}`}>
+                                                    <span className="truncate font-medium">{match.player1_name || 'TBD'}</span>
+                                                    <span className="font-mono font-bold ml-2 bg-gray-50 px-2 py-0.5 rounded text-gray-700">
+                                                        {match.is_completed ? match.score_p1 : '-'}
+                                                    </span>
+                                                </div>
+
+                                                {/* Speler 2 */}
+                                                <div className={`px-3 py-2 flex justify-between items-center ${match.score_p2 > match.score_p1 && match.is_completed ? 'bg-green-50/50 font-bold text-gray-900' : ''}`}>
+                                                    <span className={`truncate font-medium ${!match.player2_name ? 'text-gray-400 italic' : ''}`}>
+                                                        {match.player2_name ? match.player2_name : (match.is_completed ? 'BYE' : 'TBD')}
+                                                    </span>
+                                                    <span className="font-mono font-bold ml-2 bg-gray-50 px-2 py-0.5 rounded text-gray-700">
+                                                        {match.is_completed ? match.score_p2 : '-'}
+                                                    </span>
+                                                </div>
                                             </div>
 
-                                            {/* Speler 2 */}
-                                            <div className={`px-4 py-3 flex justify-between items-center ${match.score_p2 > match.score_p1 && match.is_completed ? 'bg-green-50/50 font-bold text-gray-900' : ''}`}>
-                                                <span className={`truncate font-medium ${!match.player2_name ? 'text-gray-400 italic' : ''}`}>
-                                                    {match.player2_name ? match.player2_name : (match.is_completed ? 'BYE' : 'TBD')}
-                                                </span>
-                                                <span className="font-mono font-bold ml-2 bg-gray-50 px-2 py-0.5 rounded text-gray-700">
-                                                    {match.is_completed ? match.score_p2 : '-'}
-                                                </span>
-                                            </div>
                                         </div>
-
-                                        {/* Connector LIJN RECHTS (behalve laatste kolom) */}
-                                        {!isLastColumn && (
-                                            <div className="absolute -right-6 w-6 h-0.5 bg-gray-300"></div>
-                                        )}
-                                    </div>
-                                ))}
+                                    );
+                                })}
                             </div>
                         </div>
                     );
@@ -3246,7 +3667,7 @@ const TournamentView = () => {
         <div className="max-w-6xl mx-auto flex flex-col md:flex-row justify-between items-center gap-4">
             <div>
                <h1 className="text-3xl font-bold flex items-center gap-3">
-                <Trophy className="text-yellow-400" />
+                 <Trophy className="text-yellow-400" />
                 {tournament.name}
               </h1>
               <div className="flex items-center gap-3 mt-2">
