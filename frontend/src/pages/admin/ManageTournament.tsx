@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../../services/api';
 import AdminLayout from '../../components/layout/AdminLayout';
-import { Save, RefreshCcw, ShieldAlert, Settings, ChevronDown, ChevronRight, SaveAll } from 'lucide-react';
+import { Save, RefreshCcw, ShieldAlert, Settings, ChevronDown, ChevronRight, SaveAll, GitMerge } from 'lucide-react';
 import { Tournament, Match } from '../../types';
 
 interface MatchWithUI extends Match {
@@ -31,7 +31,7 @@ const ManageTournament = () => {
   const [settingsDirty, setSettingsDirty] = useState(false);
 
   // Round Collapses
-  const [openRounds, setOpenRounds] = useState<Record<number, boolean>>({});
+  const [openRounds, setOpenRounds] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     loadData();
@@ -45,13 +45,20 @@ const ManageTournament = () => {
       setTournament(currentTourn);
       setAllowByes(currentTourn.allow_byes);
 
-      if (currentTourn.public_uuid) {
+if (currentTourn.public_uuid) {
           const matchesRes = await api.get(`/matches/by-tournament/${currentTourn.public_uuid}`);
           setMatches(matchesRes.data);
-
+          
           if (matchesRes.data.length > 0) {
-              const maxRound = Math.max(...matchesRes.data.map((m: any) => m.round_number));
-              setOpenRounds((prev) => ({ ...prev, [maxRound]: true }));
+              const maxRoundMatch = matchesRes.data.reduce((prev: any, current: any) => {
+                  return (prev.id > current.id) ? prev : current;
+              });
+              
+              const type = maxRoundMatch.poule_number !== null ? 'P' : 'K';
+              const key = `${type}-${maxRoundMatch.round_number}`;
+              
+              setOpenRounds((prev) => ({ ...prev, [key]: true }));
+              // --- FIX END ---
           }
       }
     } catch (error) {
@@ -99,7 +106,7 @@ const ManageTournament = () => {
     }
   };
 
-  const toggleRound = (r: number) => setOpenRounds(prev => ({...prev, [r]: !prev[r]}));
+  const toggleRound = (key: string) => setOpenRounds(prev => ({...prev, [key]: !prev[key]}));
 
   // --- SPREADSHEET LOGICA ---
 
@@ -108,6 +115,39 @@ const ManageTournament = () => {
       setMatches(prev => prev.map(m => 
           m.id === id ? { ...m, [field]: numVal, save_success: false } : m
       ));
+  };
+
+  const canStartKnockout = () => {
+      if (!tournament || !matches.length) return false;
+      if (tournament.format !== 'hybrid') return false; // Alleen voor hybride toernooien
+
+      const pouleMatches = matches.filter(m => m.poule_number !== null);
+      const koMatches = matches.filter(m => m.poule_number === null);
+
+      // 1. Zijn er poule wedstrijden?
+      if (pouleMatches.length === 0) return false;
+
+      // 2. Zijn ze ALLEMAAL klaar?
+      const allPoulesFinished = pouleMatches.every(m => m.is_completed);
+
+      // 3. Is de knockout nog NIET begonnen?
+      const koNotStarted = koMatches.length === 0;
+
+      return allPoulesFinished && koNotStarted;
+  };
+
+  const handleStartKnockout = async () => {
+      if (!confirm("Weet je zeker dat je de Poule-fase wilt afsluiten en de Knockout wilt genereren?")) return;
+      
+      try {
+          // De API endpoint die we eerder hebben gezien in de context [cite: 35]
+          await api.post(`/tournaments/${id}/start-knockout`);
+          alert("Knockout fase gegenereerd!");
+          loadData(); // Herlaad de data om de nieuwe wedstrijden te tonen
+      } catch (err) {
+          console.error(err);
+          alert("Er ging iets mis bij het starten van de knockout.");
+      }
   };
 
   const saveMatchScore = async (match: MatchWithUI) => {
@@ -139,12 +179,36 @@ const ManageTournament = () => {
       }
   };
 
-  const matchesByRound = matches.reduce((acc, match) => {
-    const r = match.round_number;
-    if (!acc[r]) acc[r] = [];
-    acc[r].push(match);
+  const getRoundName = (roundNum: number, matchCount: number) => {
+    if (matchCount === 1) return "Finale";
+    if (matchCount === 2) return "Halve Finale";
+    if (matchCount === 4) return "Kwartfinale";
+    return `Ronde ${roundNum}`;
+};
+
+  // 1. Groepeer op FASE (P/K) én RONDE nummer
+  // We maken keys zoals "P-1" (Poule ronde 1) en "K-1" (Knockout ronde 1)
+  const groupedMatches = matches.reduce((acc, match) => {
+    const type = match.poule_number !== null ? 'P' : 'K'; // P = Poule, K = Knockout
+    const key = `${type}-${match.round_number}`;
+    
+    if (!acc[key]) acc[key] = [];
+    acc[key].push(match);
     return acc;
-  }, {} as Record<number, MatchWithUI[]>);
+  }, {} as Record<string, MatchWithUI[]>);
+
+  // 2. Sorteer de keys
+  // We willen eerst Poules (P), dan Knockouts (K). Binnen die groepen sorteren we op ronde nummer.
+  const sortedGroupKeys = Object.keys(groupedMatches).sort((a, b) => {
+      const [typeA, roundA] = a.split('-');
+      const [typeB, roundB] = b.split('-');
+
+      // Als types verschillend zijn: P komt voor K
+      if (typeA !== typeB) return typeA === 'P' ? -1 : 1;
+
+      // Als types gelijk zijn: Sorteer op nummer (1, 2, 3...)
+      return Number(roundA) - Number(roundB);
+  });
 
   // --- RENDERING ---
 
@@ -194,6 +258,28 @@ const ManageTournament = () => {
             </button>
         </div>
 
+        {/* NIEUW: START KNOCKOUT KNOP (Alleen zichtbaar als poules klaar zijn) */}
+        {canStartKnockout() && (
+            <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-6 flex justify-between items-center shadow-sm animate-pulse">
+                <div className="flex items-center gap-3">
+                    <div className="bg-green-100 p-2 rounded-full text-green-600">
+                        <GitMerge size={24} />
+                    </div>
+                    <div>
+                        <h4 className="font-bold text-green-800">Poule Fase Voltooid!</h4>
+                        <p className="text-sm text-green-600">Alle wedstrijden zijn gespeeld. Je kunt nu de bracket genereren.</p>
+                    </div>
+                </div>
+                <button 
+                    onClick={handleStartKnockout}
+                    className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-6 rounded-lg shadow transition-transform transform hover:scale-105"
+                >
+                    Start Knockout Fase
+                </button>
+            </div>
+        )}
+
+
         {/* SETTINGS */}
         <div className="bg-white p-6 rounded-lg shadow-sm border border-yellow-200 mb-8">
             <h3 className="font-bold text-lg mb-4 flex items-center gap-2">
@@ -212,22 +298,37 @@ const ManageTournament = () => {
             </div>
         </div>
 
-        {/* MATCHES LIST */}
+{/* MATCHES LIST */}
         <div className="space-y-4">
-            {Object.keys(matchesByRound).map((roundKey) => {
-                const roundNum = Number(roundKey);
-                const roundMatches = matchesByRound[roundNum];
-                const isOpen = openRounds[roundNum];
-                const isPoule = roundMatches[0].poule_number !== null;
+            {sortedGroupKeys.map((groupKey) => {
+                const [type, roundStr] = groupKey.split('-');
+                const roundNum = Number(roundStr);
+                const roundMatches = groupedMatches[groupKey];
+                
+                const isOpen = openRounds[groupKey];
+                const isPoule = type === 'P';
 
                 return (
-                    <div key={roundNum} className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+                    <div key={groupKey} className={`rounded-lg shadow-sm border overflow-hidden ${isPoule ? 'bg-white border-gray-200' : 'bg-orange-50/50 border-orange-200'}`}>
                         {/* HEADER */}
-                        <div className="bg-gray-50 p-4 flex justify-between items-center cursor-pointer select-none" onClick={() => toggleRound(roundNum)}>
+                        <div 
+                            className={`p-4 flex justify-between items-center cursor-pointer select-none ${isPoule ? 'bg-gray-50' : 'bg-orange-100 text-orange-900'}`} 
+                            onClick={() => toggleRound(groupKey)}
+                        >
                             <div className="flex items-center gap-2 font-bold text-gray-700">
                                 {isOpen ? <ChevronDown size={20} /> : <ChevronRight size={20} />}
-                                {isPoule ? `Poule Fase - Ronde ${roundNum}` : `Knockout - Ronde ${roundNum}`}
-                                <span className="text-xs bg-gray-200 px-2 py-0.5 rounded text-gray-600 font-normal">{roundMatches.length} wedstrijden</span>
+                                
+                                {isPoule ? (
+                                    <span>Poule Fase - Ronde {roundNum}</span>
+                                ) : (
+                                    <span className="text-orange-800 flex items-center gap-2">
+                                        <GitMerge size={16}/> Knockout - {getRoundName(roundNum, roundMatches.length)}
+                                    </span>
+                                )}
+                                
+                                <span className={`text-xs px-2 py-0.5 rounded font-normal ${isPoule ? 'bg-gray-200 text-gray-600' : 'bg-orange-200 text-orange-800'}`}>
+                                    {roundMatches.length} wedstrijden
+                                </span>
                             </div>
                             
                             {isOpen && (
@@ -245,7 +346,7 @@ const ManageTournament = () => {
                         {isOpen && (
                             <div className="divide-y divide-gray-100">
                                 {roundMatches.map(match => (
-                                    <div key={match.id} className={`p-3 transition-colors flex items-center justify-between ${match.save_success ? 'bg-green-50' : 'hover:bg-gray-50'}`}>
+                                    <div key={match.id} className={`p-3 transition-colors flex items-center justify-between ${match.save_success ? 'bg-green-50' : 'hover:bg-white'}`}>
                                         
                                         {/* ID */}
                                         <div className="w-8 text-xs text-gray-400 font-mono text-center">#{match.id}</div>
@@ -253,6 +354,7 @@ const ManageTournament = () => {
                                         {/* PLAYERS & INPUTS */}
                                         <div className="flex-1 flex items-center justify-center gap-2">
                                             
+                                            {/* SPELER 1 */}
                                             <div className={`flex-1 text-right truncate font-medium ${match.score_p1 > match.score_p2 && match.is_completed ? 'text-green-700 font-bold' : 'text-gray-700'}`}>
                                                 {match.player1_name || <span className="italic text-gray-400">Bye</span>}
                                             </div>
@@ -264,24 +366,23 @@ const ManageTournament = () => {
                                                     className={`w-12 text-center p-2 outline-none font-bold no-spinner ${match.save_success ? 'text-green-600' : 'text-gray-800'}`}
                                                     value={match.score_p1}
                                                     onChange={(e) => handleScoreChange(match.id, 'score_p1', e.target.value)}
-                                                    onFocus={(e) => e.target.select()} // Selecteer tekst bij klik
+                                                    onFocus={(e) => e.target.select()} 
                                                     onBlur={() => saveMatchScore(match)}
                                                     onKeyDown={(e) => handleKeyDown(e, match)}
                                                 />
-                                                
                                                 <span className="text-gray-300 font-light px-1">|</span>
-
                                                 <input 
                                                     type="number" 
                                                     className={`w-12 text-center p-2 outline-none font-bold no-spinner ${match.save_success ? 'text-green-600' : 'text-gray-800'}`}
                                                     value={match.score_p2}
                                                     onChange={(e) => handleScoreChange(match.id, 'score_p2', e.target.value)}
-                                                    onFocus={(e) => e.target.select()} // Selecteer tekst bij klik
+                                                    onFocus={(e) => e.target.select()}
                                                     onBlur={() => saveMatchScore(match)}
                                                     onKeyDown={(e) => handleKeyDown(e, match)}
                                                 />
                                             </div>
 
+                                            {/* SPELER 2 */}
                                             <div className={`flex-1 text-left truncate font-medium ${match.score_p2 > match.score_p1 && match.is_completed ? 'text-green-700 font-bold' : 'text-gray-700'}`}>
                                                 {match.player2_name || <span className="italic text-gray-400">Bye</span>}
                                             </div>

@@ -10,6 +10,11 @@ class MatchRead(BaseModel):
     id: int
     tournament_id: int
     round_number: int
+    
+    poule_number: Optional[int] = None 
+    best_of_legs: Optional[int] = 5
+    best_of_sets: Optional[int] = 1
+
     player1_id: Optional[int]
     player2_id: Optional[int]
     player1_name: Optional[str] = "Bye"

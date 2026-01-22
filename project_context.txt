@@ -12,7 +12,7 @@ from app.core.config import settings
 from app.db.session import init_db
 
 # Import API route modules
-from app.api import auth, users, players, tournaments, matches, websockets, dartboards
+from app.api import auth, users, players, tournaments, matches, websockets, dartboards, teams
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -58,6 +58,7 @@ app.include_router(players.router, prefix="/api/players", tags=["Players"])
 app.include_router(tournaments.router, prefix="/api/tournaments", tags=["Tournaments"])
 app.include_router(matches.router, prefix="/api/matches", tags=["Matches"])
 app.include_router(dartboards.router, prefix="/api/dartboards", tags=["Dartboards"])
+app.include_router(teams.router, prefix="/api/teams", tags=["Teams"])
 
 # WebSocket router for real-time logs
 # Note: The frontend will connect via ws://localhost:8000/ws/logs
@@ -402,6 +403,131 @@ def delete_player(
     session.delete(player)
     session.commit()
     return {"ok": True}
+
+==================================================
+FILE: backend/app\api\teams.py
+==================================================
+
+# FILE: backend/app/api/teams.py
+import random
+from typing import List
+from fastapi import APIRouter, Depends, HTTPException
+from sqlmodel import Session, select
+
+from app.db.session import get_session
+from app.models.team import Team
+from app.models.player import Player
+from app.models.tournament import Tournament
+from app.schemas.team import TeamCreateManual, TeamAutoGenerate, TeamRead
+from app.api.users import get_current_user # Beveiliging
+
+router = APIRouter()
+
+# --- HELPER: Automatische Naam Genereren ---
+def generate_team_name(players: List[Player]) -> str:
+    """
+    Genereert een naam zoals 'Van Gerwen & Van Barneveld' 
+    of 'Michael & Raymond' als er geen achternaam is.
+    """
+    names = []
+    for p in players:
+        # Gebruik achternaam als die er is, anders voornaam
+        name_part = p.last_name if p.last_name else p.first_name
+        if p.nickname: # Optioneel: nickname gebruiken
+             name_part = p.nickname
+        names.append(name_part)
+    
+    return " & ".join(names)
+
+# --- ENDPOINT 1: Handmatig Team Aanmaken ---
+@router.post("/manual", response_model=TeamRead)
+def create_manual_team(
+    team_in: TeamCreateManual,
+    session: Session = Depends(get_session),
+    current_user = Depends(get_current_user)
+):
+    # 1. Check of toernooi bestaat
+    tournament = session.get(Tournament, team_in.tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Toernooi niet gevonden")
+
+    # 2. Haal spelers op
+    players = session.exec(select(Player).where(Player.id.in_(team_in.player_ids))).all()
+    if len(players) != len(team_in.player_ids):
+        raise HTTPException(status_code=400, detail="Eén of meer speler IDs bestaan niet.")
+    
+    if len(players) < 2:
+        raise HTTPException(status_code=400, detail="Een team moet minimaal 2 spelers hebben.")
+
+    # 3. Bepaal de naam (Eis 3: Automatisch als leeg)
+    final_name = team_in.name
+    if not final_name or final_name.strip() == "":
+        final_name = generate_team_name(players)
+
+    # 4. Opslaan
+    team = Team(name=final_name, tournament_id=team_in.tournament_id)
+    team.players = players # SQLModel regelt de koppeltabel automatisch
+    
+    session.add(team)
+    session.commit()
+    session.refresh(team)
+    
+    return team
+
+# --- ENDPOINT 2: Automatisch Random Teams Genereren ---
+@router.post("/auto", response_model=List[TeamRead])
+def create_auto_teams(
+    auto_in: TeamAutoGenerate,
+    session: Session = Depends(get_session),
+    current_user = Depends(get_current_user)
+):
+    # 1. Haal spelers op
+    players = session.exec(select(Player).where(Player.id.in_(auto_in.player_ids))).all()
+    
+    # Check even aantal (voor koppels)
+    if len(players) % 2 != 0:
+        raise HTTPException(status_code=400, detail="Aantal spelers moet even zijn om koppels te maken.")
+
+    # 2. Husselen (Eis 1: Random)
+    # We maken een kopie van de lijst om te husselen
+    shuffled_players = list(players)
+    random.shuffle(shuffled_players)
+
+    new_teams = []
+
+    # 3. Loop door de lijst in stappen van 2
+    for i in range(0, len(shuffled_players), 2):
+        p1 = shuffled_players[i]
+        p2 = shuffled_players[i+1]
+        
+        pair_players = [p1, p2]
+        
+        # Eis 3: Automatische naam
+        auto_name = generate_team_name(pair_players)
+        
+        team = Team(name=auto_name, tournament_id=auto_in.tournament_id)
+        team.players = pair_players
+        
+        session.add(team)
+        new_teams.append(team)
+
+    session.commit()
+    
+    # Refresh alle teams om ID's te krijgen
+    for t in new_teams:
+        session.refresh(t)
+        
+    return new_teams
+
+# --- ENDPOINT 3: Teams ophalen van een toernooi ---
+@router.get("/{tournament_id}", response_model=List[TeamRead])
+def read_teams(
+    tournament_id: int,
+    session: Session = Depends(get_session),
+    current_user = Depends(get_current_user)
+):
+    teams = session.exec(select(Team).where(Team.tournament_id == tournament_id)).all()
+    return teams
 
 ==================================================
 FILE: backend/app\api\tournaments.py
@@ -897,7 +1023,7 @@ def init_db():
     """
     # Import ALL models here so SQLModel knows about them before creating tables
     # --- FIX: Added 'dartboard' and 'links' to this list ---
-    from app.models import user, player, tournament, match, dartboard, links # noqa: F401
+    from app.models import user, player, tournament, match, dartboard, links, team # noqa: F401
     
     SQLModel.metadata.create_all(engine)
 
@@ -972,15 +1098,19 @@ class Match(SQLModel, table=True):
     tournament_id: int = Field(foreign_key="tournament.id")
     tournament: Optional["Tournament"] = Relationship(back_populates="matches")
     
-    player1_id: Optional[int] = Field(foreign_key="player.id")
-    player2_id: Optional[int] = Field(foreign_key="player.id")
+    player1_id: Optional[int] = Field(default=None, foreign_key="player.id")
+    player2_id: Optional[int] = Field(default=None, foreign_key="player.id")
+
+    team1_id: Optional[int] = Field(default=None, foreign_key="team.id")
+    team2_id: Optional[int] = Field(default=None, foreign_key="team.id")
 
 ==================================================
 FILE: backend/app\models\player.py
 ==================================================
 
-from typing import Optional
+from typing import Optional, List
 from sqlmodel import Field, SQLModel, Relationship
+from app.models.team import Team, TeamPlayerLink
 
 class Player(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -993,6 +1123,8 @@ class Player(SQLModel, table=True):
     user_id: Optional[int] = Field(default=None, foreign_key="user.id")
     user: Optional["User"] = Relationship(back_populates="players")
 
+    teams: List[Team] = Relationship(back_populates="players", link_model=TeamPlayerLink)
+
     @property
     def name(self) -> str:
         full_name = self.first_name
@@ -1001,6 +1133,28 @@ class Player(SQLModel, table=True):
         if self.last_name:
             full_name += f" {self.last_name}"
         return full_name
+    
+
+==================================================
+FILE: backend/app\models\team.py
+==================================================
+
+from typing import Optional, List
+from sqlmodel import Field, SQLModel, Relationship
+
+# Koppeltabel: Speler <-> Team
+class TeamPlayerLink(SQLModel, table=True):
+    team_id: Optional[int] = Field(default=None, foreign_key="team.id", primary_key=True)
+    player_id: Optional[int] = Field(default=None, foreign_key="player.id", primary_key=True)
+
+class Team(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str
+    tournament_id: int = Field(foreign_key="tournament.id")
+    
+    # Relaties
+    players: List["Player"] = Relationship(back_populates="teams", link_model=TeamPlayerLink)
+    tournament: "Tournament" = Relationship(back_populates="teams")
 
 ==================================================
 FILE: backend/app\models\tournament.py
@@ -1014,31 +1168,25 @@ from app.models.links import TournamentPlayerLink, TournamentBoardLink
 
 class Tournament(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    # Default name logic wordt hieronder in de frontend afgevangen, maar backend fallback blijft handig
+    
     name: str = Field(default_factory=lambda: f"Toernooi {datetime.now().strftime('%Y-%m-%d')}")
     date: str 
     created_at: datetime = Field(default_factory=datetime.utcnow)
     status: str = Field(default="draft") # draft, active, knockout_ready, finished
     
     # --- Format Settings ---
-    # We maken 'hybrid' de standaard.
     format: str = Field(default="hybrid") 
     
     number_of_poules: int = Field(default=1)
     
-    # NIEUW: Hoeveel spelers gaan er per poule door naar de KO?
+    # Hoeveel spelers gaan er per poule door naar de KO?
     qualifiers_per_poule: int = Field(default=2) 
 
     allow_byes: bool = Field(default=True)
     
     # --- Game Settings (Best of X) ---
-    # We splitsen de lengte op voor poule en knockout. 
-    # Dit zijn de 'default' waarden voor die fase. 
-    # (Specifieke finales kunnen we later in de 'Match' tabel overschrijven).
-    starting_legs_group: int = Field(default=3) # Bijv. Best of 3
-    starting_legs_ko: int = Field(default=3)    # Bijv. Best of 3
-    
-    # Sets laten we voor nu even generiek, tenzij je ook sets per fase wilt?
+    starting_legs_group: int = Field(default=3) 
+    starting_legs_ko: int = Field(default=3)    
     sets_per_match: int = Field(default=1)
     
     # --- Access Control ---
@@ -1053,6 +1201,9 @@ class Tournament(SQLModel, table=True):
     players: List["Player"] = Relationship(back_populates=None, link_model=TournamentPlayerLink)
     boards: List["Dartboard"] = Relationship(back_populates=None, link_model=TournamentBoardLink)
     matches: List["Match"] = Relationship(back_populates="tournament")
+    
+    # --- NIEUW: Voeg deze regel toe om de cirkel rond te maken ---
+    teams: List["Team"] = Relationship(back_populates="tournament")
 
 ==================================================
 FILE: backend/app\models\user.py
@@ -1174,6 +1325,40 @@ class PlayerCreate(PlayerBase):
 class PlayerRead(PlayerBase):
     id: int
     name: str
+
+==================================================
+FILE: backend/app\schemas\team.py
+==================================================
+
+# FILE: backend/app/schemas/team.py
+from typing import List, Optional
+from pydantic import BaseModel
+from app.schemas.player import PlayerRead
+
+# --- INPUT SCHEMAS ---
+
+# Voor handmatig 1 team maken
+class TeamCreateManual(BaseModel):
+    tournament_id: int
+    player_ids: List[int]       # De IDs van de spelers in dit team
+    name: Optional[str] = None  # Optioneel (wordt automatisch gegenereerd indien leeg)
+
+# Voor automatisch teams genereren (random)
+class TeamAutoGenerate(BaseModel):
+    tournament_id: int
+    player_ids: List[int]       # De pool van spelers die verdeeld moeten worden
+
+# --- OUTPUT SCHEMA ---
+
+# Wat sturen we terug naar de frontend?
+class TeamRead(BaseModel):
+    id: int
+    name: str
+    tournament_id: int
+    players: List[PlayerRead] = [] # We willen de speler details zien in het team
+
+    class Config:
+        from_attributes = True
 
 ==================================================
 FILE: backend/app\schemas\token.py
@@ -1303,6 +1488,7 @@ import random
 import math
 from sqlmodel import Session, select
 from app.models.match import Match
+from app.models.team import Team
 from app.models.player import Player
 from app.models.tournament import Tournament
 
@@ -1696,6 +1882,64 @@ def check_and_advance_knockout(tournament_id: int, current_round: int, session: 
     session.add_all(new_matches)
     session.commit()
 
+def create_random_teams(tournament_id: int, player_ids: list[int], session: Session):
+    """
+    Eis 1: Automatisch team systeem (Random).
+    Eis 3: Automatische naamgeving.
+    """
+    # 1. Spelers ophalen
+    players = session.exec(select(Player).where(Player.id.in_(player_ids))).all()
+    
+    if len(players) % 2 != 0:
+        raise ValueError("Aantal spelers moet even zijn voor koppels!")
+
+    # 2. Husselen
+    random.shuffle(players)
+
+    teams = []
+    # 3. Koppels maken (per 2)
+    for i in range(0, len(players), 2):
+        p1 = players[i]
+        p2 = players[i+1]
+
+        # Eis 3: Automatische naam
+        # Bijv: "Van Gerwen & Van Barneveld"
+        team_name = f"{p1.last_name or p1.first_name} & {p2.last_name or p2.first_name}"
+
+        team = Team(name=team_name, tournament_id=tournament_id)
+        team.players = [p1, p2]
+        session.add(team)
+        teams.append(team)
+    
+    session.commit()
+    return teams
+
+def create_manual_team(tournament_id: int, player_ids: list[int], custom_name: str | None, session: Session):
+    """
+    Eis 2: Vrije keuze team samenstelling.
+    Eis 3: Team naam keuze (met fallback).
+    """
+    players = session.exec(select(Player).where(Player.id.in_(player_ids))).all()
+    
+    if not players:
+        raise ValueError("Geen geldige spelers geselecteerd")
+
+    # Eis 3: Naam logica
+    if custom_name and custom_name.strip() != "":
+        final_name = custom_name
+    else:
+        # Fallback: namen aan elkaar plakken
+        names = [p.last_name or p.first_name for p in players]
+        final_name = " & ".join(names)
+
+    team = Team(name=final_name, tournament_id=tournament_id)
+    team.players = players
+    
+    session.add(team)
+    session.commit()
+    session.refresh(team)
+    return team
+
 ==================================================
 FILE: backend/app\services\__init__.py
 ==================================================
@@ -1995,333 +2239,502 @@ import { useNavigate } from 'react-router-dom';
 import api from '../../services/api';
 import AdminLayout from '../../components/layout/AdminLayout';
 import { Player, Dartboard } from '../../types';
-import { Trophy, AlertCircle, LayoutGrid, Users, Target, Scissors } from 'lucide-react'; // Scissors toegevoegd voor icoon
+import { Trophy, AlertCircle, LayoutGrid, Users, Target, Scissors, Shuffle, UserPlus, Trash2, Save } from 'lucide-react';
 
 // --- STYLING CONSTANTEN ---
 const LABEL_STYLE = "block text-xs font-bold text-gray-500 uppercase mb-1";
 const INPUT_STYLE = "w-full border border-gray-300 rounded-md p-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all shadow-sm";
 
+interface Team {
+    id: number;
+    name: string;
+    players: Player[];
+}
+
 const CreateTournament = () => {
-  const navigate = useNavigate();
-  
-  // --- Data State ---
-  const [allPlayers, setAllPlayers] = useState<Player[]>([]);
-  const [allBoards, setAllBoards] = useState<Dartboard[]>([]);
-  const [loading, setLoading] = useState(true);
-  
-  // --- Selection State ---
-  const [selectedPlayerIds, setSelectedPlayerIds] = useState<number[]>([]);
-  const [selectedBoardIds, setSelectedBoardIds] = useState<number[]>([]);
-  
-  // --- Form State ---
-  const defaultName = `Toernooi ${new Date().toLocaleDateString('nl-NL')}`;
-  const [name, setName] = useState(defaultName);
-  const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
-  
-  // Format settings
-  const [format, setFormat] = useState('hybrid');
-  const [poules, setPoules] = useState(1);
-  const [qualifiersPerPoule, setQualifiersPerPoule] = useState(2);
-  const [allowByes, setAllowByes] = useState(true); // <--- NIEUWE STATE
-  
-  // Match length settings
-  const [groupLegs, setGroupLegs] = useState(3);
-  const [koLegs, setKoLegs] = useState(5);
-  const [sets, setSets] = useState(1);
-  
-  const [error, setError] = useState<string | null>(null);
+    const navigate = useNavigate();
 
-  // --- Load Data ---
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const [pRes, bRes] = await Promise.all([
-          api.get('/players/'),
-          api.get('/dartboards/')
-        ]);
-        setAllPlayers(pRes.data);
-        setAllBoards(bRes.data);
-      } catch (err) {
-        console.error(err);
-        setError("Kon data niet laden. Staat de backend aan?");
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchData();
-  }, []);
+    // --- Wizard State ---
+    const [step, setStep] = useState<1 | 2>(1); // Stap 1: Setup, Stap 2: Teams
+    const [createdTournamentId, setCreatedTournamentId] = useState<number | null>(null);
 
-  // --- Helpers ---
-  const togglePlayer = (id: number) => setSelectedPlayerIds(prev => prev.includes(id) ? prev.filter(p => p !== id) : [...prev, id]);
-  const toggleBoard = (id: number) => setSelectedBoardIds(prev => prev.includes(id) ? prev.filter(b => b !== id) : [...prev, id]);
+    // --- Data State ---
+    const [allPlayers, setAllPlayers] = useState<Player[]>([]);
+    const [allBoards, setAllBoards] = useState<Dartboard[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [teams, setTeams] = useState<Team[]>([]); // Gemaakte teams
 
-  // --- Submission ---
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
+    // --- Selection State ---
+    const [selectedPlayerIds, setSelectedPlayerIds] = useState<number[]>([]);
+    const [selectedBoardIds, setSelectedBoardIds] = useState<number[]>([]);
 
-    if (selectedBoardIds.length === 0) {
-      setError("Selecteer minimaal 1 dartbord.");
-      window.scrollTo(0,0);
-      return;
-    }
+    // --- Form State ---
+    const defaultName = `Toernooi ${new Date().toLocaleDateString('nl-NL')}`;
+    const [name, setName] = useState(defaultName);
+    const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
 
-    const totalQualifiers = poules * qualifiersPerPoule;
-    if (selectedPlayerIds.length < totalQualifiers) {
-       setError(`Je wilt ${totalQualifiers} spelers laten doorgaan, maar je hebt er maar ${selectedPlayerIds.length} geselecteerd.`);
-       window.scrollTo(0,0);
-       return;
-    }
+    // Format settings
+    const [participationMode, setParticipationMode] = useState<'singles' | 'doubles'>('singles'); // NIEUW
+    const [format, setFormat] = useState('hybrid');
+    const [poules, setPoules] = useState(1);
+    const [qualifiersPerPoule, setQualifiersPerPoule] = useState(2);
+    const [allowByes, setAllowByes] = useState(true);
 
-    if (poules > 0) {
-        const playersPerPoule = Math.ceil(selectedPlayerIds.length / poules);
-        if (playersPerPoule > 7) {
-            if (!confirm(`Let op: Je hebt gemiddeld ${playersPerPoule} spelers per poule. Dit zorgt voor erg veel wedstrijden. We raden maximaal 7 aan. Wil je doorgaan?`)) {
-                return;
+    // Match length settings
+    const [groupLegs, setGroupLegs] = useState(3);
+    const [koLegs, setKoLegs] = useState(5);
+    const [sets, setSets] = useState(1);
+
+    const [error, setError] = useState<string | null>(null);
+
+    // --- Manual Team Input State ---
+    const [manualTeamName, setManualTeamName] = useState("");
+    const [manualSelection, setManualSelection] = useState<number[]>([]);
+
+    // --- Load Data ---
+    useEffect(() => {
+        const fetchData = async () => {
+            try {
+                const [pRes, bRes] = await Promise.all([
+                    api.get('/players/'),
+                    api.get('/dartboards/')
+                ]);
+                setAllPlayers(pRes.data);
+                setAllBoards(bRes.data);
+
+                // --- NIEUW: Standaard 1e bord selecteren ---
+                // We checken eerst of de lijst niet leeg is, om errors te voorkomen.
+                if (bRes.data.length > 0) {
+                    // We pakken het ID van het eerste bord in de lijst
+                    setSelectedBoardIds([bRes.data[0].id]);
+                }
+                // ------------------------------------------
+
+            } catch (err) {
+                console.error(err);
+                setError("Kon data niet laden. Staat de backend aan?");
+            } finally {
+                setLoading(false);
             }
-        }
-    }
-
-    try {
-        const finalName = name.trim() === "" ? defaultName : name;
-
-        const payload = {
-            name: finalName,
-            date,
-            format,
-            allow_byes: allowByes, // <--- MEEGEVEN AAN BACKEND
-            number_of_poules: poules,
-            qualifiers_per_poule: qualifiersPerPoule,
-            starting_legs_group: groupLegs,
-            starting_legs_ko: koLegs,
-            sets_per_match: sets,
-            player_ids: selectedPlayerIds,
-            board_ids: selectedBoardIds
         };
+        fetchData();
+    }, []);
 
-        await api.post('/tournaments/', payload);
-        navigate('/dashboard'); 
-    } catch (err: any) {
-      console.error(err);
-      if (err.response && err.response.data && err.response.data.detail) {
-        setError(err.response.data.detail);
-      } else {
-        setError("Er is iets misgegaan bij het aanmaken.");
-      }
-      window.scrollTo(0,0);
-    }
-  };
+    // --- Helpers ---
+    const togglePlayer = (id: number) => setSelectedPlayerIds(prev => prev.includes(id) ? prev.filter(p => p !== id) : [...prev, id]);
+    const toggleBoard = (id: number) => setSelectedBoardIds(prev => prev.includes(id) ? prev.filter(b => b !== id) : [...prev, id]);
 
-  return (
-    <AdminLayout>
-      <div className="max-w-6xl mx-auto pb-20">
-        <h2 className="text-3xl font-bold text-gray-800 mb-6 flex items-center gap-2">
-          <Trophy className="text-yellow-500" /> Nieuw Toernooi
-        </h2>
+    const toggleManualSelection = (id: number) => {
+        setManualSelection(prev => {
+            if (prev.includes(id)) return prev.filter(p => p !== id);
+            if (prev.length >= 2) return prev; // Max 2 selecteren
+            return [...prev, id];
+        });
+    };
 
-        {error && (
-          <div className="bg-red-50 text-red-600 p-4 rounded-lg mb-6 flex items-center gap-2 border border-red-200 shadow-sm">
-            <AlertCircle size={20} /> <span className="font-medium">{error}</span>
-          </div>
-        )}
+    // --- STAP 1: Toernooi Aanmaken ---
+    const handleCreateTournament = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setError(null);
 
-        <form onSubmit={handleSubmit} className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          
-          {/* --- SETTINGS KOLOM (LINKS) --- */}
-          <div className="lg:col-span-4 space-y-6">
+        if (selectedBoardIds.length === 0) {
+            setError("Selecteer minimaal 1 dartbord.");
+            return;
+        }
+
+        // Validatie: bij koppels minimaal 4 spelers (2 teams)
+        const minPlayers = participationMode === 'doubles' ? 4 : 2;
+        if (selectedPlayerIds.length < minPlayers) {
+            setError(`Selecteer minimaal ${minPlayers} spelers.`);
+            return;
+        }
+
+        try {
+            const finalName = name.trim() === "" ? defaultName : name;
             
-            {/* 1. Algemeen */}
-            <div className="bg-white p-5 rounded-lg shadow-sm border border-gray-200">
-              <h3 className="font-bold text-gray-700 mb-4 border-b border-gray-100 pb-2">1. Algemeen</h3>
-              <div className="space-y-4">
-                <div>
-                  <label className={LABEL_STYLE}>Toernooinaam</label>
-                  <input 
-                    type="text" 
-                    className={INPUT_STYLE} 
-                    value={name} 
-                    onChange={e => setName(e.target.value)} 
-                    placeholder={defaultName} 
-                  />
-                </div>
-                <div>
-                   <label className={LABEL_STYLE}>Datum</label>
-                   <input 
-                    type="date" 
-                    required 
-                    className={INPUT_STYLE} 
-                    value={date} 
-                    onChange={e => setDate(e.target.value)} 
-                   />
-                </div>
-              </div>
-            </div>
+            // Als we koppels doen, zetten we het toernooi eerst in 'draft' en genereren we nog GEEN matches
+            // (Dit vereist wel dat je backend 'teams' ondersteunt bij generatie, voor nu maken we het object aan)
+            const payload = {
+                name: finalName,
+                date,
+                format,
+                allow_byes: allowByes,
+                number_of_poules: poules,
+                qualifiers_per_poule: qualifiersPerPoule,
+                starting_legs_group: groupLegs,
+                starting_legs_ko: koLegs,
+                sets_per_match: sets,
+                player_ids: selectedPlayerIds,
+                board_ids: selectedBoardIds,
+                // eventueel: mode: participationMode (als je backend dit ondersteunt)
+            };
 
-            {/* 2. Spelformat */}
-            <div className="bg-white p-5 rounded-lg shadow-sm border border-gray-200">
-              <h3 className="font-bold text-gray-700 mb-4 border-b border-gray-100 pb-2 flex items-center gap-2">
-                <LayoutGrid size={18} className="text-blue-500" /> Format
-              </h3>
-              <div className="space-y-4">
-                <div>
-                   <label className={LABEL_STYLE}>Toernooitype</label>
-                   <select className={INPUT_STYLE} value={format} onChange={e => setFormat(e.target.value)}>
-                      <option value="hybrid">Hybride (Poules + KO)</option>
-                      <option value="knockout">Direct Knockout</option>
-                      <option value="round_robin">Alleen Poules</option>
-                   </select>
-                </div>
+            const res = await api.post('/tournaments/', payload);
+            
+            if (participationMode === 'doubles') {
+                // Ga naar stap 2: Team Builder
+                setCreatedTournamentId(res.data.id);
+                setStep(2);
+                window.scrollTo(0,0);
+            } else {
+                // Klaar!
+                navigate('/dashboard');
+            }
 
-                {/* NIEUW: BYES CHECKBOX */}
-                <div className="flex items-start gap-2 p-2 bg-gray-50 rounded border border-gray-100">
-                    <div className="mt-0.5">
-                        <input 
-                            type="checkbox" 
-                            id="allowByes"
-                            className="w-4 h-4 text-blue-600 rounded accent-blue-600"
-                            checked={allowByes}
-                            onChange={e => setAllowByes(e.target.checked)}
-                        />
+        } catch (err: any) {
+            console.error(err);
+            setError(err.response?.data?.detail || "Er is iets misgegaan bij het aanmaken.");
+            window.scrollTo(0,0);
+        }
+    };
+
+    // --- STAP 2: Teams Beheren ---
+    
+    // Spelers die geselecteerd zijn, maar nog NIET in een team zitten
+    const unassignedPlayers = allPlayers.filter(p => 
+        selectedPlayerIds.includes(p.id) && 
+        !teams.some(t => t.players.some(tp => tp.id === p.id))
+    );
+
+    const handleAutoGenerate = async () => {
+        if (!createdTournamentId) return;
+        try {
+            // Stuur alle nog niet ingedeelde spelers naar de auto-endpoint
+            const idsToAssign = unassignedPlayers.map(p => p.id);
+            if (idsToAssign.length < 2) return;
+
+            const res = await api.post('/teams/auto', {
+                tournament_id: createdTournamentId,
+                player_ids: idsToAssign
+            });
+            
+            setTeams(prev => [...prev, ...res.data]);
+        } catch (err) {
+            alert("Fout bij genereren teams.");
+        }
+    };
+
+    const handleManualCreate = async () => {
+        if (!createdTournamentId) return;
+        if (manualSelection.length !== 2) {
+            alert("Selecteer precies 2 spelers voor een team.");
+            return;
+        }
+
+        try {
+            const res = await api.post('/teams/manual', {
+                tournament_id: createdTournamentId,
+                player_ids: manualSelection,
+                name: manualTeamName
+            });
+            setTeams(prev => [...prev, res.data]);
+            
+            // Reset form
+            setManualSelection([]);
+            setManualTeamName("");
+        } catch (err) {
+            alert("Fout bij aanmaken team.");
+        }
+    };
+
+    const handleFinalize = async () => {
+        // Hier zou je normaliter een endpoint aanroepen om matches te genereren op basis van teams
+        // Voor nu sturen we de gebruiker naar het dashboard
+        if (unassignedPlayers.length > 0) {
+            if(!confirm("Er zijn nog spelers niet ingedeeld in een team. Wil je toch doorgaan?")) return;
+        }
+        navigate(`/dashboard/tournament/${createdTournamentId}`);
+    };
+
+    // ---------------- UI RENDER ----------------
+
+    return (
+        <AdminLayout>
+            <div className="max-w-6xl mx-auto pb-20">
+                
+                {/* HEADER */}
+                <h2 className="text-3xl font-bold text-gray-800 mb-6 flex items-center gap-2">
+                    {step === 1 ? <Trophy className="text-yellow-500" /> : <Users className="text-blue-500" />} 
+                    {step === 1 ? "Nieuw Toernooi" : "Team Indeling"}
+                </h2>
+
+                {error && (
+                    <div className="bg-red-50 text-red-600 p-4 rounded-lg mb-6 flex items-center gap-2 border border-red-200 shadow-sm">
+                        <AlertCircle size={20} /> <span className="font-medium">{error}</span>
                     </div>
-                    <div>
-                        <label htmlFor="allowByes" className="text-sm font-bold text-gray-700 cursor-pointer select-none">
-                            Sta Byes (Vrijlotingen) toe
-                        </label>
-                        <p className="text-xs text-gray-500 mt-0.5 leading-tight">
-                            {allowByes 
-                                ? "Oneven aantal qualifiers krijgen een vrije ronde."
-                                : "Alleen de beste 2, 4, 8, 16... gaan door. De rest valt af."
-                            }
-                        </p>
-                    </div>
-                </div>
+                )}
 
-                {format === 'hybrid' && (
-                    <>
-                        <div className="grid grid-cols-2 gap-3">
-                            <div>
-                                <label className={LABEL_STYLE}>Aantal Poules</label>
-                                <input 
-                                  type="number" min="1" max="16" 
-                                  className={INPUT_STYLE} 
-                                  value={poules} onChange={e => setPoules(parseInt(e.target.value))} 
-                                />
+                {/* --- STAP 1: SETTINGS & PLAYERS --- */}
+                {step === 1 && (
+                    <form onSubmit={handleCreateTournament} className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                        
+                        {/* SETTINGS (LINKS) */}
+                        <div className="lg:col-span-4 space-y-6">
+                            
+                            {/* Algemeen */}
+                            <div className="bg-white p-5 rounded-lg shadow-sm border border-gray-200">
+                                <h3 className="font-bold text-gray-700 mb-4 border-b border-gray-100 pb-2">1. Algemeen</h3>
+                                <div className="space-y-4">
+                                    <div>
+                                        <label className={LABEL_STYLE}>Naam</label>
+                                        <input type="text" className={INPUT_STYLE} value={name} onChange={e => setName(e.target.value)} placeholder={defaultName} />
+                                    </div>
+                                    <div>
+                                        <label className={LABEL_STYLE}>Datum</label>
+                                        <input type="date" required className={INPUT_STYLE} value={date} onChange={e => setDate(e.target.value)} />
+                                    </div>
+                                    
+                                    {/* NIEUW: MODUS SELECTIE */}
+                                    <div>
+                                        <label className={LABEL_STYLE}>Modus</label>
+                                        <div className="flex gap-2">
+                                            <button type="button" 
+                                                onClick={() => setParticipationMode('singles')}
+                                                className={`flex-1 py-2 px-3 rounded border text-sm font-bold transition-colors ${participationMode === 'singles' ? 'bg-blue-600 text-white border-blue-600' : 'bg-gray-50 text-gray-600 border-gray-300'}`}
+                                            >
+                                                1 vs 1
+                                            </button>
+                                            <button type="button" 
+                                                onClick={() => setParticipationMode('doubles')}
+                                                className={`flex-1 py-2 px-3 rounded border text-sm font-bold transition-colors ${participationMode === 'doubles' ? 'bg-blue-600 text-white border-blue-600' : 'bg-gray-50 text-gray-600 border-gray-300'}`}
+                                            >
+                                                Koppels
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
-                            <div>
-                                <label className={LABEL_STYLE}>Doorgaan per poule</label>
-                                <input 
-                                  type="number" min="1" 
-                                  className={INPUT_STYLE} 
-                                  value={qualifiersPerPoule} onChange={e => setQualifiersPerPoule(parseInt(e.target.value))} 
-                                />
+
+                            {/* Format Settings */}
+                            <div className="bg-white p-5 rounded-lg shadow-sm border border-gray-200">
+                                <h3 className="font-bold text-gray-700 mb-4 border-b border-gray-100 pb-2 flex items-center gap-2">
+                                    <LayoutGrid size={18} className="text-blue-500" /> Format
+                                </h3>
+                                <div className="space-y-4">
+                                    <select className={INPUT_STYLE} value={format} onChange={e => setFormat(e.target.value)}>
+                                        <option value="hybrid">Hybride (Poules + KO)</option>
+                                        <option value="knockout">Direct Knockout</option>
+                                        <option value="round_robin">Alleen Poules</option>
+                                    </select>
+
+                                    <div className="flex items-start gap-2 p-2 bg-gray-50 rounded border border-gray-100">
+                                        <input type="checkbox" id="allowByes" className="mt-1" checked={allowByes} onChange={e => setAllowByes(e.target.checked)} />
+                                        <div>
+                                            <label htmlFor="allowByes" className="text-sm font-bold text-gray-700">Sta Byes toe</label>
+                                            <p className="text-xs text-gray-500">Automatische vrijloting bij oneven aantal.</p>
+                                        </div>
+                                    </div>
+
+                                    {format === 'hybrid' && (
+                                        <div className="grid grid-cols-2 gap-3">
+                                            <div>
+                                                <label className={LABEL_STYLE}>Poules</label>
+                                                <input type="number" min="1" className={INPUT_STYLE} value={poules} onChange={e => setPoules(parseInt(e.target.value))} />
+                                            </div>
+                                            <div>
+                                                <label className={LABEL_STYLE}>Qualifiers</label>
+                                                <input type="number" min="1" className={INPUT_STYLE} value={qualifiersPerPoule} onChange={e => setQualifiersPerPoule(parseInt(e.target.value))} />
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                            
+                            {/* Wedstrijd Lengte & Borden (Ingekort voor overzicht) */}
+                            <div className="bg-white p-5 rounded-lg shadow-sm border border-gray-200">
+                                <h3 className="font-bold text-gray-700 mb-4 border-b border-gray-100 pb-2 flex items-center gap-2">
+                                    <Target size={18} className="text-red-500" /> Settings
+                                </h3>
+                                <div className="grid grid-cols-2 gap-3 mb-4">
+                                    <div><label className={LABEL_STYLE}>Poule (Bo)</label><input type="number" className={INPUT_STYLE} value={groupLegs} onChange={e => setGroupLegs(Number(e.target.value))}/></div>
+                                    <div><label className={LABEL_STYLE}>KO (Bo)</label><input type="number" className={INPUT_STYLE} value={koLegs} onChange={e => setKoLegs(Number(e.target.value))}/></div>
+                                </div>
+                                
+                                <label className={LABEL_STYLE}>Borden</label>
+                                <div className="max-h-32 overflow-y-auto space-y-1 pr-1 custom-scrollbar border rounded p-2">
+                                    {allBoards.map(board => (
+                                        <label key={board.id} className={`flex items-center p-1 rounded cursor-pointer text-sm ${selectedBoardIds.includes(board.id) ? 'bg-blue-50 text-blue-700' : ''}`}>
+                                            <input type="checkbox" className="mr-2" checked={selectedBoardIds.includes(board.id)} onChange={() => toggleBoard(board.id)} />
+                                            Bord {board.number}
+                                        </label>
+                                    ))}
+                                </div>
                             </div>
                         </div>
-                        <p className="text-xs text-gray-500 mt-1 bg-blue-50 p-2 rounded text-center">
-                            Totaal <strong>{poules * qualifiersPerPoule}</strong> qualifiers.<br/>
-                            {!allowByes && (poules * qualifiersPerPoule) & (poules * qualifiersPerPoule - 1) ? (
-                                <span className="text-red-500 font-bold flex items-center justify-center gap-1 mt-1">
-                                    <Scissors size={12} />
-                                    Wordt afgesneden naar: {Math.pow(2, Math.floor(Math.log2(poules * qualifiersPerPoule)))}
-                                </span>
-                            ) : null}
-                        </p>
-                    </>
+
+                        {/* SPELERS SELECTIE (RECHTS) */}
+                        <div className="lg:col-span-8 flex flex-col h-full">
+                            <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200 flex-1 flex flex-col">
+                                <div className="flex justify-between items-center mb-4 border-b border-gray-100 pb-2">
+                                    <h3 className="font-bold text-gray-700 flex items-center gap-2">
+                                        <Users size={18} className="text-green-600"/> 
+                                        {participationMode === 'doubles' ? '2. Selecteer Alle Deelnemers' : '2. Selecteer Spelers'}
+                                    </h3>
+                                    <span className="bg-green-100 text-green-700 text-xs px-3 py-1 rounded-full font-bold">
+                                        {selectedPlayerIds.length} geselecteerd
+                                    </span>
+                                </div>
+                                
+                                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 overflow-y-auto pr-2 max-h-[600px] custom-scrollbar">
+                                    {allPlayers.map(player => (
+                                        <label key={player.id} className={`flex items-center p-2 rounded border cursor-pointer select-none text-sm transition-all ${selectedPlayerIds.includes(player.id) ? 'bg-green-50 border-green-500 shadow-sm' : 'hover:bg-gray-50 border-gray-200'}`}>
+                                            <input type="checkbox" className="w-4 h-4 text-green-600 rounded accent-green-600" checked={selectedPlayerIds.includes(player.id)} onChange={() => togglePlayer(player.id)} />
+                                            <div className="ml-2 font-medium text-gray-800 truncate">{player.name}</div>
+                                        </label>
+                                    ))}
+                                </div>
+
+                                <div className="mt-6 pt-4 border-t border-gray-100">
+                                    <button type="submit" disabled={loading} className="w-full bg-blue-600 text-white font-bold py-3 rounded-lg hover:bg-blue-700 transition shadow-lg flex justify-center items-center gap-2">
+                                        {participationMode === 'doubles' ? (
+                                            <>Verder naar Team Indeling <Scissors className="ml-2" size={18}/></>
+                                        ) : (
+                                            <><Trophy size={20} /> Toernooi Starten</>
+                                        )}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </form>
                 )}
-              </div>
-            </div>
 
-            {/* 3. Wedstrijd Lengte */}
-            <div className="bg-white p-5 rounded-lg shadow-sm border border-gray-200">
-              <h3 className="font-bold text-gray-700 mb-4 border-b border-gray-100 pb-2 flex items-center gap-2">
-                <Target size={18} className="text-red-500" /> Wedstrijd Lengte
-              </h3>
-              <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-3">
-                    <div>
-                        <label className={LABEL_STYLE}>Poules (Best of)</label>
-                        <input 
-                          type="number" min="1" 
-                          className={INPUT_STYLE} 
-                          value={groupLegs} onChange={e => setGroupLegs(Number(e.target.value))} 
-                        />
+                {/* --- STAP 2: TEAM BUILDER (ALLEEN BIJ KOPPELS) --- */}
+                {step === 2 && (
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                        
+                        {/* LINKER KOLOM: BESCHIKBARE SPELERS & CONTROLS */}
+                        <div className="space-y-6">
+                            
+                            {/* Auto Generator */}
+                            <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
+                                <h3 className="font-bold text-gray-700 mb-2 flex items-center gap-2">
+                                    <Shuffle className="text-purple-500" /> Automatisch Indelen
+                                </h3>
+                                <p className="text-sm text-gray-500 mb-4">
+                                    Hussel alle {unassignedPlayers.length} overgebleven spelers in willekeurige teams.
+                                </p>
+                                <button 
+                                    onClick={handleAutoGenerate}
+                                    disabled={unassignedPlayers.length < 2}
+                                    className="w-full bg-purple-100 text-purple-700 font-bold py-2 rounded hover:bg-purple-200 transition disabled:opacity-50"
+                                >
+                                    Random Teams Genereren
+                                </button>
+                            </div>
+
+                            {/* Manual Creator */}
+                            <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
+                                <h3 className="font-bold text-gray-700 mb-4 flex items-center gap-2">
+                                    <UserPlus className="text-blue-500" /> Handmatig Team
+                                </h3>
+                                
+                                <div className="mb-4">
+                                    <label className={LABEL_STYLE}>1. Selecteer 2 spelers uit de lijst hieronder</label>
+                                    <div className="text-sm font-medium bg-gray-50 p-2 rounded border border-gray-200 min-h-[40px] flex items-center gap-2">
+                                        {manualSelection.length === 0 && <span className="text-gray-400 italic">Geen selectie...</span>}
+                                        {manualSelection.map(id => {
+                                            const p = allPlayers.find(pl => pl.id === id);
+                                            return (
+                                                <span key={id} className="bg-blue-100 text-blue-700 px-2 py-1 rounded text-xs">
+                                                    {p?.name}
+                                                </span>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+
+                                <div className="mb-4">
+                                    <label className={LABEL_STYLE}>2. Team Naam (Optioneel)</label>
+                                    <input 
+                                        type="text" 
+                                        className={INPUT_STYLE} 
+                                        placeholder="Bijv. 'The Power Duo'" 
+                                        value={manualTeamName}
+                                        onChange={e => setManualTeamName(e.target.value)}
+                                    />
+                                </div>
+
+                                <button 
+                                    onClick={handleManualCreate}
+                                    disabled={manualSelection.length !== 2}
+                                    className="w-full bg-blue-600 text-white font-bold py-2 rounded hover:bg-blue-700 transition disabled:opacity-50"
+                                >
+                                    Maak Team
+                                </button>
+                            </div>
+
+                            {/* Beschikbare Spelers Lijst */}
+                            <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
+                                <h4 className="font-bold text-gray-500 text-xs uppercase mb-2">Nog in te delen ({unassignedPlayers.length})</h4>
+                                <div className="grid grid-cols-2 gap-2 max-h-60 overflow-y-auto pr-1 custom-scrollbar">
+                                    {unassignedPlayers.map(p => (
+                                        <div 
+                                            key={p.id} 
+                                            onClick={() => toggleManualSelection(p.id)}
+                                            className={`p-2 rounded border text-sm cursor-pointer transition-colors ${
+                                                manualSelection.includes(p.id) 
+                                                ? 'bg-blue-50 border-blue-500 text-blue-700 font-bold' 
+                                                : 'hover:bg-gray-50 border-gray-200'
+                                            }`}
+                                        >
+                                            {p.name}
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+
+                        </div>
+
+                        {/* RECHTER KOLOM: GEMAAKTE TEAMS */}
+                        <div className="flex flex-col h-full">
+                            <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200 flex-1 flex flex-col">
+                                <div className="flex justify-between items-center mb-4 border-b border-gray-100 pb-2">
+                                    <h3 className="font-bold text-gray-700">Gemaakte Teams</h3>
+                                    <span className="bg-green-100 text-green-700 text-xs px-3 py-1 rounded-full font-bold">
+                                        {teams.length} Teams
+                                    </span>
+                                </div>
+
+                                <div className="flex-1 overflow-y-auto space-y-3 pr-2 custom-scrollbar">
+                                    {teams.length === 0 ? (
+                                        <div className="text-center text-gray-400 py-10 italic">
+                                            Nog geen teams gemaakt.<br/>Gebruik de opties links.
+                                        </div>
+                                    ) : (
+                                        teams.map(team => (
+                                            <div key={team.id} className="flex items-center justify-between p-3 bg-gray-50 rounded border border-gray-200">
+                                                <div>
+                                                    <div className="font-bold text-gray-800">{team.name}</div>
+                                                    <div className="text-xs text-gray-500 flex gap-1 mt-1">
+                                                        {team.players.map(p => (
+                                                            <span key={p.id} className="bg-white border px-1 rounded">
+                                                                {p.name}
+                                                            </span>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                                {/* Verwijderen functionaliteit zou hier kunnen met een delete API call */}
+                                                <div className="text-green-500"><Target size={16}/></div>
+                                            </div>
+                                        ))
+                                    )}
+                                </div>
+
+                                <div className="mt-6 pt-4 border-t border-gray-100">
+                                    <button 
+                                        onClick={handleFinalize}
+                                        className="w-full bg-green-600 text-white font-bold py-3 rounded-lg hover:bg-green-700 transition shadow-lg flex justify-center items-center gap-2"
+                                    >
+                                        <Save size={20} /> Opslaan & Starten
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
                     </div>
-                    <div>
-                        <label className={LABEL_STYLE}>Knockout (Best of)</label>
-                        <input 
-                          type="number" min="1" 
-                          className={INPUT_STYLE} 
-                          value={koLegs} onChange={e => setKoLegs(Number(e.target.value))} 
-                        />
-                    </div>
-                </div>
-                <p className="text-xs text-gray-400 italic">
-                    Je kunt de lengte van de finale later handmatig aanpassen in het schema.
-                </p>
-              </div>
+                )}
             </div>
-
-            {/* 4. Borden Selectie */}
-            <div className="bg-white p-5 rounded-lg shadow-sm border border-gray-200">
-                <div className="flex justify-between items-center mb-2">
-                    <h3 className="font-bold text-gray-700">2. Borden</h3>
-                    <span className="bg-blue-100 text-blue-700 text-xs font-bold px-2 py-1 rounded-full">
-                      {selectedBoardIds.length}
-                    </span>
-                </div>
-                <div className="max-h-32 overflow-y-auto space-y-1 pr-1 custom-scrollbar">
-                    {allBoards.map(board => (
-                        <label key={board.id} className={`flex items-center p-2 rounded border cursor-pointer text-sm transition-colors ${
-                          selectedBoardIds.includes(board.id) ? 'bg-blue-50 border-blue-500 text-blue-700 font-medium' : 'hover:bg-gray-50 border-gray-200'
-                        }`}>
-                            <input type="checkbox" className="mr-2 accent-blue-600" checked={selectedBoardIds.includes(board.id)} onChange={() => toggleBoard(board.id)} />
-                            Bord {board.number} <span className='text-gray-400 ml-2 text-xs'>({board.name})</span>
-                        </label>
-                    ))}
-                </div>
-            </div>
-
-          </div>
-
-          {/* --- SPELERS KOLOM (RECHTS) --- */}
-          <div className="lg:col-span-8 flex flex-col h-full">
-            <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200 flex-1 flex flex-col">
-              <div className="flex justify-between items-center mb-4 border-b border-gray-100 pb-2">
-                <h3 className="font-bold text-gray-700 flex items-center gap-2">
-                  <Users size={18} className="text-green-600"/> 3. Selecteer Spelers
-                </h3>
-                <span className={`text-xs px-3 py-1.5 rounded-full font-bold ${
-                  selectedPlayerIds.length > 0 ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
-                }`}>
-                  Geselecteerd: {selectedPlayerIds.length}
-                </span>
-              </div>
-              
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 overflow-y-auto pr-2 max-h-[600px] custom-scrollbar">
-                {allPlayers.map(player => (
-                  <label key={player.id} className={`flex items-center p-2 rounded border cursor-pointer select-none text-sm transition-all ${
-                      selectedPlayerIds.includes(player.id) ? 'bg-green-50 border-green-500 shadow-sm' : 'hover:bg-gray-50 border-gray-200'
-                    }`}>
-                    <input type="checkbox" className="w-4 h-4 text-green-600 rounded accent-green-600 focus:ring-green-500"
-                      checked={selectedPlayerIds.includes(player.id)}
-                      onChange={() => togglePlayer(player.id)}
-                    />
-                    <div className="ml-2 font-medium text-gray-800 truncate">{player.name}</div>
-                  </label>
-                ))}
-              </div>
-
-              <div className="mt-6 pt-4 border-t border-gray-100">
-                 <button type="submit" disabled={loading} className="w-full bg-blue-600 text-white font-bold py-3 rounded-lg hover:bg-blue-700 transition shadow-lg flex justify-center items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
-                  <Trophy size={20} /> Toernooi Aanmaken
-                </button>
-              </div>
-            </div>
-          </div>
-
-        </form>
-      </div>
-    </AdminLayout>
-  );
+        </AdminLayout>
+    );
 };
 
 export default CreateTournament;
@@ -2764,7 +3177,7 @@ import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../../services/api';
 import AdminLayout from '../../components/layout/AdminLayout';
-import { Save, RefreshCcw, ShieldAlert, Settings, ChevronDown, ChevronRight, SaveAll } from 'lucide-react';
+import { Save, RefreshCcw, ShieldAlert, Settings, ChevronDown, ChevronRight, SaveAll, GitMerge } from 'lucide-react';
 import { Tournament, Match } from '../../types';
 
 interface MatchWithUI extends Match {
@@ -2793,7 +3206,7 @@ const ManageTournament = () => {
   const [settingsDirty, setSettingsDirty] = useState(false);
 
   // Round Collapses
-  const [openRounds, setOpenRounds] = useState<Record<number, boolean>>({});
+  const [openRounds, setOpenRounds] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     loadData();
@@ -2861,7 +3274,7 @@ const ManageTournament = () => {
     }
   };
 
-  const toggleRound = (r: number) => setOpenRounds(prev => ({...prev, [r]: !prev[r]}));
+  const toggleRound = (key: string) => setOpenRounds(prev => ({...prev, [key]: !prev[key]}));
 
   // --- SPREADSHEET LOGICA ---
 
@@ -2870,6 +3283,39 @@ const ManageTournament = () => {
       setMatches(prev => prev.map(m => 
           m.id === id ? { ...m, [field]: numVal, save_success: false } : m
       ));
+  };
+
+  const canStartKnockout = () => {
+      if (!tournament || !matches.length) return false;
+      if (tournament.format !== 'hybrid') return false; // Alleen voor hybride toernooien
+
+      const pouleMatches = matches.filter(m => m.poule_number !== null);
+      const koMatches = matches.filter(m => m.poule_number === null);
+
+      // 1. Zijn er poule wedstrijden?
+      if (pouleMatches.length === 0) return false;
+
+      // 2. Zijn ze ALLEMAAL klaar?
+      const allPoulesFinished = pouleMatches.every(m => m.is_completed);
+
+      // 3. Is de knockout nog NIET begonnen?
+      const koNotStarted = koMatches.length === 0;
+
+      return allPoulesFinished && koNotStarted;
+  };
+
+  const handleStartKnockout = async () => {
+      if (!confirm("Weet je zeker dat je de Poule-fase wilt afsluiten en de Knockout wilt genereren?")) return;
+      
+      try {
+          // De API endpoint die we eerder hebben gezien in de context [cite: 35]
+          await api.post(`/tournaments/${id}/start-knockout`);
+          alert("Knockout fase gegenereerd!");
+          loadData(); // Herlaad de data om de nieuwe wedstrijden te tonen
+      } catch (err) {
+          console.error(err);
+          alert("Er ging iets mis bij het starten van de knockout.");
+      }
   };
 
   const saveMatchScore = async (match: MatchWithUI) => {
@@ -2901,12 +3347,36 @@ const ManageTournament = () => {
       }
   };
 
-  const matchesByRound = matches.reduce((acc, match) => {
-    const r = match.round_number;
-    if (!acc[r]) acc[r] = [];
-    acc[r].push(match);
+  const getRoundName = (roundNum: number, matchCount: number) => {
+    if (matchCount === 1) return "Finale";
+    if (matchCount === 2) return "Halve Finale";
+    if (matchCount === 4) return "Kwartfinale";
+    return `Ronde ${roundNum}`;
+};
+
+  // 1. Groepeer op FASE (P/K) én RONDE nummer
+  // We maken keys zoals "P-1" (Poule ronde 1) en "K-1" (Knockout ronde 1)
+  const groupedMatches = matches.reduce((acc, match) => {
+    const type = match.poule_number !== null ? 'P' : 'K'; // P = Poule, K = Knockout
+    const key = `${type}-${match.round_number}`;
+    
+    if (!acc[key]) acc[key] = [];
+    acc[key].push(match);
     return acc;
-  }, {} as Record<number, MatchWithUI[]>);
+  }, {} as Record<string, MatchWithUI[]>);
+
+  // 2. Sorteer de keys
+  // We willen eerst Poules (P), dan Knockouts (K). Binnen die groepen sorteren we op ronde nummer.
+  const sortedGroupKeys = Object.keys(groupedMatches).sort((a, b) => {
+      const [typeA, roundA] = a.split('-');
+      const [typeB, roundB] = b.split('-');
+
+      // Als types verschillend zijn: P komt voor K
+      if (typeA !== typeB) return typeA === 'P' ? -1 : 1;
+
+      // Als types gelijk zijn: Sorteer op nummer (1, 2, 3...)
+      return Number(roundA) - Number(roundB);
+  });
 
   // --- RENDERING ---
 
@@ -2956,6 +3426,28 @@ const ManageTournament = () => {
             </button>
         </div>
 
+        {/* NIEUW: START KNOCKOUT KNOP (Alleen zichtbaar als poules klaar zijn) */}
+        {canStartKnockout() && (
+            <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-6 flex justify-between items-center shadow-sm animate-pulse">
+                <div className="flex items-center gap-3">
+                    <div className="bg-green-100 p-2 rounded-full text-green-600">
+                        <GitMerge size={24} />
+                    </div>
+                    <div>
+                        <h4 className="font-bold text-green-800">Poule Fase Voltooid!</h4>
+                        <p className="text-sm text-green-600">Alle wedstrijden zijn gespeeld. Je kunt nu de bracket genereren.</p>
+                    </div>
+                </div>
+                <button 
+                    onClick={handleStartKnockout}
+                    className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-6 rounded-lg shadow transition-transform transform hover:scale-105"
+                >
+                    Start Knockout Fase
+                </button>
+            </div>
+        )}
+
+
         {/* SETTINGS */}
         <div className="bg-white p-6 rounded-lg shadow-sm border border-yellow-200 mb-8">
             <h3 className="font-bold text-lg mb-4 flex items-center gap-2">
@@ -2974,22 +3466,37 @@ const ManageTournament = () => {
             </div>
         </div>
 
-        {/* MATCHES LIST */}
+{/* MATCHES LIST */}
         <div className="space-y-4">
-            {Object.keys(matchesByRound).map((roundKey) => {
-                const roundNum = Number(roundKey);
-                const roundMatches = matchesByRound[roundNum];
-                const isOpen = openRounds[roundNum];
-                const isPoule = roundMatches[0].poule_number !== null;
+            {sortedGroupKeys.map((groupKey) => {
+                const [type, roundStr] = groupKey.split('-');
+                const roundNum = Number(roundStr);
+                const roundMatches = groupedMatches[groupKey];
+                
+                const isOpen = openRounds[groupKey];
+                const isPoule = type === 'P';
 
                 return (
-                    <div key={roundNum} className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+                    <div key={groupKey} className={`rounded-lg shadow-sm border overflow-hidden ${isPoule ? 'bg-white border-gray-200' : 'bg-orange-50/50 border-orange-200'}`}>
                         {/* HEADER */}
-                        <div className="bg-gray-50 p-4 flex justify-between items-center cursor-pointer select-none" onClick={() => toggleRound(roundNum)}>
+                        <div 
+                            className={`p-4 flex justify-between items-center cursor-pointer select-none ${isPoule ? 'bg-gray-50' : 'bg-orange-100 text-orange-900'}`} 
+                            onClick={() => toggleRound(groupKey)}
+                        >
                             <div className="flex items-center gap-2 font-bold text-gray-700">
                                 {isOpen ? <ChevronDown size={20} /> : <ChevronRight size={20} />}
-                                {isPoule ? `Poule Fase - Ronde ${roundNum}` : `Knockout - Ronde ${roundNum}`}
-                                <span className="text-xs bg-gray-200 px-2 py-0.5 rounded text-gray-600 font-normal">{roundMatches.length} wedstrijden</span>
+                                
+                                {isPoule ? (
+                                    <span>Poule Fase - Ronde {roundNum}</span>
+                                ) : (
+                                    <span className="text-orange-800 flex items-center gap-2">
+                                        <GitMerge size={16}/> Knockout - {getRoundName(roundNum, roundMatches.length)}
+                                    </span>
+                                )}
+                                
+                                <span className={`text-xs px-2 py-0.5 rounded font-normal ${isPoule ? 'bg-gray-200 text-gray-600' : 'bg-orange-200 text-orange-800'}`}>
+                                    {roundMatches.length} wedstrijden
+                                </span>
                             </div>
                             
                             {isOpen && (
@@ -3007,7 +3514,7 @@ const ManageTournament = () => {
                         {isOpen && (
                             <div className="divide-y divide-gray-100">
                                 {roundMatches.map(match => (
-                                    <div key={match.id} className={`p-3 transition-colors flex items-center justify-between ${match.save_success ? 'bg-green-50' : 'hover:bg-gray-50'}`}>
+                                    <div key={match.id} className={`p-3 transition-colors flex items-center justify-between ${match.save_success ? 'bg-green-50' : 'hover:bg-white'}`}>
                                         
                                         {/* ID */}
                                         <div className="w-8 text-xs text-gray-400 font-mono text-center">#{match.id}</div>
@@ -3015,6 +3522,7 @@ const ManageTournament = () => {
                                         {/* PLAYERS & INPUTS */}
                                         <div className="flex-1 flex items-center justify-center gap-2">
                                             
+                                            {/* SPELER 1 */}
                                             <div className={`flex-1 text-right truncate font-medium ${match.score_p1 > match.score_p2 && match.is_completed ? 'text-green-700 font-bold' : 'text-gray-700'}`}>
                                                 {match.player1_name || <span className="italic text-gray-400">Bye</span>}
                                             </div>
@@ -3026,24 +3534,23 @@ const ManageTournament = () => {
                                                     className={`w-12 text-center p-2 outline-none font-bold no-spinner ${match.save_success ? 'text-green-600' : 'text-gray-800'}`}
                                                     value={match.score_p1}
                                                     onChange={(e) => handleScoreChange(match.id, 'score_p1', e.target.value)}
-                                                    onFocus={(e) => e.target.select()} // Selecteer tekst bij klik
+                                                    onFocus={(e) => e.target.select()} 
                                                     onBlur={() => saveMatchScore(match)}
                                                     onKeyDown={(e) => handleKeyDown(e, match)}
                                                 />
-                                                
                                                 <span className="text-gray-300 font-light px-1">|</span>
-
                                                 <input 
                                                     type="number" 
                                                     className={`w-12 text-center p-2 outline-none font-bold no-spinner ${match.save_success ? 'text-green-600' : 'text-gray-800'}`}
                                                     value={match.score_p2}
                                                     onChange={(e) => handleScoreChange(match.id, 'score_p2', e.target.value)}
-                                                    onFocus={(e) => e.target.select()} // Selecteer tekst bij klik
+                                                    onFocus={(e) => e.target.select()}
                                                     onBlur={() => saveMatchScore(match)}
                                                     onKeyDown={(e) => handleKeyDown(e, match)}
                                                 />
                                             </div>
 
+                                            {/* SPELER 2 */}
                                             <div className={`flex-1 text-left truncate font-medium ${match.score_p2 > match.score_p1 && match.is_completed ? 'text-green-700 font-bold' : 'text-gray-700'}`}>
                                                 {match.player2_name || <span className="italic text-gray-400">Bye</span>}
                                             </div>
