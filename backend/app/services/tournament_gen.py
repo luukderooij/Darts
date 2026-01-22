@@ -3,6 +3,7 @@ import random
 import math
 from sqlmodel import Session, select
 from app.models.match import Match
+from app.models.team import Team
 from app.models.player import Player
 from app.models.tournament import Tournament
 
@@ -395,3 +396,61 @@ def check_and_advance_knockout(tournament_id: int, current_round: int, session: 
         
     session.add_all(new_matches)
     session.commit()
+
+def create_random_teams(tournament_id: int, player_ids: list[int], session: Session):
+    """
+    Eis 1: Automatisch team systeem (Random).
+    Eis 3: Automatische naamgeving.
+    """
+    # 1. Spelers ophalen
+    players = session.exec(select(Player).where(Player.id.in_(player_ids))).all()
+    
+    if len(players) % 2 != 0:
+        raise ValueError("Aantal spelers moet even zijn voor koppels!")
+
+    # 2. Husselen
+    random.shuffle(players)
+
+    teams = []
+    # 3. Koppels maken (per 2)
+    for i in range(0, len(players), 2):
+        p1 = players[i]
+        p2 = players[i+1]
+
+        # Eis 3: Automatische naam
+        # Bijv: "Van Gerwen & Van Barneveld"
+        team_name = f"{p1.last_name or p1.first_name} & {p2.last_name or p2.first_name}"
+
+        team = Team(name=team_name, tournament_id=tournament_id)
+        team.players = [p1, p2]
+        session.add(team)
+        teams.append(team)
+    
+    session.commit()
+    return teams
+
+def create_manual_team(tournament_id: int, player_ids: list[int], custom_name: str | None, session: Session):
+    """
+    Eis 2: Vrije keuze team samenstelling.
+    Eis 3: Team naam keuze (met fallback).
+    """
+    players = session.exec(select(Player).where(Player.id.in_(player_ids))).all()
+    
+    if not players:
+        raise ValueError("Geen geldige spelers geselecteerd")
+
+    # Eis 3: Naam logica
+    if custom_name and custom_name.strip() != "":
+        final_name = custom_name
+    else:
+        # Fallback: namen aan elkaar plakken
+        names = [p.last_name or p.first_name for p in players]
+        final_name = " & ".join(names)
+
+    team = Team(name=final_name, tournament_id=tournament_id)
+    team.players = players
+    
+    session.add(team)
+    session.commit()
+    session.refresh(team)
+    return team

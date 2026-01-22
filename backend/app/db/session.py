@@ -17,7 +17,7 @@ def init_db():
     """
     # Import ALL models here so SQLModel knows about them before creating tables
     # --- FIX: Added 'dartboard' and 'links' to this list ---
-    from app.models import user, player, tournament, match, dartboard, links # noqa: F401
+    from app.models import user, player, tournament, match, dartboard, links, team # noqa: F401
     
     SQLModel.metadata.create_all(engine)
 

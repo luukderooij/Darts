@@ -1,5 +1,6 @@
-from typing import Optional
+from typing import Optional, List
 from sqlmodel import Field, SQLModel, Relationship
+from app.models.team import Team, TeamPlayerLink
 
 class Player(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -12,6 +13,8 @@ class Player(SQLModel, table=True):
     user_id: Optional[int] = Field(default=None, foreign_key="user.id")
     user: Optional["User"] = Relationship(back_populates="players")
 
+    teams: List[Team] = Relationship(back_populates="players", link_model=TeamPlayerLink)
+
     @property
     def name(self) -> str:
         full_name = self.first_name
@@ -20,3 +23,4 @@ class Player(SQLModel, table=True):
         if self.last_name:
             full_name += f" {self.last_name}"
         return full_name
+    

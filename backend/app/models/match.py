@@ -24,5 +24,8 @@ class Match(SQLModel, table=True):
     tournament_id: int = Field(foreign_key="tournament.id")
     tournament: Optional["Tournament"] = Relationship(back_populates="matches")
     
-    player1_id: Optional[int] = Field(foreign_key="player.id")
-    player2_id: Optional[int] = Field(foreign_key="player.id")
+    player1_id: Optional[int] = Field(default=None, foreign_key="player.id")
+    player2_id: Optional[int] = Field(default=None, foreign_key="player.id")
+
+    team1_id: Optional[int] = Field(default=None, foreign_key="team.id")
+    team2_id: Optional[int] = Field(default=None, foreign_key="team.id")
