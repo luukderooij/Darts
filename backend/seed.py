@@ -13,6 +13,7 @@ from app.models.player import Player
 from app.models.dartboard import Dartboard
 from app.models.tournament import Tournament
 from app.models.match import Match
+from app.models.team import Team  # <--- NIEUWE IMPORT
 from app.core.security import get_password_hash
 from app.services.tournament_gen import generate_poule_phase
 
@@ -143,7 +144,7 @@ def create_tournament_1(session: Session, user: User, players: list, boards: lis
         qualifiers_per_poule=2,
         starting_legs_group=3, # First to 2
         starting_legs_ko=5,
-        allow_byes=True,       # <--- TOEGEVOEGD
+        allow_byes=True,       
         user_id=user.id,
         status="active"
     )
@@ -182,7 +183,7 @@ def create_tournament_2(session: Session, user: User, players: list, boards: lis
         qualifiers_per_poule=2,
         starting_legs_group=5, # First to 3
         starting_legs_ko=7,    # First to 4
-        allow_byes=True,       # <--- TOEGEVOEGD
+        allow_byes=True,       
         user_id=user.id,
         status="active"
     )
@@ -210,9 +211,51 @@ def create_tournament_2(session: Session, user: User, players: list, boards: lis
     simulate_match_scores(session, t.id, legs_needed)
     print("Toernooi 2 aangemaakt en gespeeld.")
 
+def create_team_tournament(session: Session, user: User, players: list, boards: list):
+    print("\n--- Toernooi 3: Koppel Cup (Teams) ---")
+    # Settings
+    t = Tournament(
+        name="Koppel Cup 2024",
+        date="2024-07-01",
+        format="hybrid",
+        number_of_poules=1,
+        qualifiers_per_poule=2,
+        starting_legs_group=3,
+        starting_legs_ko=5,
+        allow_byes=True,
+        user_id=user.id,
+        status="active" # We zetten hem op active zodat je hem ziet in dashboard
+    )
+    
+    # We voegen de eerste 4 spelers toe (Littler, MvG, Humphries, Price)
+    subset_players = players[:4]
+    t.players = subset_players
+    t.boards = [boards[1]] # Practice Area
+    
+    session.add(t)
+    session.commit()
+    session.refresh(t)
+
+    print("  > Teams aanmaken...")
+    
+    # Team 1: Littler & MvG
+    # Eis: naam kiezen of automatisch
+    team1 = Team(name="The Green Nuke", tournament_id=t.id)
+    team1.players = [subset_players[0], subset_players[1]]
+    session.add(team1)
+
+    # Team 2: Humphries & Price (Geen naam -> Automatisch in frontend, hier handmatig voor seed)
+    team2 = Team(name="Cool Ice", tournament_id=t.id)
+    team2.players = [subset_players[2], subset_players[3]]
+    session.add(team2)
+    
+    session.commit()
+    print("Toernooi 3 (Teams) aangemaakt. (Nog geen wedstrijden gegenereerd)")
+
+
 def main():
     print("Start seeding database...")
-    init_db() # Zorgt dat tabellen bestaan
+    init_db() # Zorgt dat tabellen bestaan (ook de nieuwe Team tabellen)
     
     with Session(engine) as session:
         # 1. Admin
@@ -224,11 +267,14 @@ def main():
         # 3. Borden
         boards = create_boards(session)
         
-        # 4. Toernooi 1
+        # 4. Toernooi 1 (Singles)
         create_tournament_1(session, admin, players, boards)
         
-        # 5. Toernooi 2
+        # 5. Toernooi 2 (Singles)
         create_tournament_2(session, admin, players, boards)
+
+        # 6. Toernooi 3 (Teams) <--- NIEUW
+        create_team_tournament(session, admin, players, boards)
         
         # Print statements BINNEN de sessie
         print("\n=== SEEDING SUCCESVOL ===")
