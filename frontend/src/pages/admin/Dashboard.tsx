@@ -4,11 +4,12 @@ import api from '../../services/api';
 import AdminLayout from '../../components/layout/AdminLayout';
 import { Trophy, Calendar, Users, ExternalLink, Copy, Target, LayoutGrid } from 'lucide-react';
 import { Tournament } from '../../types';
+import { useNavigate } from 'react-router-dom';
 
 const Dashboard = () => {
   const [tournaments, setTournaments] = useState<Tournament[]>([]);
   const [loading, setLoading] = useState(true);
-
+  const navigate = useNavigate();
   // 1. Fetch tournaments from the Backend
   useEffect(() => {
     const fetchTournaments = async () => {
@@ -117,12 +118,12 @@ const Dashboard = () => {
                       Public View
                     </Link>
 
-                    <button 
-                      className="bg-slate-800 text-white px-5 py-2 rounded font-medium hover:bg-slate-900 transition shadow-sm"
-                      onClick={() => alert("Coming soon: Match Control Panel")}
-                    >
-                      Manage
-                    </button>
+                  <button 
+                    onClick={() => navigate(`/dashboard/tournament/${t.id}`)}
+                    className="bg-slate-800 text-white px-5 py-2 rounded font-medium hover:bg-slate-900 transition shadow-sm"
+                  >
+                    Manage
+                  </button>
                   </div>
 
                 </div>

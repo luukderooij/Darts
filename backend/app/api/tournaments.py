@@ -13,6 +13,7 @@ from app.models.player import Player
 from app.models.match import Match
 from app.models.dartboard import Dartboard 
 from app.api.users import get_current_user 
+from app.schemas.tournament import TournamentUpdate
 
 from app.schemas.tournament import (
     TournamentCreate, 
@@ -110,6 +111,17 @@ def create_tournament(
     
     return tournament
 
+@router.get("/{tournament_id}", response_model=TournamentRead)
+def read_tournament_by_id(
+    tournament_id: int,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user)
+):
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+    return tournament
+
 @router.get("/", response_model=List[TournamentRead])
 def read_tournaments(
     offset: int = 0,
@@ -181,3 +193,58 @@ def start_knockout(
         
     generate_knockout_from_poules(t, session)
     return {"message": "Knockout phase generated"}
+
+
+@router.patch("/{tournament_id}", response_model=TournamentRead)
+def update_tournament_settings(
+    tournament_id: int,
+    tourn_update: TournamentUpdate,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Update toernooi instellingen (bijv. allow_byes) on the fly.
+    """
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+    
+    # Update alleen de velden die zijn meegegeven
+    tourn_data = tourn_update.model_dump(exclude_unset=True)
+    for key, value in tourn_data.items():
+        setattr(tournament, key, value)
+        
+    session.add(tournament)
+    session.commit()
+    session.refresh(tournament)
+    return tournament
+
+@router.post("/{tournament_id}/rounds/{round_number}/update-format")
+def update_round_format(
+    tournament_id: int,
+    round_number: int,
+    best_of_legs: int = Query(...),
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Batch update: Pas de 'Best of X' aan voor ALLE ongespeelde wedstrijden in een specifieke ronde.
+    """
+    # 1. Haal matches op
+    statement = select(Match).where(
+        Match.tournament_id == tournament_id,
+        Match.round_number == round_number,
+        Match.is_completed == False # Alleen ongespeelde aanpassen
+    )
+    matches = session.exec(statement).all()
+    
+    if not matches:
+        return {"message": "Geen ongespeelde wedstrijden gevonden in deze ronde om aan te passen."}
+        
+    # 2. Update ze allemaal
+    for match in matches:
+        match.best_of_legs = best_of_legs
+        session.add(match)
+        
+    session.commit()
+    return {"message": f"{len(matches)} wedstrijden geüpdatet naar Best of {best_of_legs} legs."}
