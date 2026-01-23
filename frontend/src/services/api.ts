@@ -1,8 +1,19 @@
 import axios from 'axios';
 
 // 1. Create the instance (like requests.Session())
+// const api = axios.create({
+//   baseURL: 'http://localhost:8000/api', // Point to your FastAPI backend
+//   headers: {
+//     'Content-Type': 'application/json',
+//   },
+// });
+
+
 const api = axios.create({
-  baseURL: 'http://localhost:8000/api', // Point to your FastAPI backend
+  // Verwijder de hardcoded localhost URL. 
+  // Omdat Nginx op hetzelfde domein draait, gebruiken we een relatieve URL.
+  // Als je app draait op http://mijn-server-ip/, wordt dit automatisch http://mijn-server-ip/api
+  baseURL: '/api', 
   headers: {
     'Content-Type': 'application/json',
   },

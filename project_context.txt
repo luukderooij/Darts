@@ -1,5 +1,39 @@
 
 ==================================================
+CONFIG FILE: docker-compose.yml
+==================================================
+
+
+
+==================================================
+CONFIG FILE: README.md
+==================================================
+
+# Darts
+
+
+
+
+
+
+Start dev enviroment:
+ CTRL SHIFT B
+
+ 
+.venv/Scripts/Activate.ps1
+cd backend
+uvicorn app.main:app --reload
+
+cd frontend
+npm run dev
+
+==================================================
+CONFIG FILE: .env.example
+==================================================
+
+
+
+==================================================
 FILE: backend/app\main.py
 ==================================================
 
@@ -1287,6 +1321,11 @@ class MatchRead(BaseModel):
     id: int
     tournament_id: int
     round_number: int
+    
+    poule_number: Optional[int] = None 
+    best_of_legs: Optional[int] = 5
+    best_of_sets: Optional[int] = 1
+
     player1_id: Optional[int]
     player2_id: Optional[int]
     player1_name: Optional[str] = "Bye"
@@ -3220,13 +3259,20 @@ const ManageTournament = () => {
       setTournament(currentTourn);
       setAllowByes(currentTourn.allow_byes);
 
-      if (currentTourn.public_uuid) {
+if (currentTourn.public_uuid) {
           const matchesRes = await api.get(`/matches/by-tournament/${currentTourn.public_uuid}`);
           setMatches(matchesRes.data);
-
+          
           if (matchesRes.data.length > 0) {
-              const maxRound = Math.max(...matchesRes.data.map((m: any) => m.round_number));
-              setOpenRounds((prev) => ({ ...prev, [maxRound]: true }));
+              const maxRoundMatch = matchesRes.data.reduce((prev: any, current: any) => {
+                  return (prev.id > current.id) ? prev : current;
+              });
+              
+              const type = maxRoundMatch.poule_number !== null ? 'P' : 'K';
+              const key = `${type}-${maxRoundMatch.round_number}`;
+              
+              setOpenRounds((prev) => ({ ...prev, [key]: true }));
+              // --- FIX END ---
           }
       }
     } catch (error) {
