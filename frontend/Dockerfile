@@ -3,16 +3,15 @@ FROM node:18-alpine as build
 
 WORKDIR /app
 
-# Kopieer package files (Let op: nu met frontend/ prefix omdat context root is)
+# Kopieer package files
 COPY frontend/package*.json ./
 
 RUN npm install
 
-# Kopieer de frontend broncode
+# Kopieer broncode
 COPY frontend/ .
 
-# BELANGRIJK: Kopieer de Changelog vanuit de root naar de root van de container (/)
-# Hierdoor werkt je import '../../../../CHANGELOG.md' (die komt uit bij /)
+# Kopieer Changelog voor de build
 COPY CHANGELOG.md /CHANGELOG.md
 
 # Bouw de app
@@ -20,6 +19,9 @@ RUN npm run build
 
 # Production Stage
 FROM nginx:alpine
+
+COPY frontend/nginx.conf /etc/nginx/conf.d/default.conf
+
 COPY --from=build /app/dist /usr/share/nginx/html
 EXPOSE 80
 CMD ["nginx", "-g", "daemon off;"]
