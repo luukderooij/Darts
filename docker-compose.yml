@@ -16,7 +16,9 @@ services:
     # Geen ports mapping nodig, want nginx praat intern met backend
 
   frontend:
-    build: .
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
     container_name: darts-frontend
     restart: always
     ports:
