@@ -2,17 +2,16 @@ version: '3.8'
 
 services:
   backend:
-    build: ./backend
+    build: .
     container_name: darts-backend
     restart: always
-  volumes:
+    # BELANGRIJK: 'volumes' moet 4 spaties ingesprongen zijn (onder backend)
+    volumes:
       - ./data:/app/data
-      # Koppel logs
       - ./logs:/app/logs
-  environment:
+    environment:
       - DATABASE_URL=sqlite:////app/data/darts.db
       - SECRET_KEY=your_secret_key_here
-    # Geen ports mapping nodig, want nginx praat intern met backend
 
   frontend:
     build:
@@ -21,6 +20,6 @@ services:
     container_name: darts-frontend
     restart: always
     ports:
-      - "80:80" # De app is bereikbaar op poort 80 van je server
+      - "80:80"
     depends_on:
       - backend
