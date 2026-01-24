@@ -4,43 +4,40 @@
     {
       "label": "Start Backend",
       "type": "shell",
+      "command": "uvicorn app.main:app --reload --port 8000",
       "options": {
-        "cwd": "${workspaceFolder}",
-        "shell":{
-          "executable": "cmd.exe",
-          "args": ["/d", "/c"]
-        },
+        "cwd": "${workspaceFolder}/backend"
       },
-      "command": ".venv\\Scripts\\activate && cd backend && python -m uvicorn app.main:app --reload", 
+      // Windows specific: auto-activate venv
+      "windows": {
+        "command": "..\\.venv\\Scripts\\Activate.ps1; uvicorn app.main:app --reload --port 8000"
+      },
       "presentation": {
-        "group": "build",
+        "group": "server",
         "reveal": "always",
-        "panel": "dedicated"       
+        "panel": "split"
       }
     },
     {
       "label": "Start Frontend",
       "type": "shell",
+      "command": "npm run dev",
       "options": {
-        "cwd": "${workspaceFolder}",
-        "shell":{
-          "executable": "cmd.exe",
-          "args": ["/d", "/c"]
-        },
+        "cwd": "${workspaceFolder}/frontend"
       },
-      "command": "cd frontend && npm run dev",
-      "isBackground": true,
       "presentation": {
-        "group": "build",
+        "group": "server",
         "reveal": "always",
-        "panel": "dedicated"    
+        "panel": "split"
       }
     },
-    { "label": "Start All",
-    "dependsOn": ["Start Backend", "Start Frontend"],
-    "group": {
-      "kind": "build",
-      "isDefault": true
+    {
+      "label": "Dev: Run All",
+      "dependsOn": ["Start Backend", "Start Frontend"],
+      "problemMatcher": [],
+      "group": {
+        "kind": "build",
+        "isDefault": true
       }
     }
   ]

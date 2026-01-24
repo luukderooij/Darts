@@ -3,7 +3,31 @@
 CONFIG FILE: docker-compose.yml
 ==================================================
 
+version: '3.8'
 
+services:
+  backend:
+    build: ./backend
+    container_name: darts-backend
+    restart: always
+    volumes:
+      # Koppel de database aan een map op je server zodat data bewaard blijft
+      - ./data/darts.db:/app/darts.db
+      # Koppel logs
+      - ./logs:/app/logs
+    environment:
+      - DATABASE_URL=sqlite:////app/darts.db
+      - SECRET_KEY=your_secret_key_here
+    # Geen ports mapping nodig, want nginx praat intern met backend
+
+  frontend:
+    build: ./frontend
+    container_name: darts-frontend
+    restart: always
+    ports:
+      - "80:80" # De app is bereikbaar op poort 80 van je server
+    depends_on:
+      - backend
 
 ==================================================
 CONFIG FILE: README.md
@@ -26,6 +50,33 @@ uvicorn app.main:app --reload
 
 cd frontend
 npm run dev
+
+
+
+
+
+Log in op je Proxmox VM (bijv. Ubuntu/Debian) en installeer Docker:
+
+```bash
+# Update pakketten
+sudo apt update && sudo apt upgrade -y
+
+# Installeer Docker & Docker Compose
+curl -fsSL [https://get.docker.com](https://get.docker.com) -o get-docker.sh
+sudo sh get-docker.sh
+sudo usermod -aG docker $USER
+# Log uit en weer in om de groepsrechten toe te passen
+
+
+# 1. Clone de code
+git clone [https://github.com/luukderooij/Darts.git](https://github.com/luukderooij/Darts.git)
+cd Darts
+
+# 2. Maak mappen voor persistente data
+mkdir -p data logs
+
+# 3. Start de containers
+docker compose up -d --build
 
 ==================================================
 CONFIG FILE: .env.example
@@ -4594,8 +4645,19 @@ FILE: frontend/src\services\api.ts
 import axios from 'axios';
 
 // 1. Create the instance (like requests.Session())
+// const api = axios.create({
+//   baseURL: 'http://localhost:8000/api', // Point to your FastAPI backend
+//   headers: {
+//     'Content-Type': 'application/json',
+//   },
+// });
+
+
 const api = axios.create({
-  baseURL: 'http://localhost:8000/api', // Point to your FastAPI backend
+  // Verwijder de hardcoded localhost URL. 
+  // Omdat Nginx op hetzelfde domein draait, gebruiken we een relatieve URL.
+  // Als je app draait op http://mijn-server-ip/, wordt dit automatisch http://mijn-server-ip/api
+  baseURL: '/api', 
   headers: {
     'Content-Type': 'application/json',
   },
