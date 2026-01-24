@@ -1,0 +1,15 @@
+# Negeer node_modules in alle mappen
+**/node_modules
+
+# Negeer build folders
+**/dist
+**/build
+
+# Negeer Python omgevingen en cache
+**/.venv
+**/__pycache__
+**/*.pyc
+
+# Negeer git en logbestanden
+.git
+logs
