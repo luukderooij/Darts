@@ -11,17 +11,17 @@ const Home = () => {
             <Trophy className="text-blue-600 h-8 w-8" />
             <span className="font-bold text-xl text-gray-900 tracking-tight">Dart Manager</span>
           </div>
-          <div className="flex items-center gap-4">
-            <Link to="/login" className="text-gray-600 hover:text-blue-600 font-medium transition">
-              Sign In
+            <div className="flex items-center gap-2 md:gap-4">
+            <Link to="/login" className="text-gray-600 hover:text-blue-600 font-medium transition text-sm md:text-base">
+                Sign In
             </Link>
             <Link 
-              to="/register" 
-              className="bg-blue-600 text-white px-5 py-2 rounded-lg font-bold hover:bg-blue-700 transition shadow-sm hover:shadow-md"
+                to="/register" 
+                className="bg-blue-600 text-white px-3 py-2 md:px-5 md:py-2 rounded-lg font-bold hover:bg-blue-700 transition shadow-sm text-sm md:text-base"
             >
-              Get Started
+                Get Started
             </Link>
-          </div>
+            </div>
         </div>
       </nav>
 
