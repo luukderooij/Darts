@@ -42,3 +42,13 @@ mkdir -p data logs
 
 # 3. Start de containers
 docker compose up -d --build
+
+
+# 1. Haal de laatste versie van GitHub
+git pull
+
+# 2. Bouw de containers opnieuw (belangrijk voor nieuwe code!) en herstart ze
+docker compose up -d --build
+
+# 3. (Optioneel) Ruim oude, ongebruikte images op om schijfruimte te besparen
+docker image prune -f
