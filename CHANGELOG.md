@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.2.0](https://github.com/luukderooij/Darts/compare/v1.1.0...v1.2.0) (2026-01-24)
+
+
+### Features
+
+* refactor AuthContext to import User type and streamline authentication logic ([3c4068e](https://github.com/luukderooij/Darts/commit/3c4068e2a600fff81badc40e26f923db1b60768b))
+* update version to 1.1.0 and enhance release script in package.json ([4076bee](https://github.com/luukderooij/Darts/commit/4076beeee3daf9514a67685ddae0ee92debb7e47))
+
 ## 1.1.0 (2026-01-24)
 
 
