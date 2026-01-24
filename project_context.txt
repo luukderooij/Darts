@@ -1,5 +1,45 @@
 
 ==================================================
+CONFIG FILE: package.json
+==================================================
+
+{
+  "name": "dart-tournament-manager",
+  "version": "1.0.0",
+  "scripts": {
+    "release": "standard-version",
+    "prepare": "husky"
+  },
+  "standard-version": {
+    "bumpFiles": [
+      {
+        "filename": "package.json",
+        "type": "json"
+      },
+      {
+        "filename": "backend/app/__init__.py",
+        "updater": "backend/scripts/python-version-updater.js"
+      },
+      {
+        "filename": "frontend/package.json",
+        "type": "json"
+      }
+    ]
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^19.0.0",
+    "@commitlint/config-conventional": "^19.0.0",
+    "husky": "^9.0.0",
+    "standard-version": "^9.5.0"
+  },
+  "dependencies": {
+    "stringify-package": "^1.0.1",
+    "detect-indent": "^6.1.0",
+    "detect-newline": "^3.1.0"
+  }
+}
+
+==================================================
 CONFIG FILE: docker-compose.yml
 ==================================================
 
@@ -2054,6 +2094,7 @@ import SystemLogs from './pages/admin/SystemLogs';
 import ManageBoards from './pages/admin/ManageBoards';
 import Dashboard from './pages/admin/Dashboard';
 import ManageTournament from './pages/admin/ManageTournament'; 
+import Changelog from './pages/admin/Changelog'; 
 
 // Public Pages
 import TournamentView from './pages/public/TournamentView';
@@ -2081,6 +2122,7 @@ function App() {
           <Route path="/dashboard/create-tournament" element={<CreateTournament />} />
           <Route path="/dashboard/logs" element={<SystemLogs />} />
           <Route path="/dashboard/boards" element={<ManageBoards />} />
+          <Route path="/dashboard/changelog" element={<Changelog />} />
 
           {/* Scorer Routes (Tablet View) */}
           <Route path="/board/:scorer_uuid" element={<ScorerMatchList />} />
@@ -2151,6 +2193,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 // 1. Added 'Target' icon for the boards
 import { LayoutDashboard, Users, Trophy, LogOut, Activity, Target } from 'lucide-react';
+import { FileText } from 'lucide-react'; // Import the icon
 
 const Sidebar = () => {
   const { logout, user } = useAuth();
@@ -2169,6 +2212,7 @@ const Sidebar = () => {
     { icon: Target, label: 'Manage Boards', path: '/dashboard/boards' }, // <--- NEW LINK
     { icon: Trophy, label: 'Create Tournament', path: '/dashboard/create-tournament' },
     { icon: Activity, label: 'System Logs', path: '/dashboard/logs' },
+    { icon: FileText, label: 'Changelog', path: '/dashboard/changelog' },
   ];
 
   return (
@@ -2319,6 +2363,33 @@ FILE: frontend/src\pages\SystemLogs.tsx
 ==================================================
 
 
+
+==================================================
+FILE: frontend/src\pages\admin\Changelog.tsx
+==================================================
+
+import { useEffect, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import AdminLayout from '../../components/layout/AdminLayout';
+// Import the changelog file from the root folder
+// The ?raw tells Vite to import it as text, not code
+import changelogPath from '../../../../CHANGELOG.md?raw'; 
+
+const Changelog = () => {
+  return (
+    <AdminLayout>
+      <div className="max-w-4xl mx-auto bg-white p-8 rounded-lg shadow min-h-[500px]">
+        <h1 className="text-3xl font-bold mb-6 border-b pb-4 text-gray-800">System Updates</h1>
+        <div className="prose prose-blue max-w-none text-gray-700">
+           {/* This renders the markdown text as HTML */}
+          <ReactMarkdown>{changelogPath}</ReactMarkdown>
+        </div>
+      </div>
+    </AdminLayout>
+  );
+};
+
+export default Changelog;
 
 ==================================================
 FILE: frontend/src\pages\admin\CreateTournament.tsx
@@ -4752,4 +4823,84 @@ export interface Tournament {
 export interface Match {
     id: number;
     // ... later invullen
+}
+
+==================================================
+FILE: .vscode\extensions.json
+==================================================
+
+
+
+==================================================
+FILE: .vscode\launch.json
+==================================================
+
+
+
+==================================================
+FILE: .vscode\settings.json
+==================================================
+
+
+
+==================================================
+FILE: .vscode\tasks.json
+==================================================
+
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Start Backend",
+      "type": "shell",
+      "command": "uvicorn app.main:app --reload --port 8000",
+      "options": {
+        "cwd": "${workspaceFolder}/backend"
+      },
+      // Windows specific: auto-activate venv
+      "windows": {
+        "command": "..\\.venv\\Scripts\\Activate.ps1; uvicorn app.main:app --reload --port 8000"
+      },
+      "presentation": {
+        "group": "server",
+        "reveal": "always",
+        "panel": "split"
+      }
+    },
+    {
+      "label": "Start Frontend",
+      "type": "shell",
+      "command": "npm run dev",
+      "options": {
+        "cwd": "${workspaceFolder}/frontend"
+      },
+      "presentation": {
+        "group": "server",
+        "reveal": "always",
+        "panel": "split"
+      }
+    },
+    {
+      "label": "Dev: Run All",
+      "dependsOn": ["Start Backend", "Start Frontend"],
+      "problemMatcher": [],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      }
+    },
+    {
+      "label": "⚡ Generate New Version",
+      "type": "shell",
+      "command": "npm run release",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "new"
+      },
+      "detail": "Analyzes commits, bumps version, and updates CHANGELOG"
+    }
+  ]
 }

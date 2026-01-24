@@ -1,7 +1,7 @@
 import os
 
 # 1. Mappen die we recursief willen doorzoeken
-TARGET_DIRS = ["backend/app", "frontend/src"]
+TARGET_DIRS = ["backend/app", "frontend/src", ".vscode"]
 
 # 2. Specifieke bestanden in de root die cruciaal zijn voor context
 # Pas dit aan op basis van wat jij in je root hebt staan

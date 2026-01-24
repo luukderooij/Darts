@@ -2,7 +2,7 @@
   "name": "dart-tournament-manager",
   "version": "1.0.0",
   "scripts": {
-    "release": "standard-version",
+    "release": "standard-version && git push --follow-tags",
     "prepare": "husky"
   },
   "standard-version": {
