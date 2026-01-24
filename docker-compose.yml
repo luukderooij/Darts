@@ -2,7 +2,9 @@ version: '3.8'
 
 services:
   backend:
-    build: .
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
     container_name: darts-backend
     restart: always
     # BELANGRIJK: 'volumes' moet 4 spaties ingesprongen zijn (onder backend)
