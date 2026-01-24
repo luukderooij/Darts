@@ -1,16 +1,25 @@
-# Stap 1: Build de React App
+# Build Stage
 FROM node:18-alpine as build
+
 WORKDIR /app
-COPY package.json package-lock.json ./
+
+# Kopieer package files (Let op: nu met frontend/ prefix omdat context root is)
+COPY frontend/package*.json ./
+
 RUN npm install
-COPY . .
+
+# Kopieer de frontend broncode
+COPY frontend/ .
+
+# BELANGRIJK: Kopieer de Changelog vanuit de root naar de root van de container (/)
+# Hierdoor werkt je import '../../../../CHANGELOG.md' (die komt uit bij /)
+COPY CHANGELOG.md /CHANGELOG.md
+
+# Bouw de app
 RUN npm run build
 
-# Stap 2: Serveer met Nginx
+# Production Stage
 FROM nginx:alpine
-# Kopieer de build files naar de nginx map
 COPY --from=build /app/dist /usr/share/nginx/html
-# Kopieer onze custom nginx config
-COPY nginx.conf /etc/nginx/conf.d/default.conf
 EXPOSE 80
 CMD ["nginx", "-g", "daemon off;"]
