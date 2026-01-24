@@ -16,8 +16,9 @@ import Changelog from './pages/admin/Changelog';
 
 // Public Pages
 import TournamentView from './pages/public/TournamentView';
-
+import Home from './pages/Home'; 
 // Scorer Pages
+
 import ScorerMatchList from './pages/scorer/MatchList';
 import Scoreboard from './pages/scorer/Scoreboard';
 
@@ -26,6 +27,9 @@ function App() {
     <AuthProvider>
       <BrowserRouter>
         <Routes>
+          {/* Default Route: Show Home instead of redirecting */}
+          <Route path="/" element={<Home />} /> 
+
           {/* Auth Routes */}
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
