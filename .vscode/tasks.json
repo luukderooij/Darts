@@ -39,6 +39,19 @@
         "kind": "build",
         "isDefault": true
       }
+    },
+    {
+      "label": "⚡ Generate New Version",
+      "type": "shell",
+      "command": "npm run release",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "new"
+      },
+      "detail": "Analyzes commits, bumps version, and updates CHANGELOG"
     }
   ]
 }

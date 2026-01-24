@@ -12,6 +12,7 @@ import SystemLogs from './pages/admin/SystemLogs';
 import ManageBoards from './pages/admin/ManageBoards';
 import Dashboard from './pages/admin/Dashboard';
 import ManageTournament from './pages/admin/ManageTournament'; 
+import Changelog from './pages/admin/Changelog'; 
 
 // Public Pages
 import TournamentView from './pages/public/TournamentView';
@@ -39,6 +40,7 @@ function App() {
           <Route path="/dashboard/create-tournament" element={<CreateTournament />} />
           <Route path="/dashboard/logs" element={<SystemLogs />} />
           <Route path="/dashboard/boards" element={<ManageBoards />} />
+          <Route path="/dashboard/changelog" element={<Changelog />} />
 
           {/* Scorer Routes (Tablet View) */}
           <Route path="/board/:scorer_uuid" element={<ScorerMatchList />} />

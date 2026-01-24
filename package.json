@@ -1,27 +1,35 @@
 {
-  "name": "darts",
+  "name": "dart-tournament-manager",
   "version": "1.0.0",
-  "description": "Start dev enviroment:\r  CTRL SHIFT B",
-  "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "release": "standard-version",
     "prepare": "husky"
   },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/luukderooij/Darts.git"
+  "standard-version": {
+    "bumpFiles": [
+      {
+        "filename": "package.json",
+        "type": "json"
+      },
+      {
+        "filename": "backend/app/__init__.py",
+        "updater": "backend/scripts/python-version-updater.js"
+      },
+      {
+        "filename": "frontend/package.json",
+        "type": "json"
+      }
+    ]
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "bugs": {
-    "url": "https://github.com/luukderooij/Darts/issues"
-  },
-  "homepage": "https://github.com/luukderooij/Darts#readme",
   "devDependencies": {
-    "@commitlint/cli": "^20.3.1",
-    "@commitlint/config-conventional": "^20.3.1",
-    "husky": "^9.1.7",
+    "@commitlint/cli": "^19.0.0",
+    "@commitlint/config-conventional": "^19.0.0",
+    "husky": "^9.0.0",
     "standard-version": "^9.5.0"
+  },
+  "dependencies": {
+    "stringify-package": "^1.0.1",
+    "detect-indent": "^6.1.0",
+    "detect-newline": "^3.1.0"
   }
 }

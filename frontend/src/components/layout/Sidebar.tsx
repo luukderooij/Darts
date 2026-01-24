@@ -2,6 +2,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 // 1. Added 'Target' icon for the boards
 import { LayoutDashboard, Users, Trophy, LogOut, Activity, Target } from 'lucide-react';
+import { FileText } from 'lucide-react'; // Import the icon
 
 const Sidebar = () => {
   const { logout, user } = useAuth();
@@ -20,6 +21,7 @@ const Sidebar = () => {
     { icon: Target, label: 'Manage Boards', path: '/dashboard/boards' }, // <--- NEW LINK
     { icon: Trophy, label: 'Create Tournament', path: '/dashboard/create-tournament' },
     { icon: Activity, label: 'System Logs', path: '/dashboard/logs' },
+    { icon: FileText, label: 'Changelog', path: '/dashboard/changelog' },
   ];
 
   return (
