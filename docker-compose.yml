@@ -5,13 +5,12 @@ services:
     build: ./backend
     container_name: darts-backend
     restart: always
-    volumes:
-      # Koppel de database aan een map op je server zodat data bewaard blijft
-      - ./data/darts.db:/app/darts.db
+  volumes:
+      - ./data:/app/data
       # Koppel logs
       - ./logs:/app/logs
-    environment:
-      - DATABASE_URL=sqlite:////app/darts.db
+  environment:
+      - DATABASE_URL=sqlite:////app/data/darts.db
       - SECRET_KEY=your_secret_key_here
     # Geen ports mapping nodig, want nginx praat intern met backend
 
