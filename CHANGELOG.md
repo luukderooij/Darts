@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.3.0](https://github.com/luukderooij/Darts/compare/v1.1.0...v1.3.0) (2026-01-25)
+
+
+### Features
+
+* add .dockerignore to exclude unnecessary files and directories from Docker context ([838e01d](https://github.com/luukderooij/Darts/commit/838e01d234a6f98bf7835a8318a19ced8b10e9f7))
+* add Home page component and set it as the default route ([0be9685](https://github.com/luukderooij/Darts/commit/0be9685a508e795a4e9ce51e5e3e678fc4051b81))
+* add ScorerMenu component and implement poule filtering in MatchList ([a1264d1](https://github.com/luukderooij/Darts/commit/a1264d17ed6ec30f2137c3486995aa7b9d397aa4))
+* add tournament deletion endpoint and implement delete functionality in Dashboard and MatchList ([328078a](https://github.com/luukderooij/Darts/commit/328078a8469922574bdb752986fa3fdd63278012))
+* implement response interceptor for API to handle unauthorized errors and redirect to login ([67c1605](https://github.com/luukderooij/Darts/commit/67c1605ef918506fd521f6086f9cc44b7b3fbc1f))
+* make layout mobile responsive and update home links ([820efd4](https://github.com/luukderooij/Darts/commit/820efd4d95e6b4dfb6a6236876306add81979e90))
+* refactor AuthContext to import User type and streamline authentication logic ([3c4068e](https://github.com/luukderooij/Darts/commit/3c4068e2a600fff81badc40e26f923db1b60768b))
+* update README with additional Docker commands for container management ([8a0e764](https://github.com/luukderooij/Darts/commit/8a0e7648636ddcb01403845f841b6906b074afde))
+* update version to 1.1.0 and enhance release script in package.json ([4076bee](https://github.com/luukderooij/Darts/commit/4076beeee3daf9514a67685ddae0ee92debb7e47))
+
+
+### Bug Fixes
+
+* specify build context and Dockerfile for frontend service in docker-compose ([2642ce1](https://github.com/luukderooij/Darts/commit/2642ce10546ea804b8facb090cd6131381ae5e99))
+* specify dockerfile path for backend service in docker-compose ([f9402a1](https://github.com/luukderooij/Darts/commit/f9402a1dad083360d01bb2833158a0ae1bf3904c))
+* update backend build context in docker-compose and improve volume indentation ([3177a2f](https://github.com/luukderooij/Darts/commit/3177a2fcf61759deabdb19af81d826030ee09e0a))
+* update frontend build context in Docker configuration ([5cf6db3](https://github.com/luukderooij/Darts/commit/5cf6db31cc878b7089c18498e5dba3ede54fe957))
+* update volume mapping and database URL in docker-compose for backend service ([106aeba](https://github.com/luukderooij/Darts/commit/106aebae67c64d21ff38372c1e7e02bd2e8f5fd6))
+
 ## [1.2.0](https://github.com/luukderooij/Darts/compare/v1.1.0...v1.2.0) (2026-01-24)
 
 
