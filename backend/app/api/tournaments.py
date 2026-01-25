@@ -1,7 +1,7 @@
 # FILE: backend/app/api/tournaments.py
 import uuid
 import math 
-from typing import List, Any
+from typing import List, Optional, Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select
 from sqlalchemy.orm import selectinload
@@ -12,24 +12,24 @@ from app.models.user import User
 from app.models.player import Player
 from app.models.match import Match
 from app.models.dartboard import Dartboard 
-from app.api.users import get_current_user 
-from app.schemas.tournament import TournamentUpdate
 from app.models.team import Team
-
+from app.api.users import get_current_user 
 
 from app.schemas.tournament import (
     TournamentCreate, 
     TournamentRead, 
     TournamentUpdate, 
-    TournamentReadWithMatches # <--- Nieuwe import
+    TournamentReadWithMatches
 )
 
+# --- CORRECTED IMPORTS ---
 from app.services.tournament_gen import (
     generate_poule_phase, 
-    generate_knockout_from_poules,
     generate_round_robin_global,
-    generate_knockout
+    generate_knockout,
+    generate_knockout_bracket  # Renamed function
 )
+# -------------------------
 
 router = APIRouter()
 
@@ -41,19 +41,16 @@ def create_tournament(
 ):
     # 1. Verify Players
     players_to_link = []
-    for pid in tourn_in.player_ids:
-        p = session.get(Player, pid)
-        if not p:
-            raise HTTPException(status_code=400, detail=f"Invalid player ID: {pid}")
-        players_to_link.append(p)
-        
+    if tourn_in.player_ids:
+        players_to_link = session.exec(select(Player).where(Player.id.in_(tourn_in.player_ids))).all()
+    
+    # Check minimum players (raw count)
     if len(players_to_link) < 2:
-        raise HTTPException(status_code=400, detail="Need at least 2 players")
+        raise HTTPException(status_code=400, detail="Selecteer minimaal 2 spelers.")
 
     # 2. Validatie Poulegrootte
     if tourn_in.format == "hybrid" and tourn_in.number_of_poules > 0:
             
-            # --- AANGEPAST BLOK ---
             # Bepaal hoeveel 'entiteiten' (spelers of teams) er in de poule komen
             entity_count = len(players_to_link)
             
@@ -71,13 +68,13 @@ def create_tournament(
 
     # 3. Verify Boards
     boards_to_link = []
-    for bid in tourn_in.board_ids:
-        b = session.get(Dartboard, bid)
-        if not b:
-             raise HTTPException(status_code=400, detail=f"Invalid board ID: {bid}")
-        boards_to_link.append(b)
+    if tourn_in.board_ids:
+        boards_to_link = session.exec(select(Dartboard).where(Dartboard.id.in_(tourn_in.board_ids))).all()
+        if not boards_to_link:
+             raise HTTPException(status_code=400, detail="Ongeldige borden geselecteerd.")
 
     # 4. Create Tournament Object
+    # We exclude ids because we link them manually via relationships
     tourn_data = tourn_in.model_dump(exclude={"player_ids", "board_ids"})
     tournament = Tournament.model_validate(tourn_data)
     
@@ -94,9 +91,9 @@ def create_tournament(
     session.commit()
     session.refresh(tournament)
     
-    # 6. Generate Matches based on Format
+    # 6. Generate Matches based on Format (ONLY FOR SINGLES)
+    # For doubles, we wait for the /finalize endpoint because teams need to be created first
     if tournament.mode == "singles":
-            
             if tournament.format == "hybrid":
                 generate_poule_phase(
                     tournament_id=tournament.id, 
@@ -145,15 +142,15 @@ def read_tournaments(
 ):
     tournaments = session.exec(
         select(Tournament)
+        .where(Tournament.user_id == current_user.id)
         .options(selectinload(Tournament.players), selectinload(Tournament.boards))
         .offset(offset)
         .limit(limit)
     ).all()
     
-    # We vullen de counts handmatig in, omdat SQLModel dit niet automatisch doet
+    # Fill counts manually
     results = []
     for t in tournaments:
-        # Zet om naar dict en voeg counts toe
         t_data = t.model_dump()
         t_data['player_count'] = len(t.players)
         t_data['board_count'] = len(t.boards)
@@ -161,33 +158,54 @@ def read_tournaments(
         
     return results
 
-@router.get("/public/{public_uuid}", response_model=TournamentReadWithMatches) # <--- Aangepast Model
+@router.get("/public/{public_uuid}", response_model=TournamentReadWithMatches)
 def read_public_tournament(public_uuid: str, session: Session = Depends(get_session)):
-    # 1. Haal toernooi op met matches en spelers
+    # 1. Fetch tournament with matches and players
     t = session.exec(
         select(Tournament)
         .where(Tournament.public_uuid == public_uuid)
-        .options(selectinload(Tournament.matches), selectinload(Tournament.players))
+        .options(
+            selectinload(Tournament.matches), 
+            selectinload(Tournament.players)
+        )
     ).first()
     
     if not t:
         raise HTTPException(status_code=404, detail="Tournament not found")
 
-    # 2. Maak een map van ID -> Naam voor snelle lookup
+    # 2. Create map for players and teams for fast lookup
     player_map = {p.id: p.name for p in t.players}
+    
+    # We also need teams if it's a doubles tournament
+    teams = session.exec(select(Team).where(Team.tournament_id == t.id)).all()
+    team_map = {team.id: team.name for team in teams}
 
-    # 3. Verrijk de matches met spelernamen
+    # 3. Enrich matches with names
     matches_data = []
     sorted_matches = sorted(t.matches, key=lambda m: m.id)
     
     for m in sorted_matches:
         m_dict = m.model_dump()
-        # Vul de namen in (of "Bye" als er geen speler is)
-        m_dict['player1_name'] = player_map.get(m.player1_id, "Bye")
-        m_dict['player2_name'] = player_map.get(m.player2_id, "Bye")
+        
+        # Resolve Name 1 (Player > Team > Bye)
+        if m.player1_id:
+            m_dict['player1_name'] = player_map.get(m.player1_id, "Bye")
+        elif m.team1_id:
+             m_dict['player1_name'] = team_map.get(m.team1_id, "Bye")
+        else:
+             m_dict['player1_name'] = "Bye"
+
+        # Resolve Name 2
+        if m.player2_id:
+            m_dict['player2_name'] = player_map.get(m.player2_id, "Bye")
+        elif m.team2_id:
+             m_dict['player2_name'] = team_map.get(m.team2_id, "Bye")
+        else:
+             m_dict['player2_name'] = "Bye"
+             
         matches_data.append(m_dict)
 
-    # 4. Bouw het antwoord
+    # 4. Build response
     response = t.model_dump()
     response['matches'] = matches_data
     response['player_count'] = len(t.players)
@@ -205,7 +223,9 @@ def start_knockout(
     if not t:
         raise HTTPException(status_code=404, detail="Tournament not found")
         
-    generate_knockout_from_poules(t, session)
+    # Call the NEW function from tournament_gen
+    generate_knockout_bracket(session, t)
+    
     return {"message": "Knockout phase generated"}
 
 
@@ -217,13 +237,12 @@ def update_tournament_settings(
     current_user: User = Depends(get_current_user)
 ):
     """
-    Update toernooi instellingen (bijv. allow_byes) on the fly.
+    Update tournament settings (e.g. allow_byes) on the fly.
     """
     tournament = session.get(Tournament, tournament_id)
     if not tournament:
         raise HTTPException(status_code=404, detail="Tournament not found")
     
-    # Update alleen de velden die zijn meegegeven
     tourn_data = tourn_update.model_dump(exclude_unset=True)
     for key, value in tourn_data.items():
         setattr(tournament, key, value)
@@ -242,20 +261,18 @@ def update_round_format(
     current_user: User = Depends(get_current_user)
 ):
     """
-    Batch update: Pas de 'Best of X' aan voor ALLE ongespeelde wedstrijden in een specifieke ronde.
+    Batch update: Adjust 'Best of X' for ALL unplayed matches in a specific round.
     """
-    # 1. Haal matches op
     statement = select(Match).where(
         Match.tournament_id == tournament_id,
         Match.round_number == round_number,
-        Match.is_completed == False # Alleen ongespeelde aanpassen
+        Match.is_completed == False 
     )
     matches = session.exec(statement).all()
     
     if not matches:
         return {"message": "Geen ongespeelde wedstrijden gevonden in deze ronde om aan te passen."}
         
-    # 2. Update ze allemaal
     for match in matches:
         match.best_of_legs = best_of_legs
         session.add(match)
@@ -274,9 +291,6 @@ def delete_tournament(
     if not tournament:
         raise HTTPException(status_code=404, detail="Tournament not found")
     
-    # --- Manual Cascade Delete ---
-    # We must delete children first to avoid Foreign Key errors
-    
     # 1. Delete Matches
     matches = session.exec(select(Match).where(Match.tournament_id == tournament_id)).all()
     for m in matches:
@@ -287,7 +301,7 @@ def delete_tournament(
     for t in teams:
         session.delete(t)
         
-    # 3. Delete Tournament (Links will be handled automatically by SQLModel)
+    # 3. Delete Tournament
     session.delete(tournament)
     session.commit()
     
@@ -300,54 +314,47 @@ def finalize_tournament_setup(
     session: Session = Depends(get_session)
 ):
     """
-    Trigger de generatie van wedstrijden nadat teams zijn aangemaakt.
-    Specifiek voor Doubles/Teams toernooien.
+    Trigger match generation after teams are created.
+    Specific for Doubles/Teams tournaments.
     """
     tournament = session.get(Tournament, tournament_id)
     if not tournament:
         raise HTTPException(status_code=404, detail="Toernooi niet gevonden")
 
-    # Als het singles is, zijn matches al gemaakt bij aanmaken.
     if tournament.mode == "singles":
         return {"message": "Already generated (singles)"}
 
-    # Haal alle teams op
+    # Fetch all teams
     teams = session.exec(select(Team).where(Team.tournament_id == tournament_id)).all()
     
     if len(teams) < 2:
         raise HTTPException(status_code=400, detail="Te weinig teams om wedstrijden te genereren.")
 
-    # Verwijder eventuele oude matches (voor de zekerheid)
+    # Remove old matches (safety)
     existing_matches = session.exec(select(Match).where(Match.tournament_id == tournament_id)).all()
     for m in existing_matches:
         session.delete(m)
     
-    # --- Generatie Logica voor Teams (Poule Fase) ---
-    # We verdelen de teams over de poules
+    # --- Generation Logic for Teams (Poule Phase) ---
     num_poules = tournament.number_of_poules
-    
-    # Maak lege lijsten voor elke poule
     poules = [[] for _ in range(num_poules)]
     
-    # Verdeel teams snake-wise of random (hier simpel: op volgorde verdelen)
     for i, team in enumerate(teams):
         poule_index = i % num_poules
         poules[poule_index].append(team)
 
     matches_created = []
 
-    # Voor elke poule, maak Round Robin schema
     for poule_idx, poule_teams in enumerate(poules):
         poule_number = poule_idx + 1
         n = len(poule_teams)
         
-        # Round Robin algoritme
+        # Round Robin
         for i in range(n):
             for j in range(i + 1, n):
                 t1 = poule_teams[i]
                 t2 = poule_teams[j]
                 
-                # Maak de match
                 match = Match(
                     tournament_id=tournament.id,
                     poule_number=poule_number,
@@ -355,8 +362,7 @@ def finalize_tournament_setup(
                     team1_id=t1.id,
                     team2_id=t2.id,
 
-                    round_number=1,
-
+                    round_number=1, # Mandatory field
                     best_of_legs=tournament.starting_legs_group,
                     best_of_sets=tournament.sets_per_match,
 
