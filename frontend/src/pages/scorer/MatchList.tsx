@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../../services/api';
-import { PlayCircle, CheckCircle, Filter } from 'lucide-react';
+import { PlayCircle, CheckCircle, Filter, GitMerge } from 'lucide-react';
 
 interface Match {
   id: number;
@@ -15,13 +15,12 @@ interface Match {
 const ScorerMatchList = () => {
   const { scorer_uuid } = useParams();
   const navigate = useNavigate();
-  // Initialize search params
   const [searchParams] = useSearchParams();
   
   const [matches, setMatches] = useState<Match[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Read the 'poule' parameter from the URL (e.g., ?poule=1)
+  // Read the 'poule' parameter. It might be a number ("1") or "ko"
   const pouleFilter = searchParams.get('poule');
 
   useEffect(() => {
@@ -38,22 +37,33 @@ const ScorerMatchList = () => {
     loadMatches();
   }, [scorer_uuid]);
 
-  // Create a filtered list based on the URL parameter
+  // --- UPDATED FILTER LOGIC ---
   const displayedMatches = matches.filter(match => {
-    // If no filter is set, show everything
+    // 1. Show all if no filter
     if (!pouleFilter) return true;
-    // If filter is set, only show matches that match the poule number
+
+    // 2. Show Knockout Matches (where poule_number is null)
+    if (pouleFilter === 'ko') return match.poule_number === null;
+
+    // 3. Show Specific Poule Matches
     return match.poule_number === parseInt(pouleFilter);
   });
+
+  // Helper title text
+  const getTitle = () => {
+      if (pouleFilter === 'ko') return "Knockout Phase";
+      if (pouleFilter) return `Poule ${pouleFilter}`;
+      return "All Matches";
+  };
 
   if (loading) return <div className="p-8 text-center text-white">Loading Matches...</div>;
 
   return (
     <div className="min-h-screen bg-slate-900 text-white p-4">
-      {/* Header with context */}
       <div className="text-center mb-6">
-        <h1 className="text-2xl font-bold text-blue-400">
-          {pouleFilter ? `Poule ${pouleFilter} Matches` : 'All Matches'}
+        <h1 className="text-2xl font-bold text-blue-400 flex items-center justify-center gap-2">
+          {pouleFilter === 'ko' && <GitMerge />}
+          {getTitle()}
         </h1>
         <p className="text-slate-500 text-sm">Select a match to start scoring</p>
       </div>
@@ -74,10 +84,9 @@ const ScorerMatchList = () => {
               }`}
             >
               <div className="flex-1 text-center">
-                {/* Optional: Show round/poule badge */}
                 <div className="mb-1">
-                   <span className="text-xs font-mono bg-slate-900 px-2 py-0.5 rounded text-slate-400">
-                     {match.poule_number ? `P${match.poule_number}` : 'KO'}
+                   <span className={`text-xs font-mono px-2 py-0.5 rounded ${match.poule_number ? 'bg-slate-900 text-slate-400' : 'bg-orange-900/30 text-orange-400 border border-orange-900/50'}`}>
+                     {match.poule_number ? `P${match.poule_number}` : `KO - R${match.round_number}`}
                    </span>
                 </div>
 

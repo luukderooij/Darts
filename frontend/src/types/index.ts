@@ -27,6 +27,7 @@ export interface Tournament {
   status: string; // 'draft', 'active', 'completed'
   format: string;
   public_uuid?: string;
+  scorer_uuid?: string;
   
   // Nieuwe velden die het dashboard nodig heeft:
   number_of_poules?: number;

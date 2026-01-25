@@ -2,7 +2,7 @@ import { useEffect, useState, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../../services/api';
 import AdminLayout from '../../components/layout/AdminLayout';
-import { Trophy, Calendar, Users, ExternalLink, Copy, Target, LayoutGrid, Tablet, ChevronDown } from 'lucide-react';
+import { Trophy, Calendar, Users, ExternalLink, Copy, Target, LayoutGrid, Tablet, ChevronDown, GitMerge, Trash2 } from 'lucide-react';
 import { Tournament } from '../../types';
 
 // --- Helper Component for the Dropdown ---
@@ -10,7 +10,6 @@ const ScorerMenu = ({ tournament }: { tournament: Tournament }) => {
   const [isOpen, setIsOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
-  // Close menu when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
@@ -36,7 +35,7 @@ const ScorerMenu = ({ tournament }: { tournament: Tournament }) => {
       </button>
 
       {isOpen && (
-        <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-xl border border-gray-100 z-50 overflow-hidden">
+        <div className="absolute right-0 mt-2 w-56 bg-white rounded-lg shadow-xl border border-gray-100 z-50 overflow-hidden">
           {/* Main Link: All Matches */}
           <Link 
             to={`/board/${tournament.scorer_uuid}`}
@@ -60,6 +59,18 @@ const ScorerMenu = ({ tournament }: { tournament: Tournament }) => {
               </Link>
             ))}
           </div>
+
+          {/* Knockout Link */}
+          {(tournament.format === 'hybrid' || tournament.format === 'knockout') && (
+            <Link
+                to={`/board/${tournament.scorer_uuid}?poule=ko`}
+                target="_blank"
+                className="block px-4 py-2 text-sm text-orange-600 hover:bg-orange-50 flex justify-between items-center border-t border-gray-100 font-medium"
+            >
+                <span>Knockout Phase</span>
+                <GitMerge size={14} />
+            </Link>
+          )}
         </div>
       )}
     </div>
@@ -71,7 +82,6 @@ const Dashboard = () => {
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
 
-  // 1. Fetch tournaments
   useEffect(() => {
     const fetchTournaments = async () => {
       try {
@@ -93,6 +103,24 @@ const Dashboard = () => {
     const url = `${window.location.origin}/t/${uuid}`;
     navigator.clipboard.writeText(url);
     alert("Public link copied to clipboard!");
+  };
+
+  // --- RESTORED: Delete Logic ---
+  const handleDelete = async (id: number) => {
+    const confirmed = window.confirm(
+        "Are you sure you want to delete this tournament?\n\nThis will permanently delete all matches, scores, and teams associated with it."
+    );
+    
+    if (!confirmed) return;
+
+    try {
+        await api.delete(`/tournaments/${id}`);
+        // Remove from UI immediately
+        setTournaments(prev => prev.filter(t => t.id !== id));
+    } catch (error) {
+        alert("Error deleting tournament. Check logs.");
+        console.error(error);
+    }
   };
 
   return (
@@ -147,7 +175,6 @@ const Dashboard = () => {
 
                   {/* Right: Actions */}
                   <div className="flex flex-wrap items-center gap-3">
-                    {/* 1. Copy Link */}
                     <button 
                       onClick={() => copyToClipboard(t.public_uuid || '')}
                       className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded transition"
@@ -156,7 +183,6 @@ const Dashboard = () => {
                       <Copy size={20} />
                     </button>
                     
-                    {/* 2. Public View */}
                     <Link 
                       to={`/t/${t.public_uuid}`}
                       target="_blank"
@@ -166,18 +192,27 @@ const Dashboard = () => {
                       Public View
                     </Link>
 
-                    {/* 3. NEW Scorer Menu */}
+                    {/* Scorer Menu */}
                     {t.scorer_uuid && (
                         <ScorerMenu tournament={t} />
                     )}
 
-                    {/* 4. Manage Button */}
                     <button 
                       onClick={() => navigate(`/dashboard/tournament/${t.id}`)}
                       className="bg-slate-800 text-white px-5 py-2 rounded font-medium hover:bg-slate-900 transition shadow-sm"
                     >
                       Manage
                     </button>
+
+                    {/* RESTORED: Delete Button */}
+                    <button 
+                      onClick={() => handleDelete(t.id)}
+                      className="p-2 text-red-300 hover:text-red-600 hover:bg-red-50 rounded transition border border-transparent hover:border-red-200"
+                      title="Delete Tournament"
+                    >
+                      <Trash2 size={20} />
+                    </button>
+
                   </div>
 
                 </div>
