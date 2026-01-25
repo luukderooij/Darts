@@ -317,9 +317,34 @@ const CreateTournament = () => {
                                 <label className={LABEL_STYLE}>Borden</label>
                                 <div className="max-h-32 overflow-y-auto space-y-1 pr-1 custom-scrollbar border rounded p-2">
                                     {allBoards.map(board => (
-                                        <label key={board.id} className={`flex items-center p-1 rounded cursor-pointer text-sm ${selectedBoardIds.includes(board.id) ? 'bg-blue-50 text-blue-700' : ''}`}>
-                                            <input type="checkbox" className="mr-2" checked={selectedBoardIds.includes(board.id)} onChange={() => toggleBoard(board.id)} />
-                                            Bord {board.number}
+                                        <label 
+                                            key={board.id} 
+                                            className={`flex items-center p-2 rounded cursor-pointer text-sm transition-colors ${
+                                                selectedBoardIds.includes(board.id) 
+                                                ? 'bg-blue-50 text-blue-700' 
+                                                : 'hover:bg-gray-50'
+                                            }`}
+                                        >
+                                            <input 
+                                                type="checkbox" 
+                                                className="mr-3" 
+                                                checked={selectedBoardIds.includes(board.id)} 
+                                                onChange={() => toggleBoard(board.id)} 
+                                            />
+                                            
+                                            {/* AANGEPAST STUK: Toon nummer én locatie */}
+                                            <div className="flex flex-col leading-tight">
+                                                <span className="font-medium">
+                                                    Bord {board.number}
+                                                </span>
+                                                {/* Toon de locatie (name) alleen als die is ingevuld, in lichtgrijs */}
+                                                {board.name && (
+                                                    <span className="text-xs text-gray-400 font-normal">
+                                                        {board.name}
+                                                    </span>
+                                                )}
+                                            </div>
+                                            
                                         </label>
                                     ))}
                                 </div>
