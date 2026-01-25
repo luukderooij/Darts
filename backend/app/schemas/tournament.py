@@ -9,6 +9,7 @@ class TournamentCreate(BaseModel):
     date: str  
     number_of_poules: int = 1  
     format: str = "hybrid"
+    mode: str = "singles"
     allow_byes: bool = True
     
     # Settings

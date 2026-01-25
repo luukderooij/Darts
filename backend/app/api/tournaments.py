@@ -51,12 +51,22 @@ def create_tournament(
 
     # 2. Validatie Poulegrootte
     if tourn_in.format == "hybrid" and tourn_in.number_of_poules > 0:
-        avg_players = math.ceil(len(players_to_link) / tourn_in.number_of_poules)
-        if avg_players > 7:
-            raise HTTPException(
-                status_code=400, 
-                detail=f"Te veel spelers per poule! Je probeert {avg_players} spelers per poule te stoppen. Het maximum is 7."
-            )
+            
+            # --- AANGEPAST BLOK ---
+            # Bepaal hoeveel 'entiteiten' (spelers of teams) er in de poule komen
+            entity_count = len(players_to_link)
+            
+            # Als het koppels zijn, delen we het aantal spelers door 2
+            if tourn_in.mode == "doubles":
+                entity_count = math.ceil(entity_count / 2)
+
+            avg_entities = math.ceil(entity_count / tourn_in.number_of_poules)
+            
+            if avg_entities > 7:
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"Te veel deelnames per poule! Je probeert {avg_entities} teams/spelers per poule te stoppen. Het maximum is 7."
+                )
 
     # 3. Verify Boards
     boards_to_link = []

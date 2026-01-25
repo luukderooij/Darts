@@ -140,6 +140,7 @@ const CreateTournament = () => {
                 name: finalName,
                 date,
                 format,
+                mode: participationMode,
                 allow_byes: allowByes,
                 number_of_poules: poules,
                 qualifiers_per_poule: qualifiersPerPoule,
