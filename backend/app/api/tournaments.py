@@ -14,6 +14,7 @@ from app.models.match import Match
 from app.models.dartboard import Dartboard 
 from app.api.users import get_current_user 
 from app.schemas.tournament import TournamentUpdate
+from app.models.team import Team
 
 from app.schemas.tournament import (
     TournamentCreate, 
@@ -248,3 +249,33 @@ def update_round_format(
         
     session.commit()
     return {"message": f"{len(matches)} wedstrijden geüpdatet naar Best of {best_of_legs} legs."}
+
+
+@router.delete("/{tournament_id}")
+def delete_tournament(
+    tournament_id: int,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user)
+):
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+    
+    # --- Manual Cascade Delete ---
+    # We must delete children first to avoid Foreign Key errors
+    
+    # 1. Delete Matches
+    matches = session.exec(select(Match).where(Match.tournament_id == tournament_id)).all()
+    for m in matches:
+        session.delete(m)
+        
+    # 2. Delete Teams
+    teams = session.exec(select(Team).where(Team.tournament_id == tournament_id)).all()
+    for t in teams:
+        session.delete(t)
+        
+    # 3. Delete Tournament (Links will be handled automatically by SQLModel)
+    session.delete(tournament)
+    session.commit()
+    
+    return {"ok": True}
