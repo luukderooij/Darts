@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.4.0](https://github.com/luukderooij/Darts/compare/v1.3.1...v1.4.0) (2026-01-25)
+
+
+### Features
+
+* add tournament mode setting and update match generation logic ([e0e2e0e](https://github.com/luukderooij/Darts/commit/e0e2e0e497bf20b1f70bf818b0ea55cfd1dad2ef))
+* enhance tournament creation with participation mode and validate entity count ([d39c57d](https://github.com/luukderooij/Darts/commit/d39c57da7344245c0196ddd98b9a0f43664f1e07))
+* enhance tournament logic, team support & knockout brackets ([ebfb279](https://github.com/luukderooij/Darts/commit/ebfb27976906871c59ad039af02ee2e4c465404b))
+* enhance tournament management with team support and match generation ([fe812fe](https://github.com/luukderooij/Darts/commit/fe812feaf91d9db784ee33cbdd8764188ea20f27))
+
 ### [1.3.1](https://github.com/luukderooij/Darts/compare/v1.3.0...v1.3.1) (2026-01-25)
 
 ## [1.3.0](https://github.com/luukderooij/Darts/compare/v1.1.0...v1.3.0) (2026-01-25)
