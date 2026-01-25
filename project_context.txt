@@ -5,7 +5,7 @@ CONFIG FILE: package.json
 
 {
   "name": "dart-tournament-manager",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "scripts": {
     "release": "standard-version && git push --follow-tags",
     "prepare": "husky"
@@ -48,25 +48,27 @@ version: '3.8'
 
 services:
   backend:
-    build: ./backend
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
     container_name: darts-backend
     restart: always
+    # BELANGRIJK: 'volumes' moet 4 spaties ingesprongen zijn (onder backend)
     volumes:
-      # Koppel de database aan een map op je server zodat data bewaard blijft
-      - ./data/darts.db:/app/darts.db
-      # Koppel logs
+      - ./data:/app/data
       - ./logs:/app/logs
     environment:
-      - DATABASE_URL=sqlite:////app/darts.db
+      - DATABASE_URL=sqlite:////app/data/darts.db
       - SECRET_KEY=your_secret_key_here
-    # Geen ports mapping nodig, want nginx praat intern met backend
 
   frontend:
-    build: ./frontend
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
     container_name: darts-frontend
     restart: always
     ports:
-      - "80:80" # De app is bereikbaar op poort 80 van je server
+      - "80:80"
     depends_on:
       - backend
 
@@ -118,6 +120,16 @@ mkdir -p data logs
 
 # 3. Start de containers
 docker compose up -d --build
+
+
+# 1. Haal de laatste versie van GitHub
+git pull
+
+# 2. Bouw de containers opnieuw (belangrijk voor nieuwe code!) en herstart ze
+docker compose up -d --build
+
+# 3. (Optioneel) Ruim oude, ongebruikte images op om schijfruimte te besparen
+docker image prune -f
 
 ==================================================
 CONFIG FILE: .env.example
@@ -204,7 +216,7 @@ def read_root():
 FILE: backend/app\__init__.py
 ==================================================
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 
 ==================================================
 FILE: backend/app\api\auth.py
@@ -2099,8 +2111,9 @@ import Changelog from './pages/admin/Changelog';
 
 // Public Pages
 import TournamentView from './pages/public/TournamentView';
-
+import Home from './pages/Home'; 
 // Scorer Pages
+
 import ScorerMatchList from './pages/scorer/MatchList';
 import Scoreboard from './pages/scorer/Scoreboard';
 
@@ -2109,6 +2122,9 @@ function App() {
     <AuthProvider>
       <BrowserRouter>
         <Routes>
+          {/* Default Route: Show Home instead of redirecting */}
+          <Route path="/" element={<Home />} /> 
+
           {/* Auth Routes */}
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
@@ -2179,20 +2195,42 @@ declare module '*.md?raw' {
 FILE: frontend/src\components\layout\AdminLayout.tsx
 ==================================================
 
-import { ReactNode } from 'react';
+import { ReactNode, useState } from 'react';
 import Sidebar from './Sidebar';
+import { Menu } from 'lucide-react'; // Hamburger icoon
 
 interface AdminLayoutProps {
   children: ReactNode;
 }
 
 const AdminLayout = ({ children }: AdminLayoutProps) => {
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+
   return (
-    <div className="flex h-screen bg-gray-100">
-      <Sidebar />
-      <main className="flex-1 overflow-auto p-8">
-        {children}
-      </main>
+    <div className="flex h-screen bg-gray-100 overflow-hidden">
+      {/* Sidebar Component (beheert zelf desktop/mobiel gedrag via CSS classes) */}
+      <Sidebar isOpen={isSidebarOpen} onClose={() => setIsSidebarOpen(false)} />
+
+      {/* Main Content Area */}
+      <div className="flex-1 flex flex-col h-full w-full relative">
+        
+        {/* Mobile Header (Alleen zichtbaar op klein scherm) */}
+        <header className="bg-white border-b border-gray-200 p-4 flex items-center gap-4 md:hidden shrink-0">
+          <button 
+            onClick={() => setIsSidebarOpen(true)}
+            className="text-gray-600 hover:text-blue-600 p-1"
+          >
+            <Menu size={24} />
+          </button>
+          <span className="font-bold text-gray-800">Dart Manager</span>
+        </header>
+
+        {/* Scrollable Content */}
+        {/* We veranderen p-8 naar p-4 op mobiel (md:p-8) voor meer ruimte */}
+        <main className="flex-1 overflow-auto p-4 md:p-8 w-full">
+          {children}
+        </main>
+      </div>
     </div>
   );
 };
@@ -2205,11 +2243,14 @@ FILE: frontend/src\components\layout\Sidebar.tsx
 
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
-// 1. Added 'Target' icon for the boards
-import { LayoutDashboard, Users, Trophy, LogOut, Activity, Target } from 'lucide-react';
-import { FileText } from 'lucide-react'; // Import the icon
+import { LayoutDashboard, Users, Trophy, LogOut, Activity, Target, FileText, X } from 'lucide-react';
 
-const Sidebar = () => {
+interface SidebarProps {
+  isOpen: boolean;
+  onClose: () => void;
+}
+
+const Sidebar = ({ isOpen, onClose }: SidebarProps) => {
   const { logout, user } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
@@ -2219,60 +2260,81 @@ const Sidebar = () => {
     navigate('/login');
   };
 
-  // 2. Added 'Manage Boards' to the menu list
   const menuItems = [
     { icon: LayoutDashboard, label: 'Dashboard', path: '/dashboard' },
     { icon: Users, label: 'Manage Players', path: '/dashboard/players' },
-    { icon: Target, label: 'Manage Boards', path: '/dashboard/boards' }, // <--- NEW LINK
+    { icon: Target, label: 'Manage Boards', path: '/dashboard/boards' },
     { icon: Trophy, label: 'Create Tournament', path: '/dashboard/create-tournament' },
     { icon: Activity, label: 'System Logs', path: '/dashboard/logs' },
     { icon: FileText, label: 'Changelog', path: '/dashboard/changelog' },
   ];
 
   return (
-    <div className="bg-slate-900 text-white w-64 min-h-screen flex flex-col">
-      <div className="p-6 border-b border-slate-700">
-        <h1 className="text-2xl font-bold text-blue-400">Dart Manager</h1>
-        {/* 3. Fixed user display (username no longer exists) */}
-        <p className="text-xs text-slate-400 mt-1">
-           Logged in as: {user?.first_name || 'Admin'}
-        </p>
-      </div>
+    <>
+      {/* 1. Mobile Overlay (Alleen zichtbaar als menu open is op mobiel) */}
+      {isOpen && (
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-50 z-20 md:hidden"
+          onClick={onClose}
+        />
+      )}
 
-      <nav className="flex-1 p-4">
-        <ul className="space-y-2">
-          {menuItems.map((item) => {
-            const Icon = item.icon;
-            const isActive = location.pathname === item.path;
-            return (
-              <li key={item.path}>
-                <Link
-                  to={item.path}
-                  className={`flex items-center space-x-3 p-3 rounded-lg transition-colors ${
-                    isActive 
-                      ? 'bg-blue-600 text-white' 
-                      : 'text-slate-300 hover:bg-slate-800'
-                  }`}
-                >
-                  <Icon size={20} />
-                  <span>{item.label}</span>
-                </Link>
-              </li>
-            );
-          })}
-        </ul>
-      </nav>
+      {/* 2. De Sidebar zelf */}
+      <div className={`
+        fixed md:static inset-y-0 left-0 z-30
+        w-64 bg-slate-900 text-white flex flex-col min-h-screen shadow-xl
+        transition-transform duration-300 ease-in-out
+        ${isOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
+      `}>
+        <div className="p-6 border-b border-slate-700 flex justify-between items-center">
+          <div>
+            <h1 className="text-2xl font-bold text-blue-400">Dart Manager</h1>
+            <p className="text-xs text-slate-400 mt-1">
+               Logged in as: {user?.first_name || 'Admin'}
+            </p>
+          </div>
+          {/* Sluit knop (Alleen mobiel) */}
+          <button onClick={onClose} className="md:hidden text-slate-400 hover:text-white">
+            <X size={24} />
+          </button>
+        </div>
 
-      <div className="p-4 border-t border-slate-700">
-        <button
-          onClick={handleLogout}
-          className="flex items-center space-x-3 text-red-400 hover:text-red-300 w-full p-3 hover:bg-slate-800 rounded-lg transition-colors"
-        >
-          <LogOut size={20} />
-          <span>Sign Out</span>
-        </button>
+        <nav className="flex-1 p-4 overflow-y-auto">
+          <ul className="space-y-2">
+            {menuItems.map((item) => {
+              const Icon = item.icon;
+              const isActive = location.pathname === item.path;
+              return (
+                <li key={item.path}>
+                  <Link
+                    to={item.path}
+                    onClick={() => onClose()} // Sluit menu na klik op mobiel
+                    className={`flex items-center space-x-3 p-3 rounded-lg transition-colors ${
+                      isActive 
+                        ? 'bg-blue-600 text-white' 
+                        : 'text-slate-300 hover:bg-slate-800'
+                    }`}
+                  >
+                    <Icon size={20} />
+                    <span>{item.label}</span>
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
+        </nav>
+
+        <div className="p-4 border-t border-slate-700">
+          <button
+            onClick={handleLogout}
+            className="flex items-center space-x-3 text-red-400 hover:text-red-300 w-full p-3 hover:bg-slate-800 rounded-lg transition-colors"
+          >
+            <LogOut size={20} />
+            <span>Sign Out</span>
+          </button>
+        </div>
       </div>
-    </div>
+    </>
   );
 };
 
@@ -2359,6 +2421,116 @@ FILE: frontend/src\hooks\useWebSocket.ts
 ==================================================
 
 
+
+==================================================
+FILE: frontend/src\pages\Home.tsx
+==================================================
+
+import { Link } from 'react-router-dom';
+import { Trophy, Target, Users, BarChart3, ArrowRight, Play } from 'lucide-react';
+
+const Home = () => {
+  return (
+    <div className="min-h-screen bg-white flex flex-col">
+      {/* --- NAVIGATION --- */}
+      <nav className="border-b border-gray-100 bg-white sticky top-0 z-50">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex justify-between items-center">
+          <div className="flex items-center gap-2">
+            <Trophy className="text-blue-600 h-8 w-8" />
+            <span className="font-bold text-xl text-gray-900 tracking-tight">Dart Manager</span>
+          </div>
+            <div className="flex items-center gap-2 md:gap-4">
+            <Link to="/login" className="text-gray-600 hover:text-blue-600 font-medium transition text-sm md:text-base">
+                Sign In
+            </Link>
+            <Link 
+                to="/register" 
+                className="bg-blue-600 text-white px-3 py-2 md:px-5 md:py-2 rounded-lg font-bold hover:bg-blue-700 transition shadow-sm text-sm md:text-base"
+            >
+                Get Started
+            </Link>
+            </div>
+        </div>
+      </nav>
+
+      {/* --- HERO SECTION --- */}
+      <div className="bg-gradient-to-b from-blue-50 to-white pt-20 pb-32">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+          <h1 className="text-5xl md:text-6xl font-extrabold text-slate-900 mb-6 tracking-tight">
+            Manage your Dart Tournaments <br />
+            <span className="text-blue-600">Like a Pro.</span>
+          </h1>
+          <p className="text-xl text-gray-500 mb-10 max-w-2xl mx-auto leading-relaxed">
+            Create tournaments, manage players, and track live scores with ease. 
+            The all-in-one solution for your local dart club.
+          </p>
+          <div className="flex justify-center gap-4">
+            <Link 
+              to="/register" 
+              className="flex items-center gap-2 bg-blue-600 text-white px-8 py-4 rounded-xl font-bold text-lg hover:bg-blue-700 transition shadow-lg hover:shadow-xl transform hover:-translate-y-1"
+            >
+              Start for Free <ArrowRight size={20} />
+            </Link>
+            <Link 
+              to="/login" 
+              className="flex items-center gap-2 bg-white text-gray-700 border border-gray-200 px-8 py-4 rounded-xl font-bold text-lg hover:bg-gray-50 transition shadow-sm"
+            >
+              <Play size={20} className="text-gray-400" /> Demo View
+            </Link>
+          </div>
+        </div>
+      </div>
+
+      {/* --- FEATURES GRID --- */}
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 -mt-20 mb-24">
+        <div className="grid md:grid-cols-3 gap-8">
+          {/* Card 1 */}
+          <div className="bg-white p-8 rounded-2xl shadow-xl border border-gray-100 hover:border-blue-200 transition">
+            <div className="bg-blue-100 w-12 h-12 rounded-xl flex items-center justify-center mb-6">
+              <Target className="text-blue-600" size={24} />
+            </div>
+            <h3 className="text-xl font-bold text-gray-900 mb-3">Live Scoring</h3>
+            <p className="text-gray-500 leading-relaxed">
+              Use our tablet-friendly scorer interface to track matches in real-time. Scores update instantly across all devices.
+            </p>
+          </div>
+
+          {/* Card 2 */}
+          <div className="bg-white p-8 rounded-2xl shadow-xl border border-gray-100 hover:border-blue-200 transition">
+            <div className="bg-green-100 w-12 h-12 rounded-xl flex items-center justify-center mb-6">
+              <BarChart3 className="text-green-600" size={24} />
+            </div>
+            <h3 className="text-xl font-bold text-gray-900 mb-3">Automated Brackets</h3>
+            <p className="text-gray-500 leading-relaxed">
+              Run Poules, Knockouts, or Hybrid formats. We automatically calculate standings and generate the bracket.
+            </p>
+          </div>
+
+          {/* Card 3 */}
+          <div className="bg-white p-8 rounded-2xl shadow-xl border border-gray-100 hover:border-blue-200 transition">
+            <div className="bg-purple-100 w-12 h-12 rounded-xl flex items-center justify-center mb-6">
+              <Users className="text-purple-600" size={24} />
+            </div>
+            <h3 className="text-xl font-bold text-gray-900 mb-3">Player Management</h3>
+            <p className="text-gray-500 leading-relaxed">
+              Keep a database of all your players, track their stats, and easily add them to new tournaments.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* --- FOOTER --- */}
+      <footer className="mt-auto bg-slate-900 text-slate-400 py-12">
+        <div className="max-w-7xl mx-auto px-4 text-center">
+          <Trophy className="mx-auto h-8 w-8 text-gray-600 mb-4" />
+          <p>&copy; {new Date().getFullYear()} Dart Tournament Manager. Built for the love of the game.</p>
+        </div>
+      </footer>
+    </div>
+  );
+};
+
+export default Home;
 
 ==================================================
 FILE: frontend/src\pages\SystemLogs.tsx

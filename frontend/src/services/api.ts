@@ -35,4 +35,29 @@ api.interceptors.request.use(
   }
 );
 
+// This listens to every response coming BACK from the backend.
+api.interceptors.response.use(
+  (response) => {
+    // If the response is good (status 200-299), just return it.
+    return response;
+  },
+  (error) => {
+    // If the backend returns 401 Unauthorized, the token is invalid/expired.
+    if (error.response && error.response.status === 401) {
+      // 1. Remove the bad token
+      localStorage.removeItem('token');
+      
+      // 2. Redirect to login page
+      // We use window.location because this file is not a React component,
+      // so we can't use the useNavigate hook here.
+      if (window.location.pathname !== '/login') {
+         window.location.href = '/login';
+      }
+    }
+    
+    // Pass the error along so specific components can still handle it if needed
+    return Promise.reject(error);
+  }
+);
+
 export default api;
