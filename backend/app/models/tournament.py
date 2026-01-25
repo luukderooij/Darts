@@ -13,6 +13,7 @@ class Tournament(SQLModel, table=True):
     status: str = Field(default="draft") # draft, active, knockout_ready, finished
     
     # --- Format Settings ---
+    mode: str = Field(default="singles") # "singles" of "doubles"
     format: str = Field(default="hybrid") 
     
     number_of_poules: int = Field(default=1)

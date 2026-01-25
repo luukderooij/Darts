@@ -94,32 +94,34 @@ def create_tournament(
     session.refresh(tournament)
     
     # 6. Generate Matches based on Format
-    if tournament.format == "hybrid":
-        generate_poule_phase(
-            tournament_id=tournament.id, 
-            players=players_to_link, 
-            num_poules=tournament.number_of_poules, 
-            legs_best_of=tournament.starting_legs_group,
-            sets_best_of=tournament.sets_per_match,
-            session=session
-        )
-    elif tournament.format == "round_robin":
-        generate_round_robin_global(
-            tournament_id=tournament.id,
-            players=players_to_link,
-            legs_best_of=tournament.starting_legs_group,
-            sets_best_of=tournament.sets_per_match,
-            session=session
-        )
-    elif tournament.format == "knockout":
-        generate_knockout(
-            tournament_id=tournament.id,
-            players=players_to_link,
-            legs_best_of=tournament.starting_legs_ko,
-            sets_best_of=tournament.sets_per_match,
-            session=session
-        )
-    
+    if tournament.mode == "singles":
+            
+            if tournament.format == "hybrid":
+                generate_poule_phase(
+                    tournament_id=tournament.id, 
+                    players=players_to_link, 
+                    num_poules=tournament.number_of_poules, 
+                    legs_best_of=tournament.starting_legs_group,
+                    sets_best_of=tournament.sets_per_match,
+                    session=session
+                )
+            elif tournament.format == "round_robin":
+                generate_round_robin_global(
+                    tournament_id=tournament.id,
+                    players=players_to_link,
+                    legs_best_of=tournament.starting_legs_group,
+                    sets_best_of=tournament.sets_per_match,
+                    session=session
+                )
+            elif tournament.format == "knockout":
+                generate_knockout(
+                    tournament_id=tournament.id,
+                    players=players_to_link,
+                    legs_best_of=tournament.starting_legs_ko,
+                    sets_best_of=tournament.sets_per_match,
+                    session=session
+                )
+        
     return tournament
 
 @router.get("/{tournament_id}", response_model=TournamentRead)
