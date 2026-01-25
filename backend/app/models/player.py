@@ -1,6 +1,7 @@
 from typing import Optional, List
 from sqlmodel import Field, SQLModel, Relationship
-from app.models.team import Team, TeamPlayerLink
+from app.models.team import Team
+from app.models.links import TeamPlayerLink
 
 class Player(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)

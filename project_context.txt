@@ -362,10 +362,12 @@ import logging
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Header
 from sqlmodel import Session, select
+from sqlalchemy.orm import selectinload # <--- BELANGRIJK: Nodig om teams op te halen
 
 from app.db.session import get_session
 from app.models.match import Match
 from app.models.player import Player
+from app.models.team import Team # <--- BELANGRIJK: Team import toegevoegd
 from app.models.tournament import Tournament
 from app.models.user import User
 from app.schemas.match import MatchRead, MatchScoreUpdate
@@ -394,11 +396,10 @@ def update_match_score(
     x_scorer_token: Optional[str] = Header(None, alias="X-Scorer-Token"),
     session: Session = Depends(get_session)
 ):
-    # ... (Auth en ophalen match blijft hetzelfde) ...
     match = get_match_or_404(match_id, session)
     tournament = session.get(Tournament, match.tournament_id)
     
-    # ... (Auth checks blijven hetzelfde) ...
+    # Auth checks
     is_authorized = False
     if current_user and tournament.user_id == current_user.id:
         is_authorized = True
@@ -418,23 +419,34 @@ def update_match_score(
     session.commit()
     session.refresh(match)
     
-    # --- NIEUWE LOGICA: Check of we door moeten naar de volgende ronde ---
+    # Check knockout advance
     if match.is_completed and match.poule_number is None:
-        # Dit is een Knockout wedstrijd die net is afgerond.
-        # Check of de hele ronde klaar is.
         check_and_advance_knockout(match.tournament_id, match.round_number, session)
-    # ---------------------------------------------------------------------
     
     # Logging
     logger.info(f"MATCH {match.id}: {match.score_p1} - {match.score_p2}")
     
-    # Return response (blijft hetzelfde)
-    p1 = session.get(Player, match.player1_id) if match.player1_id else None
-    p2 = session.get(Player, match.player2_id) if match.player2_id else None
+    # --- DATA VERRIJKING VOOR RESPONSE ---
+    # We herladen de match met relaties zodat we namen kunnen teruggeven
+    session.refresh(match, ["player1", "player2", "team1", "team2"])
     
     match_dict = match.model_dump()
-    match_dict['player1_name'] = p1.name if p1 else "Bye"
-    match_dict['player2_name'] = p2.name if p2 else "Bye"
+    
+    # Resolutie Naam 1
+    if match.player1:
+        match_dict['player1_name'] = match.player1.name 
+    elif match.team1:
+        match_dict['player1_name'] = match.team1.name
+    else:
+        match_dict['player1_name'] = "Bye"
+
+    # Resolutie Naam 2
+    if match.player2:
+        match_dict['player2_name'] = match.player2.name 
+    elif match.team2:
+        match_dict['player2_name'] = match.team2.name
+    else:
+        match_dict['player2_name'] = "Bye"
 
     return match_dict
 
@@ -448,33 +460,49 @@ def get_matches_public(
     tournament = session.exec(statement).first()
     
     if not tournament:
-        # Check scorer UUID too
         statement_scorer = select(Tournament).where(Tournament.scorer_uuid == public_uuid)
         tournament = session.exec(statement_scorer).first()
         
     if not tournament:
         raise HTTPException(status_code=404, detail="Tournament not found")
         
-    # 2. Get Matches
-    statement_matches = select(Match).where(Match.tournament_id == tournament.id).order_by(Match.id)
+    # 2. Get Matches (MET RELATIES VOOR TEAMS EN SPELERS)
+    statement_matches = (
+        select(Match)
+        .where(Match.tournament_id == tournament.id)
+        .options(
+            selectinload(Match.player1),
+            selectinload(Match.player2),
+            selectinload(Match.team1), # <--- Zorg dat Teams worden opgehaald
+            selectinload(Match.team2)
+        )
+        .order_by(Match.id)
+    )
     matches = session.exec(statement_matches).all()
     
-    # 3. Bulk Fetch Player Names
-    player_ids = set()
-    for m in matches:
-        if m.player1_id: player_ids.add(m.player1_id)
-        if m.player2_id: player_ids.add(m.player2_id)
-        
-    players = session.exec(select(Player).where(Player.id.in_(player_ids))).all()
-    player_map = {p.id: p.name for p in players}
-    
-    # 4. Attach names to response
+    # 3. Construct Response met de juiste namen
     results = []
     for m in matches:
-        # Convert the SQLModel to a dict so we can add extra fields
         m_data = m.model_dump()
-        m_data['player1_name'] = player_map.get(m.player1_id, "Bye")
-        m_data['player2_name'] = player_map.get(m.player2_id, "Bye")
+        
+        # --- LOGICA: KIES NAAM (SPELER > TEAM > BYE) ---
+        
+        # Naam 1
+        if m.player1:
+            m_data['player1_name'] = m.player1.name
+        elif m.team1:
+            m_data['player1_name'] = m.team1.name # Hier pakken we de Team naam!
+        else:
+             m_data['player1_name'] = "Bye"
+
+        # Naam 2
+        if m.player2:
+             m_data['player2_name'] = m.player2.name
+        elif m.team2:
+             m_data['player2_name'] = m.team2.name # Hier pakken we de Team naam!
+        else:
+             m_data['player2_name'] = "Bye"
+             
         results.append(m_data)
         
     return results
@@ -689,6 +717,7 @@ from app.api.users import get_current_user
 from app.schemas.tournament import TournamentUpdate
 from app.models.team import Team
 
+
 from app.schemas.tournament import (
     TournamentCreate, 
     TournamentRead, 
@@ -724,12 +753,22 @@ def create_tournament(
 
     # 2. Validatie Poulegrootte
     if tourn_in.format == "hybrid" and tourn_in.number_of_poules > 0:
-        avg_players = math.ceil(len(players_to_link) / tourn_in.number_of_poules)
-        if avg_players > 7:
-            raise HTTPException(
-                status_code=400, 
-                detail=f"Te veel spelers per poule! Je probeert {avg_players} spelers per poule te stoppen. Het maximum is 7."
-            )
+            
+            # --- AANGEPAST BLOK ---
+            # Bepaal hoeveel 'entiteiten' (spelers of teams) er in de poule komen
+            entity_count = len(players_to_link)
+            
+            # Als het koppels zijn, delen we het aantal spelers door 2
+            if tourn_in.mode == "doubles":
+                entity_count = math.ceil(entity_count / 2)
+
+            avg_entities = math.ceil(entity_count / tourn_in.number_of_poules)
+            
+            if avg_entities > 7:
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"Te veel deelnames per poule! Je probeert {avg_entities} teams/spelers per poule te stoppen. Het maximum is 7."
+                )
 
     # 3. Verify Boards
     boards_to_link = []
@@ -757,32 +796,34 @@ def create_tournament(
     session.refresh(tournament)
     
     # 6. Generate Matches based on Format
-    if tournament.format == "hybrid":
-        generate_poule_phase(
-            tournament_id=tournament.id, 
-            players=players_to_link, 
-            num_poules=tournament.number_of_poules, 
-            legs_best_of=tournament.starting_legs_group,
-            sets_best_of=tournament.sets_per_match,
-            session=session
-        )
-    elif tournament.format == "round_robin":
-        generate_round_robin_global(
-            tournament_id=tournament.id,
-            players=players_to_link,
-            legs_best_of=tournament.starting_legs_group,
-            sets_best_of=tournament.sets_per_match,
-            session=session
-        )
-    elif tournament.format == "knockout":
-        generate_knockout(
-            tournament_id=tournament.id,
-            players=players_to_link,
-            legs_best_of=tournament.starting_legs_ko,
-            sets_best_of=tournament.sets_per_match,
-            session=session
-        )
-    
+    if tournament.mode == "singles":
+            
+            if tournament.format == "hybrid":
+                generate_poule_phase(
+                    tournament_id=tournament.id, 
+                    players=players_to_link, 
+                    num_poules=tournament.number_of_poules, 
+                    legs_best_of=tournament.starting_legs_group,
+                    sets_best_of=tournament.sets_per_match,
+                    session=session
+                )
+            elif tournament.format == "round_robin":
+                generate_round_robin_global(
+                    tournament_id=tournament.id,
+                    players=players_to_link,
+                    legs_best_of=tournament.starting_legs_group,
+                    sets_best_of=tournament.sets_per_match,
+                    session=session
+                )
+            elif tournament.format == "knockout":
+                generate_knockout(
+                    tournament_id=tournament.id,
+                    players=players_to_link,
+                    legs_best_of=tournament.starting_legs_ko,
+                    sets_best_of=tournament.sets_per_match,
+                    session=session
+                )
+        
     return tournament
 
 @router.get("/{tournament_id}", response_model=TournamentRead)
@@ -952,6 +993,83 @@ def delete_tournament(
     session.commit()
     
     return {"ok": True}
+
+
+@router.post("/{tournament_id}/finalize")
+def finalize_tournament_setup(
+    tournament_id: int, 
+    session: Session = Depends(get_session)
+):
+    """
+    Trigger de generatie van wedstrijden nadat teams zijn aangemaakt.
+    Specifiek voor Doubles/Teams toernooien.
+    """
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Toernooi niet gevonden")
+
+    # Als het singles is, zijn matches al gemaakt bij aanmaken.
+    if tournament.mode == "singles":
+        return {"message": "Already generated (singles)"}
+
+    # Haal alle teams op
+    teams = session.exec(select(Team).where(Team.tournament_id == tournament_id)).all()
+    
+    if len(teams) < 2:
+        raise HTTPException(status_code=400, detail="Te weinig teams om wedstrijden te genereren.")
+
+    # Verwijder eventuele oude matches (voor de zekerheid)
+    existing_matches = session.exec(select(Match).where(Match.tournament_id == tournament_id)).all()
+    for m in existing_matches:
+        session.delete(m)
+    
+    # --- Generatie Logica voor Teams (Poule Fase) ---
+    # We verdelen de teams over de poules
+    num_poules = tournament.number_of_poules
+    
+    # Maak lege lijsten voor elke poule
+    poules = [[] for _ in range(num_poules)]
+    
+    # Verdeel teams snake-wise of random (hier simpel: op volgorde verdelen)
+    for i, team in enumerate(teams):
+        poule_index = i % num_poules
+        poules[poule_index].append(team)
+
+    matches_created = []
+
+    # Voor elke poule, maak Round Robin schema
+    for poule_idx, poule_teams in enumerate(poules):
+        poule_number = poule_idx + 1
+        n = len(poule_teams)
+        
+        # Round Robin algoritme
+        for i in range(n):
+            for j in range(i + 1, n):
+                t1 = poule_teams[i]
+                t2 = poule_teams[j]
+                
+                # Maak de match
+                match = Match(
+                    tournament_id=tournament.id,
+                    poule_number=poule_number,
+                    
+                    team1_id=t1.id,
+                    team2_id=t2.id,
+
+                    round_number=1,
+
+                    best_of_legs=tournament.starting_legs_group,
+                    best_of_sets=tournament.sets_per_match,
+
+                    is_completed=False,
+                    score_p1=0,
+                    score_p2=0
+                )
+                session.add(match)
+                matches_created.append(match)
+
+    session.commit()
+    return {"message": f"Setup finalized. {len(matches_created)} matches generated for {len(teams)} teams."}
 
 ==================================================
 FILE: backend/app\api\users.py
@@ -1237,6 +1355,11 @@ class TournamentBoardLink(SQLModel, table=True):
     tournament_id: Optional[int] = Field(default=None, foreign_key="tournament.id", primary_key=True)
     board_id: Optional[int] = Field(default=None, foreign_key="dartboard.id", primary_key=True)
 
+class TeamPlayerLink(SQLModel, table=True):
+    team_id: Optional[int] = Field(default=None, foreign_key="team.id", primary_key=True)
+    player_id: Optional[int] = Field(default=None, foreign_key="player.id", primary_key=True)
+
+
 ==================================================
 FILE: backend/app\models\match.py
 ==================================================
@@ -1249,12 +1372,12 @@ class Match(SQLModel, table=True):
     
     # --- Structure info ---
     round_number: int 
-    poule_number: Optional[int] = None # NIEUW: Als dit ingevuld is, is het een groepswedstrijd
+    poule_number: Optional[int] = None # Als dit ingevuld is, is het een groepswedstrijd
     board_number: Optional[int] = None 
     
-    # --- Game Settings (Per match opgeslagen voor flexibiliteit) ---
-    best_of_legs: int = Field(default=5) # NIEUW: Bijv. "5" (betekent first to 3)
-    best_of_sets: int = Field(default=1) # NIEUW
+    # --- Game Settings ---
+    best_of_legs: int = Field(default=5) # Bijv. "5" (betekent first to 3)
+    best_of_sets: int = Field(default=1) 
     
     # --- Status ---
     is_completed: bool = False
@@ -1263,15 +1386,33 @@ class Match(SQLModel, table=True):
     score_p1: int = 0
     score_p2: int = 0
     
-    # --- Relationships ---
+    # --- Relationships: TOERNOOI ---
     tournament_id: int = Field(foreign_key="tournament.id")
     tournament: Optional["Tournament"] = Relationship(back_populates="matches")
     
+    # --- Relationships: SPELERS (Singles) ---
     player1_id: Optional[int] = Field(default=None, foreign_key="player.id")
     player2_id: Optional[int] = Field(default=None, foreign_key="player.id")
 
+
+    player1: Optional["Player"] = Relationship(
+        sa_relationship_kwargs={"foreign_keys": "[Match.player1_id]"}
+    )
+    player2: Optional["Player"] = Relationship(
+        sa_relationship_kwargs={"foreign_keys": "[Match.player2_id]"}
+    )
+
+    # --- Relationships: TEAMS (Koppels) ---
     team1_id: Optional[int] = Field(default=None, foreign_key="team.id")
     team2_id: Optional[int] = Field(default=None, foreign_key="team.id")
+
+    # Idem voor de teams: relatie objecten toevoegen
+    team1: Optional["Team"] = Relationship(
+        sa_relationship_kwargs={"foreign_keys": "[Match.team1_id]"}
+    )
+    team2: Optional["Team"] = Relationship(
+        sa_relationship_kwargs={"foreign_keys": "[Match.team2_id]"}
+    )
 
 ==================================================
 FILE: backend/app\models\player.py
@@ -1279,7 +1420,8 @@ FILE: backend/app\models\player.py
 
 from typing import Optional, List
 from sqlmodel import Field, SQLModel, Relationship
-from app.models.team import Team, TeamPlayerLink
+from app.models.team import Team
+from app.models.links import TeamPlayerLink
 
 class Player(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -1310,11 +1452,7 @@ FILE: backend/app\models\team.py
 
 from typing import Optional, List
 from sqlmodel import Field, SQLModel, Relationship
-
-# Koppeltabel: Speler <-> Team
-class TeamPlayerLink(SQLModel, table=True):
-    team_id: Optional[int] = Field(default=None, foreign_key="team.id", primary_key=True)
-    player_id: Optional[int] = Field(default=None, foreign_key="player.id", primary_key=True)
+from app.models.links import TeamPlayerLink
 
 class Team(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -1344,6 +1482,7 @@ class Tournament(SQLModel, table=True):
     status: str = Field(default="draft") # draft, active, knockout_ready, finished
     
     # --- Format Settings ---
+    mode: str = Field(default="singles") # "singles" of "doubles"
     format: str = Field(default="hybrid") 
     
     number_of_poules: int = Field(default=1)
@@ -1563,6 +1702,7 @@ class TournamentCreate(BaseModel):
     date: str  
     number_of_poules: int = 1  
     format: str = "hybrid"
+    mode: str = "singles"
     allow_byes: bool = True
     
     # Settings
@@ -2605,7 +2745,7 @@ import { useNavigate } from 'react-router-dom';
 import api from '../../services/api';
 import AdminLayout from '../../components/layout/AdminLayout';
 import { Player, Dartboard } from '../../types';
-import { Trophy, AlertCircle, LayoutGrid, Users, Target, Scissors, Shuffle, UserPlus, Trash2, Save } from 'lucide-react';
+import { Trophy, AlertCircle, LayoutGrid, Users, Target, Scissors, Shuffle, UserPlus, Save } from 'lucide-react';
 
 // --- STYLING CONSTANTEN ---
 const LABEL_STYLE = "block text-xs font-bold text-gray-500 uppercase mb-1";
@@ -2640,15 +2780,18 @@ const CreateTournament = () => {
     const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
 
     // Format settings
-    const [participationMode, setParticipationMode] = useState<'singles' | 'doubles'>('singles'); // NIEUW
+    const [participationMode, setParticipationMode] = useState<'singles' | 'doubles'>('singles');
     const [format, setFormat] = useState('hybrid');
     const [poules, setPoules] = useState(1);
     const [qualifiersPerPoule, setQualifiersPerPoule] = useState(2);
-    const [allowByes, setAllowByes] = useState(true);
+    const [allowByes, setAllowByes] = useState(false); // Standaard uit
 
     // Match length settings
     const [groupLegs, setGroupLegs] = useState(3);
-    const [koLegs, setKoLegs] = useState(5);
+    
+    // WIJZIGING: Standaard Best of 3 voor Knockout (was 5)
+    const [koLegs, setKoLegs] = useState(3); 
+    
     const [sets, setSets] = useState(1);
 
     const [error, setError] = useState<string | null>(null);
@@ -2668,13 +2811,10 @@ const CreateTournament = () => {
                 setAllPlayers(pRes.data);
                 setAllBoards(bRes.data);
 
-                // --- NIEUW: Standaard 1e bord selecteren ---
-                // We checken eerst of de lijst niet leeg is, om errors te voorkomen.
+                // Standaard 1e bord selecteren
                 if (bRes.data.length > 0) {
-                    // We pakken het ID van het eerste bord in de lijst
                     setSelectedBoardIds([bRes.data[0].id]);
                 }
-                // ------------------------------------------
 
             } catch (err) {
                 console.error(err);
@@ -2685,6 +2825,27 @@ const CreateTournament = () => {
         };
         fetchData();
     }, []);
+
+    // Automatische berekening van Qualifiers (Max power of 2)
+    useEffect(() => {
+        const participantCount = participationMode === 'doubles' 
+            ? Math.floor(selectedPlayerIds.length / 2) 
+            : selectedPlayerIds.length;
+
+        if (participantCount < 2 || poules < 1) return;
+
+        let targetBracketSize = 1;
+        while (targetBracketSize * 2 <= participantCount) {
+            targetBracketSize *= 2;
+        }
+
+        let suggested = Math.floor(targetBracketSize / poules);
+        if (suggested < 1) suggested = 1;
+        
+        setQualifiersPerPoule(suggested);
+
+    }, [selectedPlayerIds.length, poules, participationMode]);
+
 
     // --- Helpers ---
     const togglePlayer = (id: number) => setSelectedPlayerIds(prev => prev.includes(id) ? prev.filter(p => p !== id) : [...prev, id]);
@@ -2708,7 +2869,6 @@ const CreateTournament = () => {
             return;
         }
 
-        // Validatie: bij koppels minimaal 4 spelers (2 teams)
         const minPlayers = participationMode === 'doubles' ? 4 : 2;
         if (selectedPlayerIds.length < minPlayers) {
             setError(`Selecteer minimaal ${minPlayers} spelers.`);
@@ -2718,12 +2878,11 @@ const CreateTournament = () => {
         try {
             const finalName = name.trim() === "" ? defaultName : name;
             
-            // Als we koppels doen, zetten we het toernooi eerst in 'draft' en genereren we nog GEEN matches
-            // (Dit vereist wel dat je backend 'teams' ondersteunt bij generatie, voor nu maken we het object aan)
             const payload = {
                 name: finalName,
                 date,
                 format,
+                mode: participationMode,
                 allow_byes: allowByes,
                 number_of_poules: poules,
                 qualifiers_per_poule: qualifiersPerPoule,
@@ -2732,18 +2891,15 @@ const CreateTournament = () => {
                 sets_per_match: sets,
                 player_ids: selectedPlayerIds,
                 board_ids: selectedBoardIds,
-                // eventueel: mode: participationMode (als je backend dit ondersteunt)
             };
 
             const res = await api.post('/tournaments/', payload);
             
             if (participationMode === 'doubles') {
-                // Ga naar stap 2: Team Builder
                 setCreatedTournamentId(res.data.id);
                 setStep(2);
                 window.scrollTo(0,0);
             } else {
-                // Klaar!
                 navigate('/dashboard');
             }
 
@@ -2755,8 +2911,6 @@ const CreateTournament = () => {
     };
 
     // --- STAP 2: Teams Beheren ---
-    
-    // Spelers die geselecteerd zijn, maar nog NIET in een team zitten
     const unassignedPlayers = allPlayers.filter(p => 
         selectedPlayerIds.includes(p.id) && 
         !teams.some(t => t.players.some(tp => tp.id === p.id))
@@ -2765,7 +2919,6 @@ const CreateTournament = () => {
     const handleAutoGenerate = async () => {
         if (!createdTournamentId) return;
         try {
-            // Stuur alle nog niet ingedeelde spelers naar de auto-endpoint
             const idsToAssign = unassignedPlayers.map(p => p.id);
             if (idsToAssign.length < 2) return;
 
@@ -2795,7 +2948,6 @@ const CreateTournament = () => {
             });
             setTeams(prev => [...prev, res.data]);
             
-            // Reset form
             setManualSelection([]);
             setManualTeamName("");
         } catch (err) {
@@ -2804,10 +2956,21 @@ const CreateTournament = () => {
     };
 
     const handleFinalize = async () => {
-        // Hier zou je normaliter een endpoint aanroepen om matches te genereren op basis van teams
-        // Voor nu sturen we de gebruiker naar het dashboard
         if (unassignedPlayers.length > 0) {
             if(!confirm("Er zijn nog spelers niet ingedeeld in een team. Wil je toch doorgaan?")) return;
+        }
+        try {
+            setLoading(true);
+            // Roep het finalize endpoint aan om matches te genereren
+            await api.post(`/tournaments/${createdTournamentId}/finalize`);
+            
+            // Nu pas navigeren
+            navigate(`/dashboard/tournament/${createdTournamentId}`);
+        } catch (err) {
+            console.error(err);
+            alert("Er ging iets mis bij het genereren van de wedstrijden.");
+        } finally {
+            setLoading(false);
         }
         navigate(`/dashboard/tournament/${createdTournamentId}`);
     };
@@ -2850,7 +3013,6 @@ const CreateTournament = () => {
                                         <input type="date" required className={INPUT_STYLE} value={date} onChange={e => setDate(e.target.value)} />
                                     </div>
                                     
-                                    {/* NIEUW: MODUS SELECTIE */}
                                     <div>
                                         <label className={LABEL_STYLE}>Modus</label>
                                         <div className="flex gap-2">
@@ -2906,7 +3068,7 @@ const CreateTournament = () => {
                                 </div>
                             </div>
                             
-                            {/* Wedstrijd Lengte & Borden (Ingekort voor overzicht) */}
+                            {/* Wedstrijd Lengte & Borden */}
                             <div className="bg-white p-5 rounded-lg shadow-sm border border-gray-200">
                                 <h3 className="font-bold text-gray-700 mb-4 border-b border-gray-100 pb-2 flex items-center gap-2">
                                     <Target size={18} className="text-red-500" /> Settings
@@ -2919,9 +3081,30 @@ const CreateTournament = () => {
                                 <label className={LABEL_STYLE}>Borden</label>
                                 <div className="max-h-32 overflow-y-auto space-y-1 pr-1 custom-scrollbar border rounded p-2">
                                     {allBoards.map(board => (
-                                        <label key={board.id} className={`flex items-center p-1 rounded cursor-pointer text-sm ${selectedBoardIds.includes(board.id) ? 'bg-blue-50 text-blue-700' : ''}`}>
-                                            <input type="checkbox" className="mr-2" checked={selectedBoardIds.includes(board.id)} onChange={() => toggleBoard(board.id)} />
-                                            Bord {board.number}
+                                        <label 
+                                            key={board.id} 
+                                            className={`flex items-center p-2 rounded cursor-pointer text-sm transition-colors ${
+                                                selectedBoardIds.includes(board.id) 
+                                                ? 'bg-blue-50 text-blue-700' 
+                                                : 'hover:bg-gray-50'
+                                            }`}
+                                        >
+                                            <input 
+                                                type="checkbox" 
+                                                className="mr-3" 
+                                                checked={selectedBoardIds.includes(board.id)} 
+                                                onChange={() => toggleBoard(board.id)} 
+                                            />
+                                            <div className="flex flex-col leading-tight">
+                                                <span className="font-medium">
+                                                    Bord {board.number}
+                                                </span>
+                                                {board.name && (
+                                                    <span className="text-xs text-gray-400 font-normal">
+                                                        {board.name}
+                                                    </span>
+                                                )}
+                                            </div>
                                         </label>
                                     ))}
                                 </div>
@@ -3675,12 +3858,31 @@ const ManageTournament = () => {
       setTournament(currentTourn);
       setAllowByes(currentTourn.allow_byes);
 
-if (currentTourn.public_uuid) {
+      if (currentTourn.public_uuid) {
           const matchesRes = await api.get(`/matches/by-tournament/${currentTourn.public_uuid}`);
-          setMatches(matchesRes.data);
           
-          if (matchesRes.data.length > 0) {
-              const maxRoundMatch = matchesRes.data.reduce((prev: any, current: any) => {
+          // --- HIER ZIT DE FIX ---
+          // We mappen de data zodat de UI de juiste naam krijgt (Speler OF Team)
+          const processedMatches = matchesRes.data.map((m: any) => {
+              // Helper om de naam te bepalen
+              const getName = (obj: any) => obj?.name || obj?.first_name || ""; 
+              
+              // 1. Probeer speler naam. 2. Probeer team naam. 3. Leeg string (wordt Bye)
+              const p1Name = m.player1 ? getName(m.player1) : (m.team1 ? m.team1.name : "");
+              const p2Name = m.player2 ? getName(m.player2) : (m.team2 ? m.team2.name : "");
+
+              return {
+                  ...m,
+                  player1_name: p1Name,
+                  player2_name: p2Name,
+              };
+          });
+
+          setMatches(processedMatches);
+          // -----------------------
+          
+          if (processedMatches.length > 0) {
+              const maxRoundMatch = processedMatches.reduce((prev: any, current: any) => {
                   return (prev.id > current.id) ? prev : current;
               });
               
@@ -3688,7 +3890,6 @@ if (currentTourn.public_uuid) {
               const key = `${type}-${maxRoundMatch.round_number}`;
               
               setOpenRounds((prev) => ({ ...prev, [key]: true }));
-              // --- FIX END ---
           }
       }
     } catch (error) {
@@ -3749,18 +3950,13 @@ if (currentTourn.public_uuid) {
 
   const canStartKnockout = () => {
       if (!tournament || !matches.length) return false;
-      if (tournament.format !== 'hybrid') return false; // Alleen voor hybride toernooien
+      if (tournament.format !== 'hybrid') return false; 
 
       const pouleMatches = matches.filter(m => m.poule_number !== null);
       const koMatches = matches.filter(m => m.poule_number === null);
 
-      // 1. Zijn er poule wedstrijden?
       if (pouleMatches.length === 0) return false;
-
-      // 2. Zijn ze ALLEMAAL klaar?
       const allPoulesFinished = pouleMatches.every(m => m.is_completed);
-
-      // 3. Is de knockout nog NIET begonnen?
       const koNotStarted = koMatches.length === 0;
 
       return allPoulesFinished && koNotStarted;
@@ -3770,10 +3966,9 @@ if (currentTourn.public_uuid) {
       if (!confirm("Weet je zeker dat je de Poule-fase wilt afsluiten en de Knockout wilt genereren?")) return;
       
       try {
-          // De API endpoint die we eerder hebben gezien in de context [cite: 35]
           await api.post(`/tournaments/${id}/start-knockout`);
           alert("Knockout fase gegenereerd!");
-          loadData(); // Herlaad de data om de nieuwe wedstrijden te tonen
+          loadData(); 
       } catch (err) {
           console.error(err);
           alert("Er ging iets mis bij het starten van de knockout.");
@@ -3816,10 +4011,8 @@ if (currentTourn.public_uuid) {
     return `Ronde ${roundNum}`;
 };
 
-  // 1. Groepeer op FASE (P/K) én RONDE nummer
-  // We maken keys zoals "P-1" (Poule ronde 1) en "K-1" (Knockout ronde 1)
   const groupedMatches = matches.reduce((acc, match) => {
-    const type = match.poule_number !== null ? 'P' : 'K'; // P = Poule, K = Knockout
+    const type = match.poule_number !== null ? 'P' : 'K'; 
     const key = `${type}-${match.round_number}`;
     
     if (!acc[key]) acc[key] = [];
@@ -3827,16 +4020,11 @@ if (currentTourn.public_uuid) {
     return acc;
   }, {} as Record<string, MatchWithUI[]>);
 
-  // 2. Sorteer de keys
-  // We willen eerst Poules (P), dan Knockouts (K). Binnen die groepen sorteren we op ronde nummer.
   const sortedGroupKeys = Object.keys(groupedMatches).sort((a, b) => {
       const [typeA, roundA] = a.split('-');
       const [typeB, roundB] = b.split('-');
 
-      // Als types verschillend zijn: P komt voor K
       if (typeA !== typeB) return typeA === 'P' ? -1 : 1;
-
-      // Als types gelijk zijn: Sorteer op nummer (1, 2, 3...)
       return Number(roundA) - Number(roundB);
   });
 
@@ -3865,7 +4053,6 @@ if (currentTourn.public_uuid) {
 
   return (
     <AdminLayout>
-      {/* CSS Hack om de pijltjes (spinners) van input[type=number] te verbergen */}
       <style>{`
         .no-spinner::-webkit-inner-spin-button, 
         .no-spinner::-webkit-outer-spin-button { 
@@ -3888,7 +4075,6 @@ if (currentTourn.public_uuid) {
             </button>
         </div>
 
-        {/* NIEUW: START KNOCKOUT KNOP (Alleen zichtbaar als poules klaar zijn) */}
         {canStartKnockout() && (
             <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-6 flex justify-between items-center shadow-sm animate-pulse">
                 <div className="flex items-center gap-3">
@@ -3909,8 +4095,6 @@ if (currentTourn.public_uuid) {
             </div>
         )}
 
-
-        {/* SETTINGS */}
         <div className="bg-white p-6 rounded-lg shadow-sm border border-yellow-200 mb-8">
             <h3 className="font-bold text-lg mb-4 flex items-center gap-2">
                 <ShieldAlert className="text-yellow-500" /> Instellingen
@@ -3928,7 +4112,6 @@ if (currentTourn.public_uuid) {
             </div>
         </div>
 
-{/* MATCHES LIST */}
         <div className="space-y-4">
             {sortedGroupKeys.map((groupKey) => {
                 const [type, roundStr] = groupKey.split('-');
@@ -3940,7 +4123,6 @@ if (currentTourn.public_uuid) {
 
                 return (
                     <div key={groupKey} className={`rounded-lg shadow-sm border overflow-hidden ${isPoule ? 'bg-white border-gray-200' : 'bg-orange-50/50 border-orange-200'}`}>
-                        {/* HEADER */}
                         <div 
                             className={`p-4 flex justify-between items-center cursor-pointer select-none ${isPoule ? 'bg-gray-50' : 'bg-orange-100 text-orange-900'}`} 
                             onClick={() => toggleRound(groupKey)}
@@ -3972,24 +4154,20 @@ if (currentTourn.public_uuid) {
                             )}
                         </div>
 
-                        {/* ROWS */}
                         {isOpen && (
                             <div className="divide-y divide-gray-100">
                                 {roundMatches.map(match => (
                                     <div key={match.id} className={`p-3 transition-colors flex items-center justify-between ${match.save_success ? 'bg-green-50' : 'hover:bg-white'}`}>
                                         
-                                        {/* ID */}
                                         <div className="w-8 text-xs text-gray-400 font-mono text-center">#{match.id}</div>
 
-                                        {/* PLAYERS & INPUTS */}
                                         <div className="flex-1 flex items-center justify-center gap-2">
                                             
-                                            {/* SPELER 1 */}
+                                            {/* SPELER 1 (Of Team 1) */}
                                             <div className={`flex-1 text-right truncate font-medium ${match.score_p1 > match.score_p2 && match.is_completed ? 'text-green-700 font-bold' : 'text-gray-700'}`}>
                                                 {match.player1_name || <span className="italic text-gray-400">Bye</span>}
                                             </div>
 
-                                            {/* INPUTS CONTAINER */}
                                             <div className="flex items-center bg-white border rounded shadow-sm overflow-hidden focus-within:ring-2 focus-within:ring-blue-400 focus-within:border-blue-400 transition-all">
                                                 <input 
                                                     type="number" 
@@ -4012,14 +4190,13 @@ if (currentTourn.public_uuid) {
                                                 />
                                             </div>
 
-                                            {/* SPELER 2 */}
+                                            {/* SPELER 2 (Of Team 2) */}
                                             <div className={`flex-1 text-left truncate font-medium ${match.score_p2 > match.score_p1 && match.is_completed ? 'text-green-700 font-bold' : 'text-gray-700'}`}>
                                                 {match.player2_name || <span className="italic text-gray-400">Bye</span>}
                                             </div>
 
                                         </div>
 
-                                        {/* ACTIONS */}
                                         <div className="w-20 flex justify-end gap-1">
                                             {match.is_saving ? (
                                                 <span className="p-2 text-blue-500 animate-spin"><RefreshCcw size={16}/></span>
@@ -5202,7 +5379,17 @@ export interface Tournament {
 // We voegen Match en Leg later toe
 export interface Match {
     id: number;
-    // ... later invullen
+    player1_id?: number | null;
+    player2_id?: number | null;
+
+    team1_id?: number | null;
+    team2_id?: number | null;
+    team1?: { id: number; name: string } | null;
+    team2?: { id: number; name: string } | null;
+
+
+    player1?: Player | null; // of { name: string, ... }
+    player2?: Player | null;
 }
 
 ==================================================

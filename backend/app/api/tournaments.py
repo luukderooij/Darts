@@ -16,6 +16,7 @@ from app.api.users import get_current_user
 from app.schemas.tournament import TournamentUpdate
 from app.models.team import Team
 
+
 from app.schemas.tournament import (
     TournamentCreate, 
     TournamentRead, 
@@ -291,3 +292,80 @@ def delete_tournament(
     session.commit()
     
     return {"ok": True}
+
+
+@router.post("/{tournament_id}/finalize")
+def finalize_tournament_setup(
+    tournament_id: int, 
+    session: Session = Depends(get_session)
+):
+    """
+    Trigger de generatie van wedstrijden nadat teams zijn aangemaakt.
+    Specifiek voor Doubles/Teams toernooien.
+    """
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Toernooi niet gevonden")
+
+    # Als het singles is, zijn matches al gemaakt bij aanmaken.
+    if tournament.mode == "singles":
+        return {"message": "Already generated (singles)"}
+
+    # Haal alle teams op
+    teams = session.exec(select(Team).where(Team.tournament_id == tournament_id)).all()
+    
+    if len(teams) < 2:
+        raise HTTPException(status_code=400, detail="Te weinig teams om wedstrijden te genereren.")
+
+    # Verwijder eventuele oude matches (voor de zekerheid)
+    existing_matches = session.exec(select(Match).where(Match.tournament_id == tournament_id)).all()
+    for m in existing_matches:
+        session.delete(m)
+    
+    # --- Generatie Logica voor Teams (Poule Fase) ---
+    # We verdelen de teams over de poules
+    num_poules = tournament.number_of_poules
+    
+    # Maak lege lijsten voor elke poule
+    poules = [[] for _ in range(num_poules)]
+    
+    # Verdeel teams snake-wise of random (hier simpel: op volgorde verdelen)
+    for i, team in enumerate(teams):
+        poule_index = i % num_poules
+        poules[poule_index].append(team)
+
+    matches_created = []
+
+    # Voor elke poule, maak Round Robin schema
+    for poule_idx, poule_teams in enumerate(poules):
+        poule_number = poule_idx + 1
+        n = len(poule_teams)
+        
+        # Round Robin algoritme
+        for i in range(n):
+            for j in range(i + 1, n):
+                t1 = poule_teams[i]
+                t2 = poule_teams[j]
+                
+                # Maak de match
+                match = Match(
+                    tournament_id=tournament.id,
+                    poule_number=poule_number,
+                    
+                    team1_id=t1.id,
+                    team2_id=t2.id,
+
+                    round_number=1,
+
+                    best_of_legs=tournament.starting_legs_group,
+                    best_of_sets=tournament.sets_per_match,
+
+                    is_completed=False,
+                    score_p1=0,
+                    score_p2=0
+                )
+                session.add(match)
+                matches_created.append(match)
+
+    session.commit()
+    return {"message": f"Setup finalized. {len(matches_created)} matches generated for {len(teams)} teams."}

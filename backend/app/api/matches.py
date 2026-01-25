@@ -2,10 +2,12 @@ import logging
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Header
 from sqlmodel import Session, select
+from sqlalchemy.orm import selectinload # <--- BELANGRIJK: Nodig om teams op te halen
 
 from app.db.session import get_session
 from app.models.match import Match
 from app.models.player import Player
+from app.models.team import Team # <--- BELANGRIJK: Team import toegevoegd
 from app.models.tournament import Tournament
 from app.models.user import User
 from app.schemas.match import MatchRead, MatchScoreUpdate
@@ -34,11 +36,10 @@ def update_match_score(
     x_scorer_token: Optional[str] = Header(None, alias="X-Scorer-Token"),
     session: Session = Depends(get_session)
 ):
-    # ... (Auth en ophalen match blijft hetzelfde) ...
     match = get_match_or_404(match_id, session)
     tournament = session.get(Tournament, match.tournament_id)
     
-    # ... (Auth checks blijven hetzelfde) ...
+    # Auth checks
     is_authorized = False
     if current_user and tournament.user_id == current_user.id:
         is_authorized = True
@@ -58,23 +59,34 @@ def update_match_score(
     session.commit()
     session.refresh(match)
     
-    # --- NIEUWE LOGICA: Check of we door moeten naar de volgende ronde ---
+    # Check knockout advance
     if match.is_completed and match.poule_number is None:
-        # Dit is een Knockout wedstrijd die net is afgerond.
-        # Check of de hele ronde klaar is.
         check_and_advance_knockout(match.tournament_id, match.round_number, session)
-    # ---------------------------------------------------------------------
     
     # Logging
     logger.info(f"MATCH {match.id}: {match.score_p1} - {match.score_p2}")
     
-    # Return response (blijft hetzelfde)
-    p1 = session.get(Player, match.player1_id) if match.player1_id else None
-    p2 = session.get(Player, match.player2_id) if match.player2_id else None
+    # --- DATA VERRIJKING VOOR RESPONSE ---
+    # We herladen de match met relaties zodat we namen kunnen teruggeven
+    session.refresh(match, ["player1", "player2", "team1", "team2"])
     
     match_dict = match.model_dump()
-    match_dict['player1_name'] = p1.name if p1 else "Bye"
-    match_dict['player2_name'] = p2.name if p2 else "Bye"
+    
+    # Resolutie Naam 1
+    if match.player1:
+        match_dict['player1_name'] = match.player1.name 
+    elif match.team1:
+        match_dict['player1_name'] = match.team1.name
+    else:
+        match_dict['player1_name'] = "Bye"
+
+    # Resolutie Naam 2
+    if match.player2:
+        match_dict['player2_name'] = match.player2.name 
+    elif match.team2:
+        match_dict['player2_name'] = match.team2.name
+    else:
+        match_dict['player2_name'] = "Bye"
 
     return match_dict
 
@@ -88,33 +100,49 @@ def get_matches_public(
     tournament = session.exec(statement).first()
     
     if not tournament:
-        # Check scorer UUID too
         statement_scorer = select(Tournament).where(Tournament.scorer_uuid == public_uuid)
         tournament = session.exec(statement_scorer).first()
         
     if not tournament:
         raise HTTPException(status_code=404, detail="Tournament not found")
         
-    # 2. Get Matches
-    statement_matches = select(Match).where(Match.tournament_id == tournament.id).order_by(Match.id)
+    # 2. Get Matches (MET RELATIES VOOR TEAMS EN SPELERS)
+    statement_matches = (
+        select(Match)
+        .where(Match.tournament_id == tournament.id)
+        .options(
+            selectinload(Match.player1),
+            selectinload(Match.player2),
+            selectinload(Match.team1), # <--- Zorg dat Teams worden opgehaald
+            selectinload(Match.team2)
+        )
+        .order_by(Match.id)
+    )
     matches = session.exec(statement_matches).all()
     
-    # 3. Bulk Fetch Player Names
-    player_ids = set()
-    for m in matches:
-        if m.player1_id: player_ids.add(m.player1_id)
-        if m.player2_id: player_ids.add(m.player2_id)
-        
-    players = session.exec(select(Player).where(Player.id.in_(player_ids))).all()
-    player_map = {p.id: p.name for p in players}
-    
-    # 4. Attach names to response
+    # 3. Construct Response met de juiste namen
     results = []
     for m in matches:
-        # Convert the SQLModel to a dict so we can add extra fields
         m_data = m.model_dump()
-        m_data['player1_name'] = player_map.get(m.player1_id, "Bye")
-        m_data['player2_name'] = player_map.get(m.player2_id, "Bye")
+        
+        # --- LOGICA: KIES NAAM (SPELER > TEAM > BYE) ---
+        
+        # Naam 1
+        if m.player1:
+            m_data['player1_name'] = m.player1.name
+        elif m.team1:
+            m_data['player1_name'] = m.team1.name # Hier pakken we de Team naam!
+        else:
+             m_data['player1_name'] = "Bye"
+
+        # Naam 2
+        if m.player2:
+             m_data['player2_name'] = m.player2.name
+        elif m.team2:
+             m_data['player2_name'] = m.team2.name # Hier pakken we de Team naam!
+        else:
+             m_data['player2_name'] = "Bye"
+             
         results.append(m_data)
         
     return results

@@ -6,14 +6,14 @@ import os
 # Zorg dat Python de 'app' module kan vinden
 sys.path.append(os.path.join(os.path.dirname(__file__), "."))
 
-from sqlmodel import Session, select, delete
+from sqlmodel import Session, select
 from app.db.session import engine, init_db
 from app.models.user import User
 from app.models.player import Player
 from app.models.dartboard import Dartboard
 from app.models.tournament import Tournament
 from app.models.match import Match
-from app.models.team import Team  # <--- NIEUWE IMPORT
+from app.models.team import Team
 from app.core.security import get_password_hash
 from app.services.tournament_gen import generate_poule_phase
 
@@ -140,6 +140,7 @@ def create_tournament_1(session: Session, user: User, players: list, boards: lis
         name="De Kleine Cup",
         date="2024-05-20",
         format="hybrid",
+        mode="singles", 
         number_of_poules=1,
         qualifiers_per_poule=2,
         starting_legs_group=3, # First to 2
@@ -179,6 +180,7 @@ def create_tournament_2(session: Session, user: User, players: list, boards: lis
         name="Het Grote Kampioenschap",
         date="2024-06-15",
         format="hybrid",
+        mode="singles", 
         number_of_poules=2,
         qualifiers_per_poule=2,
         starting_legs_group=5, # First to 3
@@ -218,13 +220,14 @@ def create_team_tournament(session: Session, user: User, players: list, boards: 
         name="Koppel Cup 2024",
         date="2024-07-01",
         format="hybrid",
+        mode="doubles",
         number_of_poules=1,
         qualifiers_per_poule=2,
         starting_legs_group=3,
         starting_legs_ko=5,
         allow_byes=True,
         user_id=user.id,
-        status="active" # We zetten hem op active zodat je hem ziet in dashboard
+        status="active" 
     )
     
     # We voegen de eerste 4 spelers toe (Littler, MvG, Humphries, Price)
@@ -239,12 +242,11 @@ def create_team_tournament(session: Session, user: User, players: list, boards: 
     print("  > Teams aanmaken...")
     
     # Team 1: Littler & MvG
-    # Eis: naam kiezen of automatisch
     team1 = Team(name="The Green Nuke", tournament_id=t.id)
     team1.players = [subset_players[0], subset_players[1]]
     session.add(team1)
 
-    # Team 2: Humphries & Price (Geen naam -> Automatisch in frontend, hier handmatig voor seed)
+    # Team 2: Humphries & Price 
     team2 = Team(name="Cool Ice", tournament_id=t.id)
     team2.players = [subset_players[2], subset_players[3]]
     session.add(team2)
@@ -255,7 +257,7 @@ def create_team_tournament(session: Session, user: User, players: list, boards: 
 
 def main():
     print("Start seeding database...")
-    init_db() # Zorgt dat tabellen bestaan (ook de nieuwe Team tabellen)
+    init_db() # Zorgt dat tabellen bestaan
     
     with Session(engine) as session:
         # 1. Admin
@@ -273,10 +275,9 @@ def main():
         # 5. Toernooi 2 (Singles)
         create_tournament_2(session, admin, players, boards)
 
-        # 6. Toernooi 3 (Teams) <--- NIEUW
+        # 6. Toernooi 3 (Teams)
         create_team_tournament(session, admin, players, boards)
         
-        # Print statements BINNEN de sessie
         print("\n=== SEEDING SUCCESVOL ===")
         print(f"Gebruiker: {admin.email}")
         print(f"Wachtwoord: lderooij")

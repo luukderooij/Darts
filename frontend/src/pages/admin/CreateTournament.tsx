@@ -217,6 +217,19 @@ const CreateTournament = () => {
         if (unassignedPlayers.length > 0) {
             if(!confirm("Er zijn nog spelers niet ingedeeld in een team. Wil je toch doorgaan?")) return;
         }
+        try {
+            setLoading(true);
+            // Roep het finalize endpoint aan om matches te genereren
+            await api.post(`/tournaments/${createdTournamentId}/finalize`);
+            
+            // Nu pas navigeren
+            navigate(`/dashboard/tournament/${createdTournamentId}`);
+        } catch (err) {
+            console.error(err);
+            alert("Er ging iets mis bij het genereren van de wedstrijden.");
+        } finally {
+            setLoading(false);
+        }
         navigate(`/dashboard/tournament/${createdTournamentId}`);
     };
 

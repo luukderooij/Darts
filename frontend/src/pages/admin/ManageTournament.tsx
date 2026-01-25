@@ -45,10 +45,17 @@ const ManageTournament = () => {
       setTournament(currentTourn);
       setAllowByes(currentTourn.allow_byes);
 
-if (currentTourn.public_uuid) {
+      if (currentTourn.public_uuid) {
           const matchesRes = await api.get(`/matches/by-tournament/${currentTourn.public_uuid}`);
+          
+          // --- FIX: GEBRUIK DIRECT DE DATA VAN DE BACKEND ---
+          // De backend (matches.py) heeft al bepaald of het een speler-naam of team-naam is
+          // en heeft dit in 'player1_name' en 'player2_name' gezet.
+          // We hoeven hier NIETS meer te berekenen.
+          
           setMatches(matchesRes.data);
           
+          // Open automatisch de hoogste ronde of poule fase
           if (matchesRes.data.length > 0) {
               const maxRoundMatch = matchesRes.data.reduce((prev: any, current: any) => {
                   return (prev.id > current.id) ? prev : current;
@@ -58,7 +65,6 @@ if (currentTourn.public_uuid) {
               const key = `${type}-${maxRoundMatch.round_number}`;
               
               setOpenRounds((prev) => ({ ...prev, [key]: true }));
-              // --- FIX END ---
           }
       }
     } catch (error) {
@@ -119,18 +125,13 @@ if (currentTourn.public_uuid) {
 
   const canStartKnockout = () => {
       if (!tournament || !matches.length) return false;
-      if (tournament.format !== 'hybrid') return false; // Alleen voor hybride toernooien
+      if (tournament.format !== 'hybrid') return false; 
 
       const pouleMatches = matches.filter(m => m.poule_number !== null);
       const koMatches = matches.filter(m => m.poule_number === null);
 
-      // 1. Zijn er poule wedstrijden?
       if (pouleMatches.length === 0) return false;
-
-      // 2. Zijn ze ALLEMAAL klaar?
       const allPoulesFinished = pouleMatches.every(m => m.is_completed);
-
-      // 3. Is de knockout nog NIET begonnen?
       const koNotStarted = koMatches.length === 0;
 
       return allPoulesFinished && koNotStarted;
@@ -140,10 +141,9 @@ if (currentTourn.public_uuid) {
       if (!confirm("Weet je zeker dat je de Poule-fase wilt afsluiten en de Knockout wilt genereren?")) return;
       
       try {
-          // De API endpoint die we eerder hebben gezien in de context [cite: 35]
           await api.post(`/tournaments/${id}/start-knockout`);
           alert("Knockout fase gegenereerd!");
-          loadData(); // Herlaad de data om de nieuwe wedstrijden te tonen
+          loadData(); 
       } catch (err) {
           console.error(err);
           alert("Er ging iets mis bij het starten van de knockout.");
@@ -186,10 +186,8 @@ if (currentTourn.public_uuid) {
     return `Ronde ${roundNum}`;
 };
 
-  // 1. Groepeer op FASE (P/K) én RONDE nummer
-  // We maken keys zoals "P-1" (Poule ronde 1) en "K-1" (Knockout ronde 1)
   const groupedMatches = matches.reduce((acc, match) => {
-    const type = match.poule_number !== null ? 'P' : 'K'; // P = Poule, K = Knockout
+    const type = match.poule_number !== null ? 'P' : 'K'; 
     const key = `${type}-${match.round_number}`;
     
     if (!acc[key]) acc[key] = [];
@@ -197,16 +195,11 @@ if (currentTourn.public_uuid) {
     return acc;
   }, {} as Record<string, MatchWithUI[]>);
 
-  // 2. Sorteer de keys
-  // We willen eerst Poules (P), dan Knockouts (K). Binnen die groepen sorteren we op ronde nummer.
   const sortedGroupKeys = Object.keys(groupedMatches).sort((a, b) => {
       const [typeA, roundA] = a.split('-');
       const [typeB, roundB] = b.split('-');
 
-      // Als types verschillend zijn: P komt voor K
       if (typeA !== typeB) return typeA === 'P' ? -1 : 1;
-
-      // Als types gelijk zijn: Sorteer op nummer (1, 2, 3...)
       return Number(roundA) - Number(roundB);
   });
 
@@ -235,7 +228,6 @@ if (currentTourn.public_uuid) {
 
   return (
     <AdminLayout>
-      {/* CSS Hack om de pijltjes (spinners) van input[type=number] te verbergen */}
       <style>{`
         .no-spinner::-webkit-inner-spin-button, 
         .no-spinner::-webkit-outer-spin-button { 
@@ -258,7 +250,6 @@ if (currentTourn.public_uuid) {
             </button>
         </div>
 
-        {/* NIEUW: START KNOCKOUT KNOP (Alleen zichtbaar als poules klaar zijn) */}
         {canStartKnockout() && (
             <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-6 flex justify-between items-center shadow-sm animate-pulse">
                 <div className="flex items-center gap-3">
@@ -279,8 +270,6 @@ if (currentTourn.public_uuid) {
             </div>
         )}
 
-
-        {/* SETTINGS */}
         <div className="bg-white p-6 rounded-lg shadow-sm border border-yellow-200 mb-8">
             <h3 className="font-bold text-lg mb-4 flex items-center gap-2">
                 <ShieldAlert className="text-yellow-500" /> Instellingen
@@ -298,7 +287,6 @@ if (currentTourn.public_uuid) {
             </div>
         </div>
 
-{/* MATCHES LIST */}
         <div className="space-y-4">
             {sortedGroupKeys.map((groupKey) => {
                 const [type, roundStr] = groupKey.split('-');
@@ -310,7 +298,6 @@ if (currentTourn.public_uuid) {
 
                 return (
                     <div key={groupKey} className={`rounded-lg shadow-sm border overflow-hidden ${isPoule ? 'bg-white border-gray-200' : 'bg-orange-50/50 border-orange-200'}`}>
-                        {/* HEADER */}
                         <div 
                             className={`p-4 flex justify-between items-center cursor-pointer select-none ${isPoule ? 'bg-gray-50' : 'bg-orange-100 text-orange-900'}`} 
                             onClick={() => toggleRound(groupKey)}
@@ -342,24 +329,20 @@ if (currentTourn.public_uuid) {
                             )}
                         </div>
 
-                        {/* ROWS */}
                         {isOpen && (
                             <div className="divide-y divide-gray-100">
                                 {roundMatches.map(match => (
                                     <div key={match.id} className={`p-3 transition-colors flex items-center justify-between ${match.save_success ? 'bg-green-50' : 'hover:bg-white'}`}>
                                         
-                                        {/* ID */}
                                         <div className="w-8 text-xs text-gray-400 font-mono text-center">#{match.id}</div>
 
-                                        {/* PLAYERS & INPUTS */}
                                         <div className="flex-1 flex items-center justify-center gap-2">
                                             
-                                            {/* SPELER 1 */}
+                                            {/* SPELER 1 (Of Team 1) */}
                                             <div className={`flex-1 text-right truncate font-medium ${match.score_p1 > match.score_p2 && match.is_completed ? 'text-green-700 font-bold' : 'text-gray-700'}`}>
                                                 {match.player1_name || <span className="italic text-gray-400">Bye</span>}
                                             </div>
 
-                                            {/* INPUTS CONTAINER */}
                                             <div className="flex items-center bg-white border rounded shadow-sm overflow-hidden focus-within:ring-2 focus-within:ring-blue-400 focus-within:border-blue-400 transition-all">
                                                 <input 
                                                     type="number" 
@@ -382,14 +365,13 @@ if (currentTourn.public_uuid) {
                                                 />
                                             </div>
 
-                                            {/* SPELER 2 */}
+                                            {/* SPELER 2 (Of Team 2) */}
                                             <div className={`flex-1 text-left truncate font-medium ${match.score_p2 > match.score_p1 && match.is_completed ? 'text-green-700 font-bold' : 'text-gray-700'}`}>
                                                 {match.player2_name || <span className="italic text-gray-400">Bye</span>}
                                             </div>
 
                                         </div>
 
-                                        {/* ACTIONS */}
                                         <div className="w-20 flex justify-end gap-1">
                                             {match.is_saving ? (
                                                 <span className="p-2 text-blue-500 animate-spin"><RefreshCcw size={16}/></span>

@@ -1,10 +1,6 @@
 from typing import Optional, List
 from sqlmodel import Field, SQLModel, Relationship
-
-# Koppeltabel: Speler <-> Team
-class TeamPlayerLink(SQLModel, table=True):
-    team_id: Optional[int] = Field(default=None, foreign_key="team.id", primary_key=True)
-    player_id: Optional[int] = Field(default=None, foreign_key="player.id", primary_key=True)
+from app.models.links import TeamPlayerLink
 
 class Team(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)

@@ -6,12 +6,12 @@ class Match(SQLModel, table=True):
     
     # --- Structure info ---
     round_number: int 
-    poule_number: Optional[int] = None # NIEUW: Als dit ingevuld is, is het een groepswedstrijd
+    poule_number: Optional[int] = None # Als dit ingevuld is, is het een groepswedstrijd
     board_number: Optional[int] = None 
     
-    # --- Game Settings (Per match opgeslagen voor flexibiliteit) ---
-    best_of_legs: int = Field(default=5) # NIEUW: Bijv. "5" (betekent first to 3)
-    best_of_sets: int = Field(default=1) # NIEUW
+    # --- Game Settings ---
+    best_of_legs: int = Field(default=5) # Bijv. "5" (betekent first to 3)
+    best_of_sets: int = Field(default=1) 
     
     # --- Status ---
     is_completed: bool = False
@@ -20,12 +20,30 @@ class Match(SQLModel, table=True):
     score_p1: int = 0
     score_p2: int = 0
     
-    # --- Relationships ---
+    # --- Relationships: TOERNOOI ---
     tournament_id: int = Field(foreign_key="tournament.id")
     tournament: Optional["Tournament"] = Relationship(back_populates="matches")
     
+    # --- Relationships: SPELERS (Singles) ---
     player1_id: Optional[int] = Field(default=None, foreign_key="player.id")
     player2_id: Optional[int] = Field(default=None, foreign_key="player.id")
 
+
+    player1: Optional["Player"] = Relationship(
+        sa_relationship_kwargs={"foreign_keys": "[Match.player1_id]"}
+    )
+    player2: Optional["Player"] = Relationship(
+        sa_relationship_kwargs={"foreign_keys": "[Match.player2_id]"}
+    )
+
+    # --- Relationships: TEAMS (Koppels) ---
     team1_id: Optional[int] = Field(default=None, foreign_key="team.id")
     team2_id: Optional[int] = Field(default=None, foreign_key="team.id")
+
+    # Idem voor de teams: relatie objecten toevoegen
+    team1: Optional["Team"] = Relationship(
+        sa_relationship_kwargs={"foreign_keys": "[Match.team1_id]"}
+    )
+    team2: Optional["Team"] = Relationship(
+        sa_relationship_kwargs={"foreign_keys": "[Match.team2_id]"}
+    )

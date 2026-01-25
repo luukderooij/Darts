@@ -39,5 +39,15 @@ export interface Tournament {
 // We voegen Match en Leg later toe
 export interface Match {
     id: number;
-    // ... later invullen
+    player1_id?: number | null;
+    player2_id?: number | null;
+
+    team1_id?: number | null;
+    team2_id?: number | null;
+    team1?: { id: number; name: string } | null;
+    team2?: { id: number; name: string } | null;
+
+
+    player1?: Player | null; // of { name: string, ... }
+    player2?: Player | null;
 }
