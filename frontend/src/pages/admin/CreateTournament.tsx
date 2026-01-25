@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import api from '../../services/api';
 import AdminLayout from '../../components/layout/AdminLayout';
 import { Player, Dartboard } from '../../types';
-import { Trophy, AlertCircle, LayoutGrid, Users, Target, Scissors, Shuffle, UserPlus, Trash2, Save } from 'lucide-react';
+import { Trophy, AlertCircle, LayoutGrid, Users, Target, Scissors, Shuffle, UserPlus, Save } from 'lucide-react';
 
 // --- STYLING CONSTANTEN ---
 const LABEL_STYLE = "block text-xs font-bold text-gray-500 uppercase mb-1";
@@ -38,15 +38,18 @@ const CreateTournament = () => {
     const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
 
     // Format settings
-    const [participationMode, setParticipationMode] = useState<'singles' | 'doubles'>('singles'); // NIEUW
+    const [participationMode, setParticipationMode] = useState<'singles' | 'doubles'>('singles');
     const [format, setFormat] = useState('hybrid');
     const [poules, setPoules] = useState(1);
     const [qualifiersPerPoule, setQualifiersPerPoule] = useState(2);
-    const [allowByes, setAllowByes] = useState(true);
+    const [allowByes, setAllowByes] = useState(false); // Standaard uit
 
     // Match length settings
     const [groupLegs, setGroupLegs] = useState(3);
-    const [koLegs, setKoLegs] = useState(5);
+    
+    // WIJZIGING: Standaard Best of 3 voor Knockout (was 5)
+    const [koLegs, setKoLegs] = useState(3); 
+    
     const [sets, setSets] = useState(1);
 
     const [error, setError] = useState<string | null>(null);
@@ -66,13 +69,10 @@ const CreateTournament = () => {
                 setAllPlayers(pRes.data);
                 setAllBoards(bRes.data);
 
-                // --- NIEUW: Standaard 1e bord selecteren ---
-                // We checken eerst of de lijst niet leeg is, om errors te voorkomen.
+                // Standaard 1e bord selecteren
                 if (bRes.data.length > 0) {
-                    // We pakken het ID van het eerste bord in de lijst
                     setSelectedBoardIds([bRes.data[0].id]);
                 }
-                // ------------------------------------------
 
             } catch (err) {
                 console.error(err);
@@ -83,6 +83,27 @@ const CreateTournament = () => {
         };
         fetchData();
     }, []);
+
+    // Automatische berekening van Qualifiers (Max power of 2)
+    useEffect(() => {
+        const participantCount = participationMode === 'doubles' 
+            ? Math.floor(selectedPlayerIds.length / 2) 
+            : selectedPlayerIds.length;
+
+        if (participantCount < 2 || poules < 1) return;
+
+        let targetBracketSize = 1;
+        while (targetBracketSize * 2 <= participantCount) {
+            targetBracketSize *= 2;
+        }
+
+        let suggested = Math.floor(targetBracketSize / poules);
+        if (suggested < 1) suggested = 1;
+        
+        setQualifiersPerPoule(suggested);
+
+    }, [selectedPlayerIds.length, poules, participationMode]);
+
 
     // --- Helpers ---
     const togglePlayer = (id: number) => setSelectedPlayerIds(prev => prev.includes(id) ? prev.filter(p => p !== id) : [...prev, id]);
@@ -106,7 +127,6 @@ const CreateTournament = () => {
             return;
         }
 
-        // Validatie: bij koppels minimaal 4 spelers (2 teams)
         const minPlayers = participationMode === 'doubles' ? 4 : 2;
         if (selectedPlayerIds.length < minPlayers) {
             setError(`Selecteer minimaal ${minPlayers} spelers.`);
@@ -116,8 +136,6 @@ const CreateTournament = () => {
         try {
             const finalName = name.trim() === "" ? defaultName : name;
             
-            // Als we koppels doen, zetten we het toernooi eerst in 'draft' en genereren we nog GEEN matches
-            // (Dit vereist wel dat je backend 'teams' ondersteunt bij generatie, voor nu maken we het object aan)
             const payload = {
                 name: finalName,
                 date,
@@ -130,18 +148,15 @@ const CreateTournament = () => {
                 sets_per_match: sets,
                 player_ids: selectedPlayerIds,
                 board_ids: selectedBoardIds,
-                // eventueel: mode: participationMode (als je backend dit ondersteunt)
             };
 
             const res = await api.post('/tournaments/', payload);
             
             if (participationMode === 'doubles') {
-                // Ga naar stap 2: Team Builder
                 setCreatedTournamentId(res.data.id);
                 setStep(2);
                 window.scrollTo(0,0);
             } else {
-                // Klaar!
                 navigate('/dashboard');
             }
 
@@ -153,8 +168,6 @@ const CreateTournament = () => {
     };
 
     // --- STAP 2: Teams Beheren ---
-    
-    // Spelers die geselecteerd zijn, maar nog NIET in een team zitten
     const unassignedPlayers = allPlayers.filter(p => 
         selectedPlayerIds.includes(p.id) && 
         !teams.some(t => t.players.some(tp => tp.id === p.id))
@@ -163,7 +176,6 @@ const CreateTournament = () => {
     const handleAutoGenerate = async () => {
         if (!createdTournamentId) return;
         try {
-            // Stuur alle nog niet ingedeelde spelers naar de auto-endpoint
             const idsToAssign = unassignedPlayers.map(p => p.id);
             if (idsToAssign.length < 2) return;
 
@@ -193,7 +205,6 @@ const CreateTournament = () => {
             });
             setTeams(prev => [...prev, res.data]);
             
-            // Reset form
             setManualSelection([]);
             setManualTeamName("");
         } catch (err) {
@@ -202,8 +213,6 @@ const CreateTournament = () => {
     };
 
     const handleFinalize = async () => {
-        // Hier zou je normaliter een endpoint aanroepen om matches te genereren op basis van teams
-        // Voor nu sturen we de gebruiker naar het dashboard
         if (unassignedPlayers.length > 0) {
             if(!confirm("Er zijn nog spelers niet ingedeeld in een team. Wil je toch doorgaan?")) return;
         }
@@ -248,7 +257,6 @@ const CreateTournament = () => {
                                         <input type="date" required className={INPUT_STYLE} value={date} onChange={e => setDate(e.target.value)} />
                                     </div>
                                     
-                                    {/* NIEUW: MODUS SELECTIE */}
                                     <div>
                                         <label className={LABEL_STYLE}>Modus</label>
                                         <div className="flex gap-2">
@@ -304,7 +312,7 @@ const CreateTournament = () => {
                                 </div>
                             </div>
                             
-                            {/* Wedstrijd Lengte & Borden (Ingekort voor overzicht) */}
+                            {/* Wedstrijd Lengte & Borden */}
                             <div className="bg-white p-5 rounded-lg shadow-sm border border-gray-200">
                                 <h3 className="font-bold text-gray-700 mb-4 border-b border-gray-100 pb-2 flex items-center gap-2">
                                     <Target size={18} className="text-red-500" /> Settings
@@ -331,20 +339,16 @@ const CreateTournament = () => {
                                                 checked={selectedBoardIds.includes(board.id)} 
                                                 onChange={() => toggleBoard(board.id)} 
                                             />
-                                            
-                                            {/* AANGEPAST STUK: Toon nummer én locatie */}
                                             <div className="flex flex-col leading-tight">
                                                 <span className="font-medium">
                                                     Bord {board.number}
                                                 </span>
-                                                {/* Toon de locatie (name) alleen als die is ingevuld, in lichtgrijs */}
                                                 {board.name && (
                                                     <span className="text-xs text-gray-400 font-normal">
                                                         {board.name}
                                                     </span>
                                                 )}
                                             </div>
-                                            
                                         </label>
                                     ))}
                                 </div>
