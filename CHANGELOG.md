@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.5.0](https://github.com/luukderooij/Darts/compare/v1.4.0...v1.5.0) (2026-01-26)
+
+
+### Features
+
+* add system API for changelog retrieval and enhance changelog display in admin panel ([e83bd5a](https://github.com/luukderooij/Darts/commit/e83bd5a50c9ab8d1e666c4ddc35c6667067abca4))
+* enhance match score update logic with validation and auto-complete functionality ([5ee3673](https://github.com/luukderooij/Darts/commit/5ee3673da43871afe15b88e8b77a84dc2ad6da09))
+
 ## [1.4.0](https://github.com/luukderooij/Darts/compare/v1.3.1...v1.4.0) (2026-01-25)
 
 
