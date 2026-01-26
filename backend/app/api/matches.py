@@ -113,8 +113,10 @@ def get_matches_public(
         .options(
             selectinload(Match.player1),
             selectinload(Match.player2),
-            selectinload(Match.team1), # <--- Zorg dat Teams worden opgehaald
-            selectinload(Match.team2)
+            selectinload(Match.team1), 
+            selectinload(Match.team2),
+            selectinload(Match.referee),
+            selectinload(Match.referee_team)
         )
         .order_by(Match.id)
     )
@@ -142,6 +144,14 @@ def get_matches_public(
              m_data['player2_name'] = m.team2.name # Hier pakken we de Team naam!
         else:
              m_data['player2_name'] = "Bye"
+
+        # Referee Naam
+        if m.referee:
+            m_data['referee_name'] = m.referee.name
+        elif m.referee_team:
+            m_data['referee_name'] = m.referee_team.name
+        else:
+            m_data['referee_name'] = "-" # Or "TBD"
              
         results.append(m_data)
         

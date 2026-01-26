@@ -59,12 +59,13 @@ class TournamentRead(BaseModel):
 class MatchReadSimple(BaseModel):
     id: int
     round_number: int
-    poule_number: Optional[int] = None # <--- BELANGRIJK VOOR DE TABS
+    poule_number: Optional[int] = None
     player1_name: Optional[str] = None
     player2_name: Optional[str] = None
     score_p1: int
     score_p2: int
     is_completed: bool
+    referee_name: Optional[str] = None
 
 class TournamentReadWithMatches(TournamentRead):
     matches: List[MatchReadSimple] = []

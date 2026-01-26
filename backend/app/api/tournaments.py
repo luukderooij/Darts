@@ -22,14 +22,15 @@ from app.schemas.tournament import (
     TournamentReadWithMatches
 )
 
-# --- CORRECTED IMPORTS ---
+
 from app.services.tournament_gen import (
     generate_poule_phase, 
     generate_round_robin_global,
     generate_knockout,
-    generate_knockout_bracket  # Renamed function
+    generate_knockout_bracket,
+    assign_referees
 )
-# -------------------------
+from app.models import tournament
 
 router = APIRouter()
 
@@ -161,11 +162,15 @@ def read_tournaments(
 @router.get("/public/{public_uuid}", response_model=TournamentReadWithMatches)
 def read_public_tournament(public_uuid: str, session: Session = Depends(get_session)):
     # 1. Fetch tournament with matches and players
+    # We use options to efficiently load relationships in one go
     t = session.exec(
         select(Tournament)
         .where(Tournament.public_uuid == public_uuid)
         .options(
-            selectinload(Tournament.matches), 
+            selectinload(Tournament.matches).options(
+                selectinload(Match.referee),      # Load Referee Player
+                selectinload(Match.referee_team)  # Load Referee Team
+            ), 
             selectinload(Tournament.players)
         )
     ).first()
@@ -182,6 +187,7 @@ def read_public_tournament(public_uuid: str, session: Session = Depends(get_sess
 
     # 3. Enrich matches with names
     matches_data = []
+    # Sort matches by ID to keep order
     sorted_matches = sorted(t.matches, key=lambda m: m.id)
     
     for m in sorted_matches:
@@ -203,6 +209,15 @@ def read_public_tournament(public_uuid: str, session: Session = Depends(get_sess
         else:
              m_dict['player2_name'] = "Bye"
              
+        # --- NEW: Resolve Referee Name ---
+        if m.referee:
+            m_dict['referee_name'] = m.referee.name
+        elif m.referee_team:
+            m_dict['referee_name'] = m.referee_team.name
+        else:
+            m_dict['referee_name'] = "-" 
+        # ---------------------------------
+
         matches_data.append(m_dict)
 
     # 4. Build response
@@ -343,13 +358,16 @@ def finalize_tournament_setup(
         poule_index = i % num_poules
         poules[poule_index].append(team)
 
-    matches_created = []
-
+        matches_created = []
+    
     for poule_idx, poule_teams in enumerate(poules):
         poule_number = poule_idx + 1
         n = len(poule_teams)
         
-        # Round Robin
+        # Temporary list for this poule's matches
+        poule_matches = [] 
+
+        # Round Robin Generation
         for i in range(n):
             for j in range(i + 1, n):
                 t1 = poule_teams[i]
@@ -358,20 +376,24 @@ def finalize_tournament_setup(
                 match = Match(
                     tournament_id=tournament.id,
                     poule_number=poule_number,
-                    
                     team1_id=t1.id,
                     team2_id=t2.id,
-
-                    round_number=1, # Mandatory field
+                    round_number=1, # Note: Round logic is simple here, might need improvement for perfect referee spacing
                     best_of_legs=tournament.starting_legs_group,
                     best_of_sets=tournament.sets_per_match,
-
                     is_completed=False,
                     score_p1=0,
                     score_p2=0
                 )
-                session.add(match)
-                matches_created.append(match)
+                poule_matches.append(match) # Add to temp list
+
+        # --- NIEUW: Referee Toewijzen ---
+        assign_referees(poule_matches, poule_teams, is_doubles=True)
+        # --------------------------------
+
+        # Add to main list to save later
+        matches_created.extend(poule_matches)
+        session.add_all(poule_matches)
 
     session.commit()
     return {"message": f"Setup finalized. {len(matches_created)} matches generated for {len(teams)} teams."}
