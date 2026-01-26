@@ -1,6 +1,6 @@
 import math
 import random
-from typing import List, Dict
+from typing import List, Dict, Any
 from sqlmodel import Session, select
 from app.models.match import Match
 from app.models.team import Team
@@ -46,6 +46,11 @@ def generate_poule_phase(
             legs=legs_best_of,
             sets=sets_best_of
         )
+        
+        new_matches.sort(key=lambda m: m.round_number)
+        assign_referees(new_matches, pool_players, is_doubles=False)
+        # --------------------------------
+
         matches_to_add.extend(new_matches)
 
     session.add_all(matches_to_add)
@@ -434,3 +439,69 @@ def create_manual_team(tournament_id: int, player_ids: list[int], custom_name: s
     session.commit()
     session.refresh(team)
     return team
+
+def assign_referees(matches: List[Match], participants: List[Any], is_doubles: bool):
+    """
+    Assigns referees to a list of matches ensuring:
+    1. Equal distribution (everyone refs same amount).
+    2. Spacing (try not to ref immediately after playing).
+    """
+    if len(participants) < 3:
+        return # Not enough people to have a referee
+
+    # Track how many times each entity has refereed
+    ref_counts = {p.id: 0 for p in participants}
+    
+    # Track the last match index where an entity was involved (playing or reffing)
+    # Used to calculate 'rest' periods. Initialize to -1.
+    last_active_index = {p.id: -1 for p in participants}
+
+    for i, match in enumerate(matches):
+        # 1. Identify who is playing
+        if is_doubles:
+            p1_id = match.team1_id
+            p2_id = match.team2_id
+        else:
+            p1_id = match.player1_id
+            p2_id = match.player2_id
+
+        # Update activity for players (they are busy playing this match)
+        if p1_id: last_active_index[p1_id] = i
+        if p2_id: last_active_index[p2_id] = i
+
+        # 2. Find Candidates (Everyone in poule NOT playing this match)
+        candidates = [p for p in participants if p.id not in (p1_id, p2_id)]
+
+        if not candidates:
+            continue
+
+        # 3. Scoring Algorithm
+        # We want the candidate with the LOWEST ref_count.
+        # Tie-breaker: The one who has been inactive the longest
+        def get_score(candidate):
+            count = ref_counts[candidate.id]
+            
+            # Calculate gap since last activity
+            last_idx = last_active_index[candidate.id]
+            gap = i - last_idx if last_idx != -1 else 999 
+            
+            # Score = (Count * 100) - Gap
+            return (count * 100) - gap
+
+        # Sort candidates by score (Lowest is best)
+        candidates.sort(key=get_score)
+        
+        if not candidates:
+            continue
+            
+        best_ref = candidates[0]
+
+        # 4. Assign
+        if is_doubles:
+            match.referee_team_id = best_ref.id
+        else:
+            match.referee_id = best_ref.id
+
+        # 5. Update Tracking
+        ref_counts[best_ref.id] += 1
+        last_active_index[best_ref.id] = i

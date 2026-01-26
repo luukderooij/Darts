@@ -10,6 +10,7 @@ interface Match {
   player1_name: string;
   player2_name: string;
   is_completed: boolean;
+  referee_name?: string;
 }
 
 const ScorerMatchList = () => {
@@ -93,6 +94,12 @@ const ScorerMatchList = () => {
                 <div className="font-bold text-lg">{match.player1_name || 'Bye'}</div>
                 <div className="text-xs text-slate-400">VS</div>
                 <div className="font-bold text-lg">{match.player2_name || 'Bye'}</div>
+
+                <div className="mt-2 text-xs text-slate-500 font-mono border-t border-slate-700 pt-1 inline-block px-2">
+                        Ref: <span className="text-slate-300">{match.referee_name || "-"}</span>
+                </div>
+
+
               </div>
               
               <div className="ml-4">

@@ -48,6 +48,8 @@ export interface Match {
     team2?: { id: number; name: string } | null;
 
 
-    player1?: Player | null; // of { name: string, ... }
+    player1?: Player | null;
     player2?: Player | null;
+
+    referee_name?: string;
 }

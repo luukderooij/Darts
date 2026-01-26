@@ -19,6 +19,10 @@ class MatchRead(BaseModel):
     player2_id: Optional[int]
     player1_name: Optional[str] = "Bye"
     player2_name: Optional[str] = "Bye"
+
+    referee_id: Optional[int] = None
+    referee_team_id: Optional[int] = None
+    referee_name: Optional[str] = None
     
     score_p1: int
     score_p2: int

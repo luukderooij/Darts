@@ -48,11 +48,6 @@ const ManageTournament = () => {
       if (currentTourn.public_uuid) {
           const matchesRes = await api.get(`/matches/by-tournament/${currentTourn.public_uuid}`);
           
-          // --- FIX: GEBRUIK DIRECT DE DATA VAN DE BACKEND ---
-          // De backend (matches.py) heeft al bepaald of het een speler-naam of team-naam is
-          // en heeft dit in 'player1_name' en 'player2_name' gezet.
-          // We hoeven hier NIETS meer te berekenen.
-          
           setMatches(matchesRes.data);
           
           // Open automatisch de hoogste ronde of poule fase
@@ -184,7 +179,7 @@ const ManageTournament = () => {
     if (matchCount === 2) return "Halve Finale";
     if (matchCount === 4) return "Kwartfinale";
     return `Ronde ${roundNum}`;
-};
+  };
 
   const groupedMatches = matches.reduce((acc, match) => {
     const type = match.poule_number !== null ? 'P' : 'K'; 
@@ -334,7 +329,16 @@ const ManageTournament = () => {
                                 {roundMatches.map(match => (
                                     <div key={match.id} className={`p-3 transition-colors flex items-center justify-between ${match.save_success ? 'bg-green-50' : 'hover:bg-white'}`}>
                                         
-                                        <div className="w-8 text-xs text-gray-400 font-mono text-center">#{match.id}</div>
+                                        <div className="w-16 flex flex-col items-center justify-center gap-1 border-r border-gray-100 mr-2 pr-2">
+                                            <div className="text-xs text-gray-400 font-mono">#{match.id}</div>
+                                            
+                                            <div className="flex flex-col items-center mt-1">
+                                                <span className="text-[9px] text-gray-400 uppercase leading-none">Ref:</span>
+                                                <div className="text-[10px] text-blue-400 font-bold uppercase tracking-tighter" title={`Referee: ${match.referee_name}`}>
+                                                    {match.referee_name ? match.referee_name.split(' ')[0] : '-'}
+                                                </div>
+                                            </div>
+                                        </div>
 
                                         <div className="flex-1 flex items-center justify-center gap-2">
                                             

@@ -14,6 +14,7 @@ interface Match {
   score_p2: number;
   is_completed: boolean;
   best_of_legs?: number;
+  referee_name?: string;
 }
 
 interface Tournament {
@@ -418,6 +419,12 @@ const TournamentView = () => {
                                     <div key={match.id} className="p-4 hover:bg-gray-50 transition-colors">
                                         <div className="flex justify-between text-xs font-bold text-gray-400 uppercase tracking-wide mb-2">
                                             <span>Ronde {match.round_number}</span>
+                                            {match.is_completed && <span className="text-green-600">Finished</span>}
+                                            {/* NEW: Referee Display */}
+                                            <span className="flex items-center gap-1 text-gray-500">
+                                                Ref: <span className="text-gray-700">{match.referee_name || "-"}</span>
+                                            </span>
+                                            
                                             {match.is_completed && <span className="text-green-600">Finished</span>}
                                         </div>
                                         <div className="flex items-center justify-between gap-2">

@@ -5,7 +5,7 @@ CONFIG FILE: package.json
 
 {
   "name": "dart-tournament-manager",
-  "version": "1.3.1",
+  "version": "1.4.0",
   "scripts": {
     "release": "standard-version && git push --follow-tags",
     "prepare": "husky"
@@ -150,7 +150,7 @@ from app.core.config import settings
 from app.db.session import init_db
 
 # Import API route modules
-from app.api import auth, users, players, tournaments, matches, websockets, dartboards, teams
+from app.api import auth, users, players, tournaments, matches, websockets, dartboards, teams, system
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -197,6 +197,7 @@ app.include_router(tournaments.router, prefix="/api/tournaments", tags=["Tournam
 app.include_router(matches.router, prefix="/api/matches", tags=["Matches"])
 app.include_router(dartboards.router, prefix="/api/dartboards", tags=["Dartboards"])
 app.include_router(teams.router, prefix="/api/teams", tags=["Teams"])
+app.include_router(system.router, prefix="/api/system", tags=["system"])
 
 # WebSocket router for real-time logs
 # Note: The frontend will connect via ws://localhost:8000/ws/logs
@@ -216,7 +217,7 @@ def read_root():
 FILE: backend/app\__init__.py
 ==================================================
 
-__version__ = "1.3.1"
+__version__ = "1.4.0"
 
 ==================================================
 FILE: backend/app\api\auth.py
@@ -473,8 +474,10 @@ def get_matches_public(
         .options(
             selectinload(Match.player1),
             selectinload(Match.player2),
-            selectinload(Match.team1), # <--- Zorg dat Teams worden opgehaald
-            selectinload(Match.team2)
+            selectinload(Match.team1), 
+            selectinload(Match.team2),
+            selectinload(Match.referee),
+            selectinload(Match.referee_team)
         )
         .order_by(Match.id)
     )
@@ -502,6 +505,14 @@ def get_matches_public(
              m_data['player2_name'] = m.team2.name # Hier pakken we de Team naam!
         else:
              m_data['player2_name'] = "Bye"
+
+        # Referee Naam
+        if m.referee:
+            m_data['referee_name'] = m.referee.name
+        elif m.referee_team:
+            m_data['referee_name'] = m.referee_team.name
+        else:
+            m_data['referee_name'] = "-" # Or "TBD"
              
         results.append(m_data)
         
@@ -569,6 +580,131 @@ def delete_player(
     session.delete(player)
     session.commit()
     return {"ok": True}
+
+==================================================
+FILE: backend/app\api\system.py
+==================================================
+
+import os
+import re
+from typing import List, Optional
+from fastapi import APIRouter
+from pydantic import BaseModel
+
+router = APIRouter()
+
+class ChangeItem(BaseModel):
+    type: str      
+    text: str
+    hash: Optional[str] = None
+    link: Optional[str] = None
+
+class Release(BaseModel):
+    version: str
+    date: str
+    description: Optional[str] = None
+    changes: List[ChangeItem]
+
+def parse_changelog_line(line: str) -> Optional[ChangeItem]:
+    # Regex: * message ([hash](link))
+    match_hash = re.search(r'^\*\s+(.*?)\s+\(\[(.*?)\]\((.*?)\)\)', line)
+    
+    text = ""
+    commit_hash = None
+    link = None
+
+    if match_hash:
+        text = match_hash.group(1)
+        commit_hash = match_hash.group(2)
+        link = match_hash.group(3)
+    else:
+        # Fallback: tekst zonder link
+        match_simple = re.search(r'^\*\s+(.*)', line)
+        if match_simple:
+            text = match_simple.group(1)
+        else:
+            return None
+
+    # Markdown cleanup (**bold**)
+    text = re.sub(r'\*\*(.*?)\*\*', r'\1', text)
+    
+    return ChangeItem(type="unknown", text=text, hash=commit_hash, link=link)
+
+def determine_type_from_header(header: str) -> str:
+    h = header.lower()
+    if "features" in h: return "feat"
+    if "bug fixes" in h: return "fix"
+    if "performance" in h: return "perf"
+    if "reverts" in h: return "revert"
+    return "chore"
+
+@router.get("/changelog", response_model=List[Release])
+def get_changelog():
+    # --- PAD FIX: We gaan 3 mappen omhoog vanuit api/system.py ---
+    # api -> app -> backend -> ROOT
+    root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+    changelog_path = os.path.join(root_dir, "CHANGELOG.md")
+    
+    # DEBUG: Als bestand niet bestaat, geef dat terug in de UI
+    if not os.path.exists(changelog_path):
+        # Probeer backend map als fallback
+        backend_path = os.path.join(os.path.dirname(__file__), "..", "..", "CHANGELOG.md")
+        if os.path.exists(backend_path):
+            changelog_path = backend_path
+        else:
+            return [Release(
+                version="Error", 
+                date="Nu", 
+                description=f"Kan CHANGELOG.md niet vinden op: {changelog_path}", 
+                changes=[]
+            )]
+
+    releases = []
+    current_release = None
+    current_type = "chore"
+
+    with open(changelog_path, "r", encoding="utf-8") as f:
+        lines = f.readlines()
+
+    for line in lines:
+        line = line.strip()
+        if not line: continue
+
+        # Versie detectie: ## [1.0.0] of ### [1.0.0]
+        version_match = re.search(r'^#{2,3}\s+\[(.*?)\]\(.*?\)\s+\((.*?)\)', line)
+        if not version_match:
+             version_match = re.search(r'^#{2,3}\s+\[(.*?)\]\s+\((.*?)\)', line)
+        if not version_match:
+             version_match = re.search(r'^#{2,3}\s+(.*?)\s+\((.*?)\)', line)
+
+        if version_match:
+            if current_release:
+                releases.append(current_release)
+            
+            current_release = Release(
+                version=version_match.group(1),
+                date=version_match.group(2),
+                changes=[]
+            )
+            continue
+
+        # Categorie detectie (Features, Bug Fixes)
+        if line.startswith("###") and not version_match:
+            if "[" not in line and "(" not in line: 
+                current_type = determine_type_from_header(line)
+            continue
+
+        # Change Line detectie
+        if line.startswith("*") and current_release:
+            change = parse_changelog_line(line)
+            if change:
+                change.type = current_type
+                current_release.changes.append(change)
+
+    if current_release:
+        releases.append(current_release)
+
+    return releases
 
 ==================================================
 FILE: backend/app\api\teams.py
@@ -702,7 +838,7 @@ FILE: backend/app\api\tournaments.py
 # FILE: backend/app/api/tournaments.py
 import uuid
 import math 
-from typing import List, Any
+from typing import List, Optional, Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select
 from sqlalchemy.orm import selectinload
@@ -713,24 +849,25 @@ from app.models.user import User
 from app.models.player import Player
 from app.models.match import Match
 from app.models.dartboard import Dartboard 
-from app.api.users import get_current_user 
-from app.schemas.tournament import TournamentUpdate
 from app.models.team import Team
-
+from app.api.users import get_current_user 
 
 from app.schemas.tournament import (
     TournamentCreate, 
     TournamentRead, 
     TournamentUpdate, 
-    TournamentReadWithMatches # <--- Nieuwe import
+    TournamentReadWithMatches
 )
+
 
 from app.services.tournament_gen import (
     generate_poule_phase, 
-    generate_knockout_from_poules,
     generate_round_robin_global,
-    generate_knockout
+    generate_knockout,
+    generate_knockout_bracket,
+    assign_referees
 )
+from app.models import tournament
 
 router = APIRouter()
 
@@ -742,19 +879,16 @@ def create_tournament(
 ):
     # 1. Verify Players
     players_to_link = []
-    for pid in tourn_in.player_ids:
-        p = session.get(Player, pid)
-        if not p:
-            raise HTTPException(status_code=400, detail=f"Invalid player ID: {pid}")
-        players_to_link.append(p)
-        
+    if tourn_in.player_ids:
+        players_to_link = session.exec(select(Player).where(Player.id.in_(tourn_in.player_ids))).all()
+    
+    # Check minimum players (raw count)
     if len(players_to_link) < 2:
-        raise HTTPException(status_code=400, detail="Need at least 2 players")
+        raise HTTPException(status_code=400, detail="Selecteer minimaal 2 spelers.")
 
     # 2. Validatie Poulegrootte
     if tourn_in.format == "hybrid" and tourn_in.number_of_poules > 0:
             
-            # --- AANGEPAST BLOK ---
             # Bepaal hoeveel 'entiteiten' (spelers of teams) er in de poule komen
             entity_count = len(players_to_link)
             
@@ -772,13 +906,13 @@ def create_tournament(
 
     # 3. Verify Boards
     boards_to_link = []
-    for bid in tourn_in.board_ids:
-        b = session.get(Dartboard, bid)
-        if not b:
-             raise HTTPException(status_code=400, detail=f"Invalid board ID: {bid}")
-        boards_to_link.append(b)
+    if tourn_in.board_ids:
+        boards_to_link = session.exec(select(Dartboard).where(Dartboard.id.in_(tourn_in.board_ids))).all()
+        if not boards_to_link:
+             raise HTTPException(status_code=400, detail="Ongeldige borden geselecteerd.")
 
     # 4. Create Tournament Object
+    # We exclude ids because we link them manually via relationships
     tourn_data = tourn_in.model_dump(exclude={"player_ids", "board_ids"})
     tournament = Tournament.model_validate(tourn_data)
     
@@ -795,9 +929,9 @@ def create_tournament(
     session.commit()
     session.refresh(tournament)
     
-    # 6. Generate Matches based on Format
+    # 6. Generate Matches based on Format (ONLY FOR SINGLES)
+    # For doubles, we wait for the /finalize endpoint because teams need to be created first
     if tournament.mode == "singles":
-            
             if tournament.format == "hybrid":
                 generate_poule_phase(
                     tournament_id=tournament.id, 
@@ -846,15 +980,15 @@ def read_tournaments(
 ):
     tournaments = session.exec(
         select(Tournament)
+        .where(Tournament.user_id == current_user.id)
         .options(selectinload(Tournament.players), selectinload(Tournament.boards))
         .offset(offset)
         .limit(limit)
     ).all()
     
-    # We vullen de counts handmatig in, omdat SQLModel dit niet automatisch doet
+    # Fill counts manually
     results = []
     for t in tournaments:
-        # Zet om naar dict en voeg counts toe
         t_data = t.model_dump()
         t_data['player_count'] = len(t.players)
         t_data['board_count'] = len(t.boards)
@@ -862,33 +996,54 @@ def read_tournaments(
         
     return results
 
-@router.get("/public/{public_uuid}", response_model=TournamentReadWithMatches) # <--- Aangepast Model
+@router.get("/public/{public_uuid}", response_model=TournamentReadWithMatches)
 def read_public_tournament(public_uuid: str, session: Session = Depends(get_session)):
-    # 1. Haal toernooi op met matches en spelers
+    # 1. Fetch tournament with matches and players
     t = session.exec(
         select(Tournament)
         .where(Tournament.public_uuid == public_uuid)
-        .options(selectinload(Tournament.matches), selectinload(Tournament.players))
+        .options(
+            selectinload(Tournament.matches), 
+            selectinload(Tournament.players)
+        )
     ).first()
     
     if not t:
         raise HTTPException(status_code=404, detail="Tournament not found")
 
-    # 2. Maak een map van ID -> Naam voor snelle lookup
+    # 2. Create map for players and teams for fast lookup
     player_map = {p.id: p.name for p in t.players}
+    
+    # We also need teams if it's a doubles tournament
+    teams = session.exec(select(Team).where(Team.tournament_id == t.id)).all()
+    team_map = {team.id: team.name for team in teams}
 
-    # 3. Verrijk de matches met spelernamen
+    # 3. Enrich matches with names
     matches_data = []
     sorted_matches = sorted(t.matches, key=lambda m: m.id)
     
     for m in sorted_matches:
         m_dict = m.model_dump()
-        # Vul de namen in (of "Bye" als er geen speler is)
-        m_dict['player1_name'] = player_map.get(m.player1_id, "Bye")
-        m_dict['player2_name'] = player_map.get(m.player2_id, "Bye")
+        
+        # Resolve Name 1 (Player > Team > Bye)
+        if m.player1_id:
+            m_dict['player1_name'] = player_map.get(m.player1_id, "Bye")
+        elif m.team1_id:
+             m_dict['player1_name'] = team_map.get(m.team1_id, "Bye")
+        else:
+             m_dict['player1_name'] = "Bye"
+
+        # Resolve Name 2
+        if m.player2_id:
+            m_dict['player2_name'] = player_map.get(m.player2_id, "Bye")
+        elif m.team2_id:
+             m_dict['player2_name'] = team_map.get(m.team2_id, "Bye")
+        else:
+             m_dict['player2_name'] = "Bye"
+             
         matches_data.append(m_dict)
 
-    # 4. Bouw het antwoord
+    # 4. Build response
     response = t.model_dump()
     response['matches'] = matches_data
     response['player_count'] = len(t.players)
@@ -906,7 +1061,9 @@ def start_knockout(
     if not t:
         raise HTTPException(status_code=404, detail="Tournament not found")
         
-    generate_knockout_from_poules(t, session)
+    # Call the NEW function from tournament_gen
+    generate_knockout_bracket(session, t)
+    
     return {"message": "Knockout phase generated"}
 
 
@@ -918,13 +1075,12 @@ def update_tournament_settings(
     current_user: User = Depends(get_current_user)
 ):
     """
-    Update toernooi instellingen (bijv. allow_byes) on the fly.
+    Update tournament settings (e.g. allow_byes) on the fly.
     """
     tournament = session.get(Tournament, tournament_id)
     if not tournament:
         raise HTTPException(status_code=404, detail="Tournament not found")
     
-    # Update alleen de velden die zijn meegegeven
     tourn_data = tourn_update.model_dump(exclude_unset=True)
     for key, value in tourn_data.items():
         setattr(tournament, key, value)
@@ -943,20 +1099,18 @@ def update_round_format(
     current_user: User = Depends(get_current_user)
 ):
     """
-    Batch update: Pas de 'Best of X' aan voor ALLE ongespeelde wedstrijden in een specifieke ronde.
+    Batch update: Adjust 'Best of X' for ALL unplayed matches in a specific round.
     """
-    # 1. Haal matches op
     statement = select(Match).where(
         Match.tournament_id == tournament_id,
         Match.round_number == round_number,
-        Match.is_completed == False # Alleen ongespeelde aanpassen
+        Match.is_completed == False 
     )
     matches = session.exec(statement).all()
     
     if not matches:
         return {"message": "Geen ongespeelde wedstrijden gevonden in deze ronde om aan te passen."}
         
-    # 2. Update ze allemaal
     for match in matches:
         match.best_of_legs = best_of_legs
         session.add(match)
@@ -975,9 +1129,6 @@ def delete_tournament(
     if not tournament:
         raise HTTPException(status_code=404, detail="Tournament not found")
     
-    # --- Manual Cascade Delete ---
-    # We must delete children first to avoid Foreign Key errors
-    
     # 1. Delete Matches
     matches = session.exec(select(Match).where(Match.tournament_id == tournament_id)).all()
     for m in matches:
@@ -988,7 +1139,7 @@ def delete_tournament(
     for t in teams:
         session.delete(t)
         
-    # 3. Delete Tournament (Links will be handled automatically by SQLModel)
+    # 3. Delete Tournament
     session.delete(tournament)
     session.commit()
     
@@ -1001,72 +1152,71 @@ def finalize_tournament_setup(
     session: Session = Depends(get_session)
 ):
     """
-    Trigger de generatie van wedstrijden nadat teams zijn aangemaakt.
-    Specifiek voor Doubles/Teams toernooien.
+    Trigger match generation after teams are created.
+    Specific for Doubles/Teams tournaments.
     """
     tournament = session.get(Tournament, tournament_id)
     if not tournament:
         raise HTTPException(status_code=404, detail="Toernooi niet gevonden")
 
-    # Als het singles is, zijn matches al gemaakt bij aanmaken.
     if tournament.mode == "singles":
         return {"message": "Already generated (singles)"}
 
-    # Haal alle teams op
+    # Fetch all teams
     teams = session.exec(select(Team).where(Team.tournament_id == tournament_id)).all()
     
     if len(teams) < 2:
         raise HTTPException(status_code=400, detail="Te weinig teams om wedstrijden te genereren.")
 
-    # Verwijder eventuele oude matches (voor de zekerheid)
+    # Remove old matches (safety)
     existing_matches = session.exec(select(Match).where(Match.tournament_id == tournament_id)).all()
     for m in existing_matches:
         session.delete(m)
     
-    # --- Generatie Logica voor Teams (Poule Fase) ---
-    # We verdelen de teams over de poules
+    # --- Generation Logic for Teams (Poule Phase) ---
     num_poules = tournament.number_of_poules
-    
-    # Maak lege lijsten voor elke poule
     poules = [[] for _ in range(num_poules)]
     
-    # Verdeel teams snake-wise of random (hier simpel: op volgorde verdelen)
     for i, team in enumerate(teams):
         poule_index = i % num_poules
         poules[poule_index].append(team)
 
-    matches_created = []
-
-    # Voor elke poule, maak Round Robin schema
+        matches_created = []
+    
     for poule_idx, poule_teams in enumerate(poules):
         poule_number = poule_idx + 1
         n = len(poule_teams)
         
-        # Round Robin algoritme
+        # Temporary list for this poule's matches
+        poule_matches = [] 
+
+        # Round Robin Generation
         for i in range(n):
             for j in range(i + 1, n):
                 t1 = poule_teams[i]
                 t2 = poule_teams[j]
                 
-                # Maak de match
                 match = Match(
                     tournament_id=tournament.id,
                     poule_number=poule_number,
-                    
                     team1_id=t1.id,
                     team2_id=t2.id,
-
-                    round_number=1,
-
+                    round_number=1, # Note: Round logic is simple here, might need improvement for perfect referee spacing
                     best_of_legs=tournament.starting_legs_group,
                     best_of_sets=tournament.sets_per_match,
-
                     is_completed=False,
                     score_p1=0,
                     score_p2=0
                 )
-                session.add(match)
-                matches_created.append(match)
+                poule_matches.append(match) # Add to temp list
+
+        # --- NIEUW: Referee Toewijzen ---
+        assign_referees(poule_matches, poule_teams, is_doubles=True)
+        # --------------------------------
+
+        # Add to main list to save later
+        matches_created.extend(poule_matches)
+        session.add_all(poule_matches)
 
     session.commit()
     return {"message": f"Setup finalized. {len(matches_created)} matches generated for {len(teams)} teams."}
@@ -1402,6 +1552,21 @@ class Match(SQLModel, table=True):
         sa_relationship_kwargs={"foreign_keys": "[Match.player2_id]"}
     )
 
+    # ... existing fields (id, round_number, poule_number, etc.) ...
+    
+    # --- REFEREE FIELDS (NEW) ---
+    referee_id: Optional[int] = Field(default=None, foreign_key="player.id")
+    referee_team_id: Optional[int] = Field(default=None, foreign_key="team.id")
+
+    # --- RELATIONS (NEW) ---
+    referee: Optional["Player"] = Relationship(
+        sa_relationship_kwargs={"foreign_keys": "[Match.referee_id]"}
+    )
+    referee_team: Optional["Team"] = Relationship(
+        sa_relationship_kwargs={"foreign_keys": "[Match.referee_team_id]"}
+    )
+
+
     # --- Relationships: TEAMS (Koppels) ---
     team1_id: Optional[int] = Field(default=None, foreign_key="team.id")
     team2_id: Optional[int] = Field(default=None, foreign_key="team.id")
@@ -1604,6 +1769,10 @@ class MatchRead(BaseModel):
     player2_id: Optional[int]
     player1_name: Optional[str] = "Bye"
     player2_name: Optional[str] = "Bye"
+
+    referee_id: Optional[int] = None
+    referee_team_id: Optional[int] = None
+    referee_name: Optional[str] = "TBD"  # Computed name
     
     score_p1: int
     score_p2: int
@@ -1797,16 +1966,18 @@ FILE: backend/app\schemas\__init__.py
 FILE: backend/app\services\tournament_gen.py
 ==================================================
 
-from typing import List, Dict
-import random
 import math
+import random
+from typing import List, Dict, Any
 from sqlmodel import Session, select
 from app.models.match import Match
 from app.models.team import Team
 from app.models.player import Player
 from app.models.tournament import Tournament
 
-# --- POULE FASE LOGICA ---
+# ==========================================
+# 1. POULE FASE LOGICA (VOOR SINGLES)
+# ==========================================
 
 def generate_poule_phase(
     tournament_id: int,
@@ -1820,23 +1991,21 @@ def generate_poule_phase(
     Verdeelt spelers over N poules en genereert voor elke poule een Round Robin schema.
     """
     if len(players) < num_poules:
-        # Fallback: als er minder spelers zijn dan poules, stop alles in 1 poule
         num_poules = 1
 
-    # 1. Spelers husselen voor willekeurige indeling
+    # 1. Spelers husselen
     shuffled_players = list(players)
     random.shuffle(shuffled_players)
 
-    # 2. Verdeel over poules (Modulo verdeling)
+    # 2. Verdeel over poules
     poules_map = {i: [] for i in range(1, num_poules + 1)}
     
     for idx, player in enumerate(shuffled_players):
         target_poule = (idx % num_poules) + 1
         poules_map[target_poule].append(player)
 
-    # 3. Genereer wedstrijden per poule
+    # 3. Genereer wedstrijden
     matches_to_add = []
-    
     for poule_num, pool_players in poules_map.items():
         new_matches = _create_round_robin_matches(
             tournament_id=tournament_id,
@@ -1845,6 +2014,11 @@ def generate_poule_phase(
             legs=legs_best_of,
             sets=sets_best_of
         )
+        
+        new_matches.sort(key=lambda m: m.round_number)
+        assign_referees(new_matches, pool_players, is_doubles=False)
+        # --------------------------------
+
         matches_to_add.extend(new_matches)
 
     session.add_all(matches_to_add)
@@ -1858,9 +2032,7 @@ def generate_round_robin_global(
     sets_best_of: int,
     session: Session
 ):
-    """
-    Klassieke Round Robin (alles in 1 grote groep).
-    """
+    """Klassieke Round Robin (alles in 1 grote groep)."""
     matches = _create_round_robin_matches(tournament_id, players, None, legs_best_of, sets_best_of)
     session.add_all(matches)
     session.commit()
@@ -1877,7 +2049,6 @@ def _create_round_robin_matches(
     if len(players) < 2:
         return matches
 
-    # Dummy toevoegen bij oneven aantal
     rotation = list(players)
     if len(rotation) % 2 != 0:
         rotation.append(None)
@@ -1888,7 +2059,6 @@ def _create_round_robin_matches(
 
     for round_idx in range(num_rounds):
         round_num = round_idx + 1
-        
         for i in range(half):
             p1 = rotation[i]
             p2 = rotation[num_players - 1 - i]
@@ -1905,151 +2075,245 @@ def _create_round_robin_matches(
                     is_completed=False
                 )
                 matches.append(match)
-
-        # Rotate
         rotation.insert(1, rotation.pop())
     
     return matches
 
 
-# --- KNOCKOUT LOGICA (HYBRIDE) ---
+# ==========================================
+# 2. NIEUWE KNOCKOUT LOGICA (TEAMS + SINGLES)
+# ==========================================
 
-def generate_knockout_from_poules(tournament: Tournament, session: Session):
+def calculate_poule_standings(session: Session, tournament: Tournament) -> Dict[int, List[dict]]:
     """
-    Genereert een dynamische knockout fase op basis van Global Seeding.
-    Werkt voor elk aantal poules en qualifiers.
+    Berekent de stand per poule. Ondersteunt nu ZOWEL Singles als Doubles.
     """
-    # 1. Haal alle gespeelde poule wedstrijden op
     matches = session.exec(
         select(Match)
         .where(Match.tournament_id == tournament.id)
         .where(Match.poule_number != None)
+        .where(Match.is_completed == True)
+    ).all()
+
+    is_doubles = tournament.mode == "doubles"
+    raw_standings = {} 
+
+    def init_entity(poule_num, entity_id, entity_name):
+        if poule_num not in raw_standings:
+            raw_standings[poule_num] = {}
+        if entity_id not in raw_standings[poule_num]:
+            raw_standings[poule_num][entity_id] = {
+                "id": entity_id,
+                "name": entity_name,
+                "points": 0,
+                "played": 0,
+                "legs_won": 0,
+                "legs_lost": 0,
+                "leg_diff": 0
+            }
+
+    for m in matches:
+        if is_doubles:
+            # TEAM LOGICA
+            if not m.team1 or not m.team2:
+                session.refresh(m, ["team1", "team2"])
+            id_1, name_1 = m.team1_id, m.team1.name if m.team1 else "Team ?"
+            id_2, name_2 = m.team2_id, m.team2.name if m.team2 else "Team ?"
+        else:
+            # SPELER LOGICA
+            if not m.player1 or not m.player2:
+                session.refresh(m, ["player1", "player2"])
+            id_1, name_1 = m.player1_id, m.player1.name if m.player1 else "Player ?"
+            id_2, name_2 = m.player2_id, m.player2.name if m.player2 else "Player ?"
+
+        if not id_1 or not id_2: continue
+
+        init_entity(m.poule_number, id_1, name_1)
+        init_entity(m.poule_number, id_2, name_2)
+
+        stats_1 = raw_standings[m.poule_number][id_1]
+        stats_2 = raw_standings[m.poule_number][id_2]
+
+        stats_1["played"] += 1
+        stats_2["played"] += 1
+        stats_1["legs_won"] += m.score_p1
+        stats_1["legs_lost"] += m.score_p2
+        stats_2["legs_won"] += m.score_p2
+        stats_2["legs_lost"] += m.score_p1
+
+        if m.score_p1 > m.score_p2:
+            stats_1["points"] += 1
+        else:
+            stats_2["points"] += 1
+
+    final_standings = {}
+    for p_num in range(1, tournament.number_of_poules + 1):
+        if p_num in raw_standings:
+            poule_list = list(raw_standings[p_num].values())
+            for p in poule_list:
+                p["leg_diff"] = p["legs_won"] - p["legs_lost"]
+            # Sorteer: Punten > Saldo > Voor
+            poule_list.sort(key=lambda x: (x["points"], x["leg_diff"], x["legs_won"]), reverse=True)
+            final_standings[p_num] = poule_list
+        else:
+            final_standings[p_num] = []
+
+    return final_standings
+
+
+# HIER IS DE FUNCTIE WAAR DE ERROR OVER KLAAGDE
+def generate_knockout_bracket(session: Session, tournament: Tournament):
+    """
+    Genereert bracket op basis van standings voor Singles én Doubles.
+    """
+    standings = calculate_poule_standings(session, tournament)
+    is_doubles = tournament.mode == "doubles"
+
+    # Verzamel Qualifiers
+    qualifiers = []
+    q_per_poule = tournament.qualifiers_per_poule if tournament.qualifiers_per_poule else 2
+    
+    for p_num in range(1, tournament.number_of_poules + 1):
+        poule_list = standings.get(p_num, [])
+        top_x = poule_list[:q_per_poule]
+        qualifiers.extend(top_x)
+
+    if not qualifiers:
+        print("Geen qualifiers. Zijn poules gespeeld?")
+        return
+
+    # Bracket Grootte (Macht van 2)
+    count = len(qualifiers)
+    bracket_size = 2
+    while bracket_size < count:
+        bracket_size *= 2
+    
+    qualified_ids = [q["id"] for q in qualifiers]
+    
+    # Byes toevoegen
+    while len(qualified_ids) < bracket_size:
+        qualified_ids.append(None)
+
+    # Husselen (Simple Seeding)
+    random.shuffle(qualified_ids)
+    
+    # Matches aanmaken
+    matches_in_first_round = bracket_size // 2
+    current_round = 1 
+    
+    for i in range(matches_in_first_round):
+        p1_id = qualified_ids[i * 2]
+        p2_id = qualified_ids[i * 2 + 1]
+        
+        match = Match(
+            tournament_id=tournament.id,
+            round_number=current_round,
+            poule_number=None, # KO Match
+            best_of_legs=tournament.starting_legs_ko,
+            best_of_sets=tournament.sets_per_match,
+            is_completed=False,
+            score_p1=0,
+            score_p2=0
+        )
+        
+        # KOPPEL JUISTE KOLOMMEN
+        if is_doubles:
+            match.team1_id = p1_id
+            match.team2_id = p2_id
+            # Bye logica
+            if p2_id is None and p1_id is not None:
+                match.score_p1 = math.ceil(tournament.starting_legs_ko / 2) + 1
+                match.is_completed = True
+            if p1_id is None:
+                match.is_completed = True
+        else: # Singles
+            match.player1_id = p1_id
+            match.player2_id = p2_id
+            # Bye logica
+            if p2_id is None and p1_id is not None:
+                match.score_p1 = math.ceil(tournament.starting_legs_ko / 2) + 1
+                match.is_completed = True
+            if p1_id is None:
+                match.is_completed = True
+
+        session.add(match)
+    
+    session.commit()
+    print(f"Knockout (Teams/Singles) gegenereerd: {matches_in_first_round} wedstrijden.")
+
+
+def check_and_advance_knockout(tournament_id: int, current_round: int, session: Session):
+    """
+    Checkt of ronde klaar is en genereert de volgende.
+    Werkt nu ook voor TEAMS.
+    """
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament: return
+    is_doubles = tournament.mode == "doubles"
+
+    matches = session.exec(
+        select(Match)
+        .where(Match.tournament_id == tournament_id)
+        .where(Match.round_number == current_round)
+        .where(Match.poule_number == None) 
     ).all()
     
-    # 2. Bereken statistieken per speler
-    stats = {} 
+    if not matches: return 
+    if not all(m.is_completed for m in matches): return 
+
+    # Check of volgende ronde al bestaat
+    next_round = current_round + 1
+    existing = session.exec(select(Match).where(Match.tournament_id==tournament_id).where(Match.round_number==next_round).where(Match.poule_number==None)).first()
+    if existing: return
+
+    # Sorteer op ID om bracket structuur te behouden
+    matches.sort(key=lambda m: m.id)
     
-    for m in matches:
-        if not m.is_completed:
-            continue
-            
-        p1, p2 = m.player1_id, m.player2_id
-        # Init stats als ze nog niet bestaan
-        if p1 not in stats: stats[p1] = {'id': p1, 'w': 0, 'pts': 0, 'ld': 0, 'poule': m.poule_number}
-        if p2 not in stats: stats[p2] = {'id': p2, 'w': 0, 'pts': 0, 'ld': 0, 'poule': m.poule_number}
+    next_round_count = len(matches) // 2
+    if next_round_count < 1:
+        print("Toernooi afgelopen.")
+        return
+
+    new_matches = []
+    for i in range(next_round_count):
+        m1 = matches[i * 2]
+        m2 = matches[i * 2 + 1]
         
-        # Leg Difference (Saldo)
-        stats[p1]['ld'] += (m.score_p1 - m.score_p2)
-        stats[p2]['ld'] += (m.score_p2 - m.score_p1)
-        
-        # Punten (2 voor winst)
-        if m.score_p1 > m.score_p2:
-            stats[p1]['w'] += 1
-            stats[p1]['pts'] += 2
+        # Bepaal winnaars
+        if is_doubles:
+            w1 = m1.team1_id if m1.score_p1 > m1.score_p2 else m1.team2_id
+            w2 = m2.team1_id if m2.score_p1 > m2.score_p2 else m2.team2_id
         else:
-            stats[p2]['w'] += 1
-            stats[p2]['pts'] += 2
-
-    # 3. Groepeer per poule en sorteer DAARBINNEN
-    poules_map = {}
-    for pid, data in stats.items():
-        p_num = data['poule']
-        if p_num not in poules_map: poules_map[p_num] = []
-        poules_map[p_num].append(data)
-        
-    for p_num in poules_map:
-        # Sorteren: Meeste punten -> Hoogste saldo -> Meeste winstpartijen
-        poules_map[p_num].sort(key=lambda x: (x['pts'], x['ld'], x['w']), reverse=True)
-
-    # 4. Global Seeding (Buckets maken)
-    # We zetten alle nummers 1 bij elkaar, alle nummers 2 bij elkaar, etc.
-    limit = tournament.qualifiers_per_poule
-    ranked_buckets = [[] for _ in range(limit)]
-    
-    sorted_poule_numbers = sorted(poules_map.keys())
-    
-    for p_num in sorted_poule_numbers:
-        players_in_poule = poules_map[p_num]
-        for rank_idx in range(min(len(players_in_poule), limit)):
-            ranked_buckets[rank_idx].append(players_in_poule[rank_idx])
-
-    # Sorteer nu de buckets zelf (zodat de Beste #1 bovenaan staat)
-    for bucket in ranked_buckets:
-        bucket.sort(key=lambda x: (x['pts'], x['ld'], x['w']), reverse=True)
-
-    # 5. Maak één lange ranglijst (Flatten)
-    final_seed_list = []
-    for bucket in ranked_buckets:
-        for p_data in bucket:
-            final_seed_list.append(p_data['id'])
+            w1 = m1.player1_id if m1.score_p1 > m1.score_p2 else m1.player2_id
+            w2 = m2.player1_id if m2.score_p1 > m2.score_p2 else m2.player2_id
             
-    if not final_seed_list:
-        return 
-
-    # --- NIEUWE LOGICA: Check op Byes ---
-    if not tournament.allow_byes:
-        num_qualifiers = len(final_seed_list)
-        # Bereken de grootste macht van 2 die in het aantal past (Floor)
-        # Voorbeeld: 10 spelers -> log2(10)=3.32 -> floor=3 -> 2^3 = 8 spelers.
-        # Voorbeeld: 7 spelers -> log2(7)=2.8 -> floor=2 -> 2^2 = 4 spelers.
-        power_of_two = math.floor(math.log2(num_qualifiers))
-        target_size = 2 ** power_of_two
+        new_match = Match(
+            tournament_id=tournament_id,
+            round_number=next_round,
+            poule_number=None,
+            best_of_legs=tournament.starting_legs_ko,
+            best_of_sets=tournament.sets_per_match,
+            is_completed=False,
+            score_p1=0, score_p2=0
+        )
         
-        # Als we minder dan 2 spelers overhouden, is er geen KO mogelijk
-        if target_size < 2:
-             # Fallback: doe niets of pak minimaal 2 als die er zijn
-             pass 
-        elif target_size < num_qualifiers:
-            # We snijden de lijst af. Omdat de lijst al gesorteerd is op sterkte,
-            # vallen automatisch de zwakste qualifiers af.
-            final_seed_list = final_seed_list[:target_size]
-
-    # 6. Bracket Grootte Berekenen (Macht van 2)
-    num_qualifiers = len(final_seed_list)
-    # Zoekt de eerstvolgende macht van 2 (bijv 10 spelers -> 16 bracket size)
-    bracket_size = 2 ** math.ceil(math.log2(num_qualifiers))
-    
-    # Vul aan met None (dit zijn de Byes)
-    padded_players = list(final_seed_list)
-    while len(padded_players) < bracket_size:
-        padded_players.append(None)
-
-    # 7. Wedstrijden Genereren (Hoogste Seed vs Laagste Seed)
-    knockout_matches = []
-    half_size = bracket_size // 2
-    
-    for i in range(half_size):
-        # Seed 1 speelt tegen Seed 16 (of Bye), Seed 2 tegen 15, etc.
-        p1_id = padded_players[i]
-        p2_id = padded_players[bracket_size - 1 - i]
-        
-        if p1_id and p2_id:
-            # Echte wedstrijd (Speler vs Speler)
-            match = _create_ko_match(tournament, p1_id, p2_id)
-            knockout_matches.append(match)
+        if is_doubles:
+            new_match.team1_id = w1
+            new_match.team2_id = w2
+        else:
+            new_match.player1_id = w1
+            new_match.player2_id = w2
             
-        elif p1_id and p2_id is None:
-            # Speler vs Bye -> We maken een wedstrijd die DIRECT AFGEROND is.
-            # Hierdoor verschijnt hij in de bracket als gewonnen en gaat de speler door.
-            bye_match = Match(
-                tournament_id=tournament.id,
-                round_number=1,
-                poule_number=None,
-                player1_id=p1_id,
-                player2_id=None, # Geen tegenstander
-                score_p1=tournament.starting_legs_ko, # Automatische winst score
-                score_p2=0,
-                is_completed=True, # Direct klaar!
-                best_of_legs=tournament.starting_legs_ko,
-                best_of_sets=tournament.sets_per_match
-            )
-            knockout_matches.append(bye_match)
-
-    session.add_all(knockout_matches)
+        new_matches.append(new_match)
+        
+    session.add_all(new_matches)
     session.commit()
+    print(f"Ronde {next_round} gegenereerd.")
 
 
-# --- ALGEMENE KNOCKOUT HELPERS ---
+# ==========================================
+# 3. DIRECT KNOCKOUT & HELPERS
+# ==========================================
 
 def generate_knockout(
     tournament_id: int, 
@@ -2058,27 +2322,19 @@ def generate_knockout(
     sets_best_of: int,
     session: Session
 ):
-    """
-    Direct Knockout generator (zonder poules vooraf).
-    """
-    import random
+    """Direct Knockout generator (Oud, voor Singles zonder poules)."""
     random.shuffle(players)
     
-    # Hack: we maken een fake tournament object om _create_bracket_matches te hergebruiken
-    # zonder dat we het hele object uit de DB hoeven te halen.
     class FakeTournament:
         id = tournament_id
         starting_legs_ko = legs_best_of
         sets_per_match = sets_best_of
         
     fake_tourn = FakeTournament()
-    
     player_ids = [p.id for p in players]
     _create_bracket_matches(fake_tourn, player_ids, session)
 
-
 def _create_bracket_matches(tournament, player_ids, session):
-    """Generieke bracket generator"""
     n = len(player_ids)
     bracket_size = 1
     while bracket_size < n:
@@ -2099,7 +2355,6 @@ def _create_bracket_matches(tournament, player_ids, session):
     session.add_all(matches)
     session.commit()
 
-
 def _create_ko_match(tournament, p1_id, p2_id):
     return Match(
         tournament_id=tournament.id,
@@ -2112,114 +2367,21 @@ def _create_ko_match(tournament, p1_id, p2_id):
         is_completed=False
     )
 
-def check_and_advance_knockout(tournament_id: int, current_round: int, session: Session):
-    """
-    Checkt of een knockout ronde compleet is. 
-    Zo ja: Genereert de volgende ronde.
-    """
-    # 1. Haal alle wedstrijden van deze ronde op
-    matches = session.exec(
-        select(Match)
-        .where(Match.tournament_id == tournament_id)
-        .where(Match.round_number == current_round)
-        .where(Match.poule_number == None) 
-    ).all()
-    
-    if not matches:
-        return
-
-    # 2. Check of ALLES compleet is
-    if not all(m.is_completed for m in matches):
-        return # Nog niet iedereen is klaar
-
-    # --- NIEUWE CHECK: Bestaat de volgende ronde al? ---
-    # Dit voorkomt dat we dubbele wedstrijden aanmaken als je per ongeluk 2x opslaat.
-    next_round = current_round + 1
-    existing_next_round = session.exec(
-        select(Match)
-        .where(Match.tournament_id == tournament_id)
-        .where(Match.round_number == next_round)
-        .where(Match.poule_number == None)
-    ).first()
-    
-    if existing_next_round:
-        print(f"Ronde {next_round} bestaat al, we genereren niets nieuws.")
-        return
-    # ---------------------------------------------------
-
-    print(f"--- Ronde {current_round} compleet! Genereren Ronde {current_round + 1} ---")
-
-    # 3. Verzamel winnaars
-    matches.sort(key=lambda x: x.id)
-    
-    winners = []
-    for m in matches:
-        if m.score_p1 > m.score_p2:
-            winners.append(m.player1_id)
-        else:
-            winners.append(m.player2_id)
-            
-    # Als er maar 1 winnaar over is, is het toernooi klaar!
-    if len(winners) < 2:
-        print(f"Toernooi {tournament_id} is afgelopen. Winnaar ID: {winners[0]}")
-        t = session.get(Tournament, tournament_id)
-        if t:
-            t.status = "finished"
-            session.add(t)
-            session.commit()
-        return
-
-    # 4. Maak wedstrijden voor de volgende ronde
-    t = session.get(Tournament, tournament_id)
-    legs = t.starting_legs_ko if t else 5
-    sets = t.sets_per_match if t else 1
-    
-    new_matches = []
-    for i in range(0, len(winners), 2):
-        p1 = winners[i]
-        p2 = winners[i+1]
-        
-        new_match = Match(
-            tournament_id=tournament_id,
-            round_number=next_round,
-            poule_number=None,
-            player1_id=p1,
-            player2_id=p2,
-            score_p1=0,
-            score_p2=0,
-            is_completed=False,
-            best_of_legs=legs,
-            best_of_sets=sets
-        )
-        new_matches.append(new_match)
-        
-    session.add_all(new_matches)
-    session.commit()
+# ==========================================
+# 4. TEAM HELPERS
+# ==========================================
 
 def create_random_teams(tournament_id: int, player_ids: list[int], session: Session):
-    """
-    Eis 1: Automatisch team systeem (Random).
-    Eis 3: Automatische naamgeving.
-    """
-    # 1. Spelers ophalen
     players = session.exec(select(Player).where(Player.id.in_(player_ids))).all()
-    
     if len(players) % 2 != 0:
         raise ValueError("Aantal spelers moet even zijn voor koppels!")
 
-    # 2. Husselen
     random.shuffle(players)
-
     teams = []
-    # 3. Koppels maken (per 2)
     for i in range(0, len(players), 2):
         p1 = players[i]
         p2 = players[i+1]
-
-        # Eis 3: Automatische naam
-        # Bijv: "Van Gerwen & Van Barneveld"
         team_name = f"{p1.last_name or p1.first_name} & {p2.last_name or p2.first_name}"
-
         team = Team(name=team_name, tournament_id=tournament_id)
         team.players = [p1, p2]
         session.add(team)
@@ -2229,30 +2391,88 @@ def create_random_teams(tournament_id: int, player_ids: list[int], session: Sess
     return teams
 
 def create_manual_team(tournament_id: int, player_ids: list[int], custom_name: str | None, session: Session):
-    """
-    Eis 2: Vrije keuze team samenstelling.
-    Eis 3: Team naam keuze (met fallback).
-    """
     players = session.exec(select(Player).where(Player.id.in_(player_ids))).all()
-    
     if not players:
         raise ValueError("Geen geldige spelers geselecteerd")
 
-    # Eis 3: Naam logica
     if custom_name and custom_name.strip() != "":
         final_name = custom_name
     else:
-        # Fallback: namen aan elkaar plakken
         names = [p.last_name or p.first_name for p in players]
         final_name = " & ".join(names)
 
     team = Team(name=final_name, tournament_id=tournament_id)
     team.players = players
-    
     session.add(team)
     session.commit()
     session.refresh(team)
     return team
+
+def assign_referees(matches: List[Match], participants: List[Any], is_doubles: bool):
+    """
+    Assigns referees to a list of matches ensuring:
+    1. Equal distribution (everyone refs same amount).
+    2. Spacing (try not to ref immediately after playing).
+    """
+    if len(participants) < 3:
+        return # Not enough people to have a referee
+
+    # Track how many times each entity has refereed
+    ref_counts = {p.id: 0 for p in participants}
+    
+    # Track the last match index where an entity was involved (playing or reffing)
+    # Used to calculate 'rest' periods. Initialize to -1.
+    last_active_index = {p.id: -1 for p in participants}
+
+    for i, match in enumerate(matches):
+        # 1. Identify who is playing
+        if is_doubles:
+            p1_id = match.team1_id
+            p2_id = match.team2_id
+        else:
+            p1_id = match.player1_id
+            p2_id = match.player2_id
+
+        # Update activity for players (they are busy playing this match)
+        if p1_id: last_active_index[p1_id] = i
+        if p2_id: last_active_index[p2_id] = i
+
+        # 2. Find Candidates (Everyone in poule NOT playing this match)
+        candidates = [p for p in participants if p.id not in (p1_id, p2_id)]
+
+        if not candidates:
+            continue
+
+        # 3. Scoring Algorithm
+        # We want the candidate with the LOWEST ref_count.
+        # Tie-breaker: The one who has been inactive the longest
+        def get_score(candidate):
+            count = ref_counts[candidate.id]
+            
+            # Calculate gap since last activity
+            last_idx = last_active_index[candidate.id]
+            gap = i - last_idx if last_idx != -1 else 999 
+            
+            # Score = (Count * 100) - Gap
+            return (count * 100) - gap
+
+        # Sort candidates by score (Lowest is best)
+        candidates.sort(key=get_score)
+        
+        if not candidates:
+            continue
+            
+        best_ref = candidates[0]
+
+        # 4. Assign
+        if is_doubles:
+            match.referee_team_id = best_ref.id
+        else:
+            match.referee_id = best_ref.id
+
+        # 5. Update Tracking
+        ref_counts[best_ref.id] += 1
+        last_active_index[best_ref.id] = i
 
 ==================================================
 FILE: backend/app\services\__init__.py
@@ -2713,22 +2933,109 @@ FILE: frontend/src\pages\SystemLogs.tsx
 FILE: frontend/src\pages\admin\Changelog.tsx
 ==================================================
 
-import { useEffect, useState } from 'react';
-import ReactMarkdown from 'react-markdown';
+import React, { useEffect, useState } from 'react';
+import api from '../../services/api';
 import AdminLayout from '../../components/layout/AdminLayout';
-// Import the changelog file from the root folder
-// The ?raw tells Vite to import it as text, not code
-import changelogPath from '../../../../CHANGELOG.md?raw'; 
+import { Tag, Calendar, AlertCircle, Wrench, Sparkles, GitCommit, Loader2 } from 'lucide-react';
+
+type ChangeType = 'feat' | 'fix' | 'chore' | 'refactor' | 'docs' | 'perf' | 'revert' | 'unknown';
+
+interface Change {
+  type: ChangeType;
+  text: string;
+  hash?: string; 
+  link?: string; 
+}
+
+interface Release {
+  version: string;
+  date: string;
+  description?: string;
+  changes: Change[];
+}
+
+const ChangeBadge = ({ type }: { type: string }) => {
+  switch (type) {
+    case 'feat':
+      return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-green-100 text-green-700 uppercase tracking-wide border border-green-200">Feat</span>;
+    case 'fix':
+      return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-700 uppercase tracking-wide border border-red-200">Fix</span>;
+    case 'docs':
+      return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-yellow-100 text-yellow-700 uppercase tracking-wide border border-yellow-200">Docs</span>;
+    default:
+      return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-gray-100 text-gray-600 uppercase tracking-wide border border-gray-200">{type}</span>;
+  }
+};
 
 const Changelog = () => {
+  const [releases, setReleases] = useState<Release[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    api.get('/system/changelog')
+       .then(res => setReleases(res.data))
+       .catch(err => console.error(err))
+       .finally(() => setLoading(false));
+  }, []);
+
   return (
     <AdminLayout>
-      <div className="max-w-4xl mx-auto bg-white p-8 rounded-lg shadow min-h-[500px]">
-        <h1 className="text-3xl font-bold mb-6 border-b pb-4 text-gray-800">System Updates</h1>
-        <div className="prose prose-blue max-w-none text-gray-700">
-           {/* This renders the markdown text as HTML */}
-          <ReactMarkdown>{changelogPath}</ReactMarkdown>
+      <div className="max-w-5xl mx-auto py-8 px-4 sm:px-6 lg:px-8">
+        
+        <div className="mb-10 border-b pb-6">
+          <h1 className="text-3xl font-bold text-gray-900">Project Geschiedenis</h1>
+          <p className="text-gray-500 mt-2">Een overzicht van alle updates, verbeteringen en fixes.</p>
         </div>
+
+        {loading ? (
+            <div className="flex justify-center py-20"><Loader2 className="animate-spin text-blue-600" size={32} /></div>
+        ) : (
+            <div className="space-y-8 relative before:absolute before:inset-0 before:ml-5 before:-translate-x-px md:before:mx-auto md:before:translate-x-0 before:h-full before:w-0.5 before:bg-gradient-to-b before:from-transparent before:via-gray-300 before:to-transparent">
+            
+            {releases.map((release, index) => (
+                <div key={index} className="relative flex items-center justify-between md:justify-normal md:odd:flex-row-reverse group is-active">
+                    
+                    {/* ICON BOLLETJE */}
+                    <div className="flex items-center justify-center w-10 h-10 rounded-full border-4 border-white bg-gray-100 group-hover:bg-blue-500 group-hover:text-white text-gray-500 shadow shrink-0 md:order-1 md:group-odd:-translate-x-1/2 md:group-even:translate-x-1/2 transition-colors">
+                        <Tag size={18} />
+                    </div>
+                    
+                    {/* KAARTJE */}
+                    <div className="w-[calc(100%-4rem)] md:w-[calc(50%-2.5rem)] bg-white p-6 rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-all">
+                        
+                        {/* HEADER VAN DE KAART */}
+                        <div className="flex items-center justify-between mb-4">
+                            <h3 className="font-bold text-gray-800 text-lg flex items-center gap-2">
+                                v{release.version}
+                            </h3>
+                            <time className="font-mono text-xs text-gray-400 flex items-center gap-1">
+                                <Calendar size={12}/> {release.date}
+                            </time>
+                        </div>
+
+                        {/* LIJST MET CHANGES */}
+                        <ul className="space-y-3">
+                            {release.changes.map((change, i) => (
+                                <li key={i} className="text-sm text-gray-600 flex items-start gap-3">
+                                    <div className="shrink-0 mt-0.5">
+                                        <ChangeBadge type={change.type} />
+                                    </div>
+                                    <div className="flex-1 leading-relaxed">
+                                        {change.text}
+                                    </div>
+                                    {change.hash && (
+                                        <a href={change.link || "#"} target="_blank" rel="noreferrer" className="shrink-0 text-[10px] font-mono text-gray-400 hover:text-blue-500 flex items-center mt-0.5">
+                                            <GitCommit size={10} className="mr-0.5"/> {change.hash.substring(0,6)}
+                                        </a>
+                                    )}
+                                </li>
+                            ))}
+                        </ul>
+                    </div>
+                </div>
+            ))}
+            </div>
+        )}
       </div>
     </AdminLayout>
   );
@@ -3861,28 +4168,16 @@ const ManageTournament = () => {
       if (currentTourn.public_uuid) {
           const matchesRes = await api.get(`/matches/by-tournament/${currentTourn.public_uuid}`);
           
-          // --- HIER ZIT DE FIX ---
-          // We mappen de data zodat de UI de juiste naam krijgt (Speler OF Team)
-          const processedMatches = matchesRes.data.map((m: any) => {
-              // Helper om de naam te bepalen
-              const getName = (obj: any) => obj?.name || obj?.first_name || ""; 
-              
-              // 1. Probeer speler naam. 2. Probeer team naam. 3. Leeg string (wordt Bye)
-              const p1Name = m.player1 ? getName(m.player1) : (m.team1 ? m.team1.name : "");
-              const p2Name = m.player2 ? getName(m.player2) : (m.team2 ? m.team2.name : "");
-
-              return {
-                  ...m,
-                  player1_name: p1Name,
-                  player2_name: p2Name,
-              };
-          });
-
-          setMatches(processedMatches);
-          // -----------------------
+          // --- FIX: GEBRUIK DIRECT DE DATA VAN DE BACKEND ---
+          // De backend (matches.py) heeft al bepaald of het een speler-naam of team-naam is
+          // en heeft dit in 'player1_name' en 'player2_name' gezet.
+          // We hoeven hier NIETS meer te berekenen.
           
-          if (processedMatches.length > 0) {
-              const maxRoundMatch = processedMatches.reduce((prev: any, current: any) => {
+          setMatches(matchesRes.data);
+          
+          // Open automatisch de hoogste ronde of poule fase
+          if (matchesRes.data.length > 0) {
+              const maxRoundMatch = matchesRes.data.reduce((prev: any, current: any) => {
                   return (prev.id > current.id) ? prev : current;
               });
               
@@ -4552,6 +4847,7 @@ interface Match {
   score_p2: number;
   is_completed: boolean;
   best_of_legs?: number;
+  referee_name?: string;
 }
 
 interface Tournament {
@@ -4956,6 +5252,12 @@ const TournamentView = () => {
                                     <div key={match.id} className="p-4 hover:bg-gray-50 transition-colors">
                                         <div className="flex justify-between text-xs font-bold text-gray-400 uppercase tracking-wide mb-2">
                                             <span>Ronde {match.round_number}</span>
+                                            {match.is_completed && <span className="text-green-600">Finished</span>}
+                                            {/* NEW: Referee Display */}
+                                            <span className="flex items-center gap-1 text-gray-500">
+                                                Ref: <span className="text-gray-700">{match.referee_name || "-"}</span>
+                                            </span>
+                                            
                                             {match.is_completed && <span className="text-green-600">Finished</span>}
                                         </div>
                                         <div className="flex items-center justify-between gap-2">
@@ -5388,8 +5690,10 @@ export interface Match {
     team2?: { id: number; name: string } | null;
 
 
-    player1?: Player | null; // of { name: string, ... }
+    player1?: Player | null;
     player2?: Player | null;
+
+    referee_name?: string;
 }
 
 ==================================================
