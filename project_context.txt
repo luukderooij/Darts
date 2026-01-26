@@ -363,15 +363,15 @@ import logging
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Header
 from sqlmodel import Session, select
-from sqlalchemy.orm import selectinload # <--- BELANGRIJK: Nodig om teams op te halen
+from sqlalchemy.orm import selectinload 
 
 from app.db.session import get_session
 from app.models.match import Match
 from app.models.player import Player
-from app.models.team import Team # <--- BELANGRIJK: Team import toegevoegd
+from app.models.team import Team 
 from app.models.tournament import Tournament
 from app.models.user import User
-from app.schemas.match import MatchRead, MatchScoreUpdate
+from app.schemas.match import MatchRead
 from app.api.users import get_current_user
 from app.services.tournament_gen import check_and_advance_knockout
 
@@ -392,64 +392,65 @@ def get_match_or_404(match_id: int, session: Session) -> Match:
 @router.put("/{match_id}/score", response_model=MatchRead)
 def update_match_score(
     match_id: int,
-    score_in: MatchScoreUpdate,
-    current_user: Optional[User] = Depends(get_current_user), 
-    x_scorer_token: Optional[str] = Header(None, alias="X-Scorer-Token"),
-    session: Session = Depends(get_session)
+    match_in: MatchUpdate,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user)
 ):
-    match = get_match_or_404(match_id, session)
-    tournament = session.get(Tournament, match.tournament_id)
-    
-    # Auth checks
-    is_authorized = False
-    if current_user and tournament.user_id == current_user.id:
-        is_authorized = True
-    if not is_authorized and x_scorer_token:
-        if x_scorer_token == tournament.scorer_uuid:
-            is_authorized = True
-            
-    if not is_authorized:
-         raise HTTPException(status_code=403, detail="Not authorized.")
+    match = session.get(Match, match_id)
+    if not match:
+        raise HTTPException(status_code=404, detail="Match not found")
 
-    # Update
-    match.score_p1 = score_in.score_p1
-    match.score_p2 = score_in.score_p2
-    match.is_completed = score_in.is_completed
-    
+    # --- VALIDATION LOGIC ---
+    if match.best_of_legs:
+        limit = match.best_of_legs
+        # In 'Best of 3', you win if you reach 2. (3 // 2 + 1 = 2)
+        winning_threshold = (limit // 2) + 1
+        
+        # 1. Validate Total Legs
+        # Example: Best of 3. Max score is 2-1 (Total 3). 2-2 (Total 4) is impossible.
+        if match_in.score_p1 + match_in.score_p2 > limit:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Impossible score: Total legs ({match_in.score_p1 + match_in.score_p2}) cannot exceed Best of {limit}."
+            )
+
+        # 2. Validate Individual Score
+        # Example: Best of 3. You cannot win 3-0. Max is 2.
+        if match_in.score_p1 > winning_threshold or match_in.score_p2 > winning_threshold:
+             raise HTTPException(
+                status_code=400, 
+                detail=f"Impossible score: A player cannot win more than {winning_threshold} legs in a Best of {limit} match."
+            )
+
+        # 3. Auto-Complete Logic
+        # If someone reached the threshold, the match is over.
+        if match_in.score_p1 == winning_threshold or match_in.score_p2 == winning_threshold:
+            match.is_completed = True
+        else:
+            # If no one reached the threshold, it CANNOT be finished yet.
+            match.is_completed = False
+
+    # Apply updates
+    match.score_p1 = match_in.score_p1
+    match.score_p2 = match_in.score_p2
+    # We use our calculated is_completed, ignoring the one sent by frontend if we did logic above
+    # But if best_of_legs is not set (e.g. infinite practice), we trust the input
+    if not match.best_of_legs:
+        match.is_completed = match_in.is_completed
+
     session.add(match)
     session.commit()
     session.refresh(match)
     
-    # Check knockout advance
+    # ... (Rest of the function: Check for Next Round generation) ...
+    # Make sure you keep the existing logic that checks for poule completion / knockout advancement here!
+    
+    # Logic to trigger next round if knockout match is finished...
     if match.is_completed and match.poule_number is None:
-        check_and_advance_knockout(match.tournament_id, match.round_number, session)
-    
-    # Logging
-    logger.info(f"MATCH {match.id}: {match.score_p1} - {match.score_p2}")
-    
-    # --- DATA VERRIJKING VOOR RESPONSE ---
-    # We herladen de match met relaties zodat we namen kunnen teruggeven
-    session.refresh(match, ["player1", "player2", "team1", "team2"])
-    
-    match_dict = match.model_dump()
-    
-    # Resolutie Naam 1
-    if match.player1:
-        match_dict['player1_name'] = match.player1.name 
-    elif match.team1:
-        match_dict['player1_name'] = match.team1.name
-    else:
-        match_dict['player1_name'] = "Bye"
+         # ... existing knockout logic ...
+         pass
 
-    # Resolutie Naam 2
-    if match.player2:
-        match_dict['player2_name'] = match.player2.name 
-    elif match.team2:
-        match_dict['player2_name'] = match.team2.name
-    else:
-        match_dict['player2_name'] = "Bye"
-
-    return match_dict
+    return match
 
 @router.get("/by-tournament/{public_uuid}", response_model=List[MatchRead])
 def get_matches_public(
@@ -999,11 +1000,15 @@ def read_tournaments(
 @router.get("/public/{public_uuid}", response_model=TournamentReadWithMatches)
 def read_public_tournament(public_uuid: str, session: Session = Depends(get_session)):
     # 1. Fetch tournament with matches and players
+    # We use options to efficiently load relationships in one go
     t = session.exec(
         select(Tournament)
         .where(Tournament.public_uuid == public_uuid)
         .options(
-            selectinload(Tournament.matches), 
+            selectinload(Tournament.matches).options(
+                selectinload(Match.referee),      # Load Referee Player
+                selectinload(Match.referee_team)  # Load Referee Team
+            ), 
             selectinload(Tournament.players)
         )
     ).first()
@@ -1020,6 +1025,7 @@ def read_public_tournament(public_uuid: str, session: Session = Depends(get_sess
 
     # 3. Enrich matches with names
     matches_data = []
+    # Sort matches by ID to keep order
     sorted_matches = sorted(t.matches, key=lambda m: m.id)
     
     for m in sorted_matches:
@@ -1041,6 +1047,15 @@ def read_public_tournament(public_uuid: str, session: Session = Depends(get_sess
         else:
              m_dict['player2_name'] = "Bye"
              
+        # --- NEW: Resolve Referee Name ---
+        if m.referee:
+            m_dict['referee_name'] = m.referee.name
+        elif m.referee_team:
+            m_dict['referee_name'] = m.referee_team.name
+        else:
+            m_dict['referee_name'] = "-" 
+        # ---------------------------------
+
         matches_data.append(m_dict)
 
     # 4. Build response
@@ -1772,7 +1787,7 @@ class MatchRead(BaseModel):
 
     referee_id: Optional[int] = None
     referee_team_id: Optional[int] = None
-    referee_name: Optional[str] = "TBD"  # Computed name
+    referee_name: Optional[str] = None
     
     score_p1: int
     score_p2: int
@@ -1921,12 +1936,13 @@ class TournamentRead(BaseModel):
 class MatchReadSimple(BaseModel):
     id: int
     round_number: int
-    poule_number: Optional[int] = None # <--- BELANGRIJK VOOR DE TABS
+    poule_number: Optional[int] = None
     player1_name: Optional[str] = None
     player2_name: Optional[str] = None
     score_p1: int
     score_p2: int
     is_completed: bool
+    referee_name: Optional[str] = None
 
 class TournamentReadWithMatches(TournamentRead):
     matches: List[MatchReadSimple] = []
@@ -4122,7 +4138,7 @@ import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../../services/api';
 import AdminLayout from '../../components/layout/AdminLayout';
-import { Save, RefreshCcw, ShieldAlert, Settings, ChevronDown, ChevronRight, SaveAll, GitMerge } from 'lucide-react';
+import { Save, RefreshCcw, ShieldAlert, Settings, ChevronDown, ChevronRight, SaveAll, GitMerge, Trophy } from 'lucide-react';
 import { Tournament, Match } from '../../types';
 
 interface MatchWithUI extends Match {
@@ -4168,11 +4184,6 @@ const ManageTournament = () => {
       if (currentTourn.public_uuid) {
           const matchesRes = await api.get(`/matches/by-tournament/${currentTourn.public_uuid}`);
           
-          // --- FIX: GEBRUIK DIRECT DE DATA VAN DE BACKEND ---
-          // De backend (matches.py) heeft al bepaald of het een speler-naam of team-naam is
-          // en heeft dit in 'player1_name' en 'player2_name' gezet.
-          // We hoeven hier NIETS meer te berekenen.
-          
           setMatches(matchesRes.data);
           
           // Open automatisch de hoogste ronde of poule fase
@@ -4182,7 +4193,9 @@ const ManageTournament = () => {
               });
               
               const type = maxRoundMatch.poule_number !== null ? 'P' : 'K';
-              const key = `${type}-${maxRoundMatch.round_number}`;
+              // Als het een poule is, gebruiken we poule nummer, anders ronde nummer
+              const num = maxRoundMatch.poule_number !== null ? maxRoundMatch.poule_number : maxRoundMatch.round_number;
+              const key = `${type}-${num}`;
               
               setOpenRounds((prev) => ({ ...prev, [key]: true }));
           }
@@ -4286,8 +4299,13 @@ const ManageTournament = () => {
             setMatches(prev => prev.map(m => m.id === match.id ? { ...m, save_success: false } : m));
           }, 2000);
 
-      } catch (err) {
+    } catch (err: any) {
           console.error(err);
+          
+          // Get error message from backend
+          const errorMessage = err.response?.data?.detail || "Error saving score";
+          alert(errorMessage); // <--- SHOW POPUP TO USER
+
           setMatches(prev => prev.map(m => m.id === match.id ? { ...m, is_saving: false } : m));
       }
   };
@@ -4304,23 +4322,34 @@ const ManageTournament = () => {
     if (matchCount === 2) return "Halve Finale";
     if (matchCount === 4) return "Kwartfinale";
     return `Ronde ${roundNum}`;
-};
+  };
 
+  // --- UPDATED GROUPING LOGIC ---
   const groupedMatches = matches.reduce((acc, match) => {
-    const type = match.poule_number !== null ? 'P' : 'K'; 
-    const key = `${type}-${match.round_number}`;
+    let key = '';
+    
+    // Group by Poule Number if it exists
+    if (match.poule_number !== null) {
+        key = `P-${match.poule_number}`;
+    } else {
+        // Otherwise group by Round (Knockout)
+        key = `K-${match.round_number}`;
+    }
     
     if (!acc[key]) acc[key] = [];
     acc[key].push(match);
     return acc;
   }, {} as Record<string, MatchWithUI[]>);
 
+  // Sort groups: Poules first (numeric), then Knockout (numeric)
   const sortedGroupKeys = Object.keys(groupedMatches).sort((a, b) => {
-      const [typeA, roundA] = a.split('-');
-      const [typeB, roundB] = b.split('-');
+      const [typeA, numStrA] = a.split('-');
+      const [typeB, numStrB] = b.split('-');
+      const numA = Number(numStrA);
+      const numB = Number(numStrB);
 
       if (typeA !== typeB) return typeA === 'P' ? -1 : 1;
-      return Number(roundA) - Number(roundB);
+      return numA - numB;
   });
 
   // --- RENDERING ---
@@ -4409,9 +4438,14 @@ const ManageTournament = () => {
 
         <div className="space-y-4">
             {sortedGroupKeys.map((groupKey) => {
-                const [type, roundStr] = groupKey.split('-');
-                const roundNum = Number(roundStr);
-                const roundMatches = groupedMatches[groupKey];
+                const [type, numStr] = groupKey.split('-');
+                const number = Number(numStr);
+                
+                // Sort matches inside the group: Round Number ascending, then ID
+                const roundMatches = groupedMatches[groupKey].sort((a,b) => {
+                    if (a.round_number !== b.round_number) return a.round_number - b.round_number;
+                    return a.id - b.id;
+                });
                 
                 const isOpen = openRounds[groupKey];
                 const isPoule = type === 'P';
@@ -4426,10 +4460,10 @@ const ManageTournament = () => {
                                 {isOpen ? <ChevronDown size={20} /> : <ChevronRight size={20} />}
                                 
                                 {isPoule ? (
-                                    <span>Poule Fase - Ronde {roundNum}</span>
+                                    <span className="flex items-center gap-2"><Trophy size={16} className="text-blue-500"/> Poule {number}</span>
                                 ) : (
                                     <span className="text-orange-800 flex items-center gap-2">
-                                        <GitMerge size={16}/> Knockout - {getRoundName(roundNum, roundMatches.length)}
+                                        <GitMerge size={16}/> Knockout - {getRoundName(number, roundMatches.length)}
                                     </span>
                                 )}
                                 
@@ -4438,12 +4472,13 @@ const ManageTournament = () => {
                                 </span>
                             </div>
                             
-                            {isOpen && (
+                            {/* Only show Batch Update for Knockout rounds to avoid confusion */}
+                            {isOpen && !isPoule && (
                                 <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
                                     <span className="text-xs text-gray-500 font-bold">Zet Best of:</span>
                                     <input type="number" min="1" className="w-12 text-center border rounded p-1 text-xs no-spinner" 
                                         placeholder={roundMatches[0].best_of_legs?.toString() || "5"}
-                                        onKeyDown={(e) => e.key === 'Enter' && handleBatchUpdateRound(roundNum, parseInt(e.currentTarget.value))}
+                                        onKeyDown={(e) => e.key === 'Enter' && handleBatchUpdateRound(number, parseInt(e.currentTarget.value))}
                                     />
                                 </div>
                             )}
@@ -4454,7 +4489,16 @@ const ManageTournament = () => {
                                 {roundMatches.map(match => (
                                     <div key={match.id} className={`p-3 transition-colors flex items-center justify-between ${match.save_success ? 'bg-green-50' : 'hover:bg-white'}`}>
                                         
-                                        <div className="w-8 text-xs text-gray-400 font-mono text-center">#{match.id}</div>
+                                        <div className="w-16 flex flex-col items-center justify-center gap-1 border-r border-gray-100 mr-2 pr-2">
+                                            <div className="text-xs text-gray-400 font-mono">#{match.id}</div>
+                                            
+                                            <div className="flex flex-col items-center mt-1">
+                                                <span className="text-[9px] text-gray-400 uppercase leading-none">Ref:</span>
+                                                <div className="text-[10px] text-blue-400 font-bold uppercase tracking-tighter" title={`Referee: ${match.referee_name}`}>
+                                                    {match.referee_name ? match.referee_name.split(' ')[0] : '-'}
+                                                </div>
+                                            </div>
+                                        </div>
 
                                         <div className="flex-1 flex items-center justify-center gap-2">
                                             
@@ -5309,6 +5353,7 @@ interface Match {
   player1_name: string;
   player2_name: string;
   is_completed: boolean;
+  referee_name?: string;
 }
 
 const ScorerMatchList = () => {
@@ -5392,6 +5437,12 @@ const ScorerMatchList = () => {
                 <div className="font-bold text-lg">{match.player1_name || 'Bye'}</div>
                 <div className="text-xs text-slate-400">VS</div>
                 <div className="font-bold text-lg">{match.player2_name || 'Bye'}</div>
+
+                <div className="mt-2 text-xs text-slate-500 font-mono border-t border-slate-700 pt-1 inline-block px-2">
+                        Ref: <span className="text-slate-300">{match.referee_name || "-"}</span>
+                </div>
+
+
               </div>
               
               <div className="ml-4">
@@ -5425,8 +5476,6 @@ const Scoreboard = () => {
   const navigate = useNavigate();
 
   // Game State
-  // Simplified for MVP: Just tracking legs won (Best of X)
-  // In a full app, you'd track 501 countdown here.
   const [scoreP1, setScoreP1] = useState(0);
   const [scoreP2, setScoreP2] = useState(0);
   const [isCompleted, setIsCompleted] = useState(false);
@@ -5434,8 +5483,6 @@ const Scoreboard = () => {
 
   // Load Match Data
   useEffect(() => {
-    // We fetch the match list again to find OUR match names
-    // (A dedicated single-match endpoint would be better for prod, but this works)
     api.get(`/matches/by-tournament/${scorer_uuid}`).then(res => {
       const match = res.data.find((m: any) => m.id === Number(match_id));
       if (match) {
@@ -5448,11 +5495,8 @@ const Scoreboard = () => {
   }, [scorer_uuid, match_id]);
 
   const updateScore = async (p1: number, p2: number, completed: boolean) => {
-    setScoreP1(p1);
-    setScoreP2(p2);
-    setIsCompleted(completed);
-
     try {
+      // 1. Send to Backend FIRST
       await api.put(
         `/matches/${match_id}/score`, 
         {
@@ -5461,11 +5505,27 @@ const Scoreboard = () => {
           is_completed: completed
         },
         {
-          headers: { 'X-Scorer-Token': scorer_uuid } // Auth Magic!
+          headers: { 'X-Scorer-Token': scorer_uuid }
         }
       );
-    } catch (err) {
+
+      // 2. If successful, Update UI
+      setScoreP1(p1);
+      setScoreP2(p2);
+      setIsCompleted(completed);
+
+      // 3. If we marked it as completed, go back to the list
+      if (completed) {
+        navigate(-1); 
+      }
+
+    } catch (err: any) {
       console.error("Failed to sync score");
+      
+      // 4. FEEDBACK SYSTEM: Show the backend validation error
+      // This will catch "Impossible score" errors from the Best of X logic
+      const msg = err.response?.data?.detail || "Error updating score";
+      alert("⚠️ " + msg);
     }
   };
 
@@ -5477,7 +5537,7 @@ const Scoreboard = () => {
           <ArrowLeft />
         </button>
         <span className="font-mono text-yellow-400 font-bold">MATCH {match_id}</span>
-        <div className="w-6" /> {/* Spacer */}
+        <div className="w-6" /> 
       </div>
 
       {/* Score Display */}
@@ -5523,13 +5583,14 @@ const Scoreboard = () => {
       <div className="p-6 bg-slate-900 border-t border-slate-800">
         <button 
           onClick={() => {
+            // Note: We don't manually navigate here anymore. 
+            // updateScore handles navigation on success.
             updateScore(scoreP1, scoreP2, !isCompleted);
-            if (!isCompleted) navigate(-1); // Go back if finishing
           }}
           className={`w-full py-4 rounded-xl text-xl font-bold flex items-center justify-center gap-3 transition-colors ${
             isCompleted 
-              ? 'bg-slate-700 text-slate-300' 
-              : 'bg-green-600 text-white hover:bg-green-500'
+            ? 'bg-slate-700 text-slate-300' 
+            : 'bg-green-600 text-white hover:bg-green-500'
           }`}
         >
           <Save size={24} />

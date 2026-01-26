@@ -8,8 +8,6 @@ const Scoreboard = () => {
   const navigate = useNavigate();
 
   // Game State
-  // Simplified for MVP: Just tracking legs won (Best of X)
-  // In a full app, you'd track 501 countdown here.
   const [scoreP1, setScoreP1] = useState(0);
   const [scoreP2, setScoreP2] = useState(0);
   const [isCompleted, setIsCompleted] = useState(false);
@@ -17,8 +15,6 @@ const Scoreboard = () => {
 
   // Load Match Data
   useEffect(() => {
-    // We fetch the match list again to find OUR match names
-    // (A dedicated single-match endpoint would be better for prod, but this works)
     api.get(`/matches/by-tournament/${scorer_uuid}`).then(res => {
       const match = res.data.find((m: any) => m.id === Number(match_id));
       if (match) {
@@ -31,11 +27,8 @@ const Scoreboard = () => {
   }, [scorer_uuid, match_id]);
 
   const updateScore = async (p1: number, p2: number, completed: boolean) => {
-    setScoreP1(p1);
-    setScoreP2(p2);
-    setIsCompleted(completed);
-
     try {
+      // 1. Send to Backend FIRST
       await api.put(
         `/matches/${match_id}/score`, 
         {
@@ -44,11 +37,27 @@ const Scoreboard = () => {
           is_completed: completed
         },
         {
-          headers: { 'X-Scorer-Token': scorer_uuid } // Auth Magic!
+          headers: { 'X-Scorer-Token': scorer_uuid }
         }
       );
-    } catch (err) {
+
+      // 2. If successful, Update UI
+      setScoreP1(p1);
+      setScoreP2(p2);
+      setIsCompleted(completed);
+
+      // 3. If we marked it as completed, go back to the list
+      if (completed) {
+        navigate(-1); 
+      }
+
+    } catch (err: any) {
       console.error("Failed to sync score");
+      
+      // 4. FEEDBACK SYSTEM: Show the backend validation error
+      // This will catch "Impossible score" errors from the Best of X logic
+      const msg = err.response?.data?.detail || "Error updating score";
+      alert("⚠️ " + msg);
     }
   };
 
@@ -60,7 +69,7 @@ const Scoreboard = () => {
           <ArrowLeft />
         </button>
         <span className="font-mono text-yellow-400 font-bold">MATCH {match_id}</span>
-        <div className="w-6" /> {/* Spacer */}
+        <div className="w-6" /> 
       </div>
 
       {/* Score Display */}
@@ -106,13 +115,14 @@ const Scoreboard = () => {
       <div className="p-6 bg-slate-900 border-t border-slate-800">
         <button 
           onClick={() => {
+            // Note: We don't manually navigate here anymore. 
+            // updateScore handles navigation on success.
             updateScore(scoreP1, scoreP2, !isCompleted);
-            if (!isCompleted) navigate(-1); // Go back if finishing
           }}
           className={`w-full py-4 rounded-xl text-xl font-bold flex items-center justify-center gap-3 transition-colors ${
             isCompleted 
-              ? 'bg-slate-700 text-slate-300' 
-              : 'bg-green-600 text-white hover:bg-green-500'
+            ? 'bg-slate-700 text-slate-300' 
+            : 'bg-green-600 text-white hover:bg-green-500'
           }`}
         >
           <Save size={24} />

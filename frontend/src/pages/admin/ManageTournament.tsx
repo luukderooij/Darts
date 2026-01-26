@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../../services/api';
 import AdminLayout from '../../components/layout/AdminLayout';
-import { Save, RefreshCcw, ShieldAlert, Settings, ChevronDown, ChevronRight, SaveAll, GitMerge } from 'lucide-react';
+import { Save, RefreshCcw, ShieldAlert, Settings, ChevronDown, ChevronRight, SaveAll, GitMerge, Trophy } from 'lucide-react';
 import { Tournament, Match } from '../../types';
 
 interface MatchWithUI extends Match {
@@ -57,7 +57,9 @@ const ManageTournament = () => {
               });
               
               const type = maxRoundMatch.poule_number !== null ? 'P' : 'K';
-              const key = `${type}-${maxRoundMatch.round_number}`;
+              // Als het een poule is, gebruiken we poule nummer, anders ronde nummer
+              const num = maxRoundMatch.poule_number !== null ? maxRoundMatch.poule_number : maxRoundMatch.round_number;
+              const key = `${type}-${num}`;
               
               setOpenRounds((prev) => ({ ...prev, [key]: true }));
           }
@@ -161,8 +163,13 @@ const ManageTournament = () => {
             setMatches(prev => prev.map(m => m.id === match.id ? { ...m, save_success: false } : m));
           }, 2000);
 
-      } catch (err) {
+    } catch (err: any) {
           console.error(err);
+          
+          // Get error message from backend
+          const errorMessage = err.response?.data?.detail || "Error saving score";
+          alert(errorMessage); // <--- SHOW POPUP TO USER
+
           setMatches(prev => prev.map(m => m.id === match.id ? { ...m, is_saving: false } : m));
       }
   };
@@ -181,21 +188,32 @@ const ManageTournament = () => {
     return `Ronde ${roundNum}`;
   };
 
+  // --- UPDATED GROUPING LOGIC ---
   const groupedMatches = matches.reduce((acc, match) => {
-    const type = match.poule_number !== null ? 'P' : 'K'; 
-    const key = `${type}-${match.round_number}`;
+    let key = '';
+    
+    // Group by Poule Number if it exists
+    if (match.poule_number !== null) {
+        key = `P-${match.poule_number}`;
+    } else {
+        // Otherwise group by Round (Knockout)
+        key = `K-${match.round_number}`;
+    }
     
     if (!acc[key]) acc[key] = [];
     acc[key].push(match);
     return acc;
   }, {} as Record<string, MatchWithUI[]>);
 
+  // Sort groups: Poules first (numeric), then Knockout (numeric)
   const sortedGroupKeys = Object.keys(groupedMatches).sort((a, b) => {
-      const [typeA, roundA] = a.split('-');
-      const [typeB, roundB] = b.split('-');
+      const [typeA, numStrA] = a.split('-');
+      const [typeB, numStrB] = b.split('-');
+      const numA = Number(numStrA);
+      const numB = Number(numStrB);
 
       if (typeA !== typeB) return typeA === 'P' ? -1 : 1;
-      return Number(roundA) - Number(roundB);
+      return numA - numB;
   });
 
   // --- RENDERING ---
@@ -284,9 +302,14 @@ const ManageTournament = () => {
 
         <div className="space-y-4">
             {sortedGroupKeys.map((groupKey) => {
-                const [type, roundStr] = groupKey.split('-');
-                const roundNum = Number(roundStr);
-                const roundMatches = groupedMatches[groupKey];
+                const [type, numStr] = groupKey.split('-');
+                const number = Number(numStr);
+                
+                // Sort matches inside the group: Round Number ascending, then ID
+                const roundMatches = groupedMatches[groupKey].sort((a,b) => {
+                    if (a.round_number !== b.round_number) return a.round_number - b.round_number;
+                    return a.id - b.id;
+                });
                 
                 const isOpen = openRounds[groupKey];
                 const isPoule = type === 'P';
@@ -301,10 +324,10 @@ const ManageTournament = () => {
                                 {isOpen ? <ChevronDown size={20} /> : <ChevronRight size={20} />}
                                 
                                 {isPoule ? (
-                                    <span>Poule Fase - Ronde {roundNum}</span>
+                                    <span className="flex items-center gap-2"><Trophy size={16} className="text-blue-500"/> Poule {number}</span>
                                 ) : (
                                     <span className="text-orange-800 flex items-center gap-2">
-                                        <GitMerge size={16}/> Knockout - {getRoundName(roundNum, roundMatches.length)}
+                                        <GitMerge size={16}/> Knockout - {getRoundName(number, roundMatches.length)}
                                     </span>
                                 )}
                                 
@@ -313,12 +336,13 @@ const ManageTournament = () => {
                                 </span>
                             </div>
                             
-                            {isOpen && (
+                            {/* Only show Batch Update for Knockout rounds to avoid confusion */}
+                            {isOpen && !isPoule && (
                                 <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
                                     <span className="text-xs text-gray-500 font-bold">Zet Best of:</span>
                                     <input type="number" min="1" className="w-12 text-center border rounded p-1 text-xs no-spinner" 
                                         placeholder={roundMatches[0].best_of_legs?.toString() || "5"}
-                                        onKeyDown={(e) => e.key === 'Enter' && handleBatchUpdateRound(roundNum, parseInt(e.currentTarget.value))}
+                                        onKeyDown={(e) => e.key === 'Enter' && handleBatchUpdateRound(number, parseInt(e.currentTarget.value))}
                                     />
                                 </div>
                             )}
