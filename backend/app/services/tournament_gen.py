@@ -1,5 +1,6 @@
 import math
 import random
+import functools
 from typing import List, Dict, Any
 from sqlmodel import Session, select
 from app.models.match import Match
@@ -118,6 +119,11 @@ def _create_round_robin_matches(
 
 # backend/app/services/tournament_gen.py
 
+import functools
+# Voeg functools toe aan de imports bovenin backend/app/services/tournament_gen.py
+
+# backend/app/services/tournament_gen.py
+
 def calculate_poule_standings(session: Session, tournament: Tournament) -> Dict[int, List[dict]]:
     """
     Berekent de stand per poule volgens Order of Merit Rules:
@@ -132,6 +138,7 @@ def calculate_poule_standings(session: Session, tournament: Tournament) -> Dict[
 
     is_doubles = tournament.mode == "doubles"
     raw_standings = {} 
+    h2h_winners = {} 
 
     def init_entity(poule_num, entity_id, entity_name):
         if poule_num not in raw_standings:
@@ -140,24 +147,23 @@ def calculate_poule_standings(session: Session, tournament: Tournament) -> Dict[
             raw_standings[poule_num][entity_id] = {
                 "id": entity_id,
                 "name": entity_name,
-                "points": 0,      # Wordt nu +2 per winst
+                "points": 0,
                 "played": 0,
                 "legs_won": 0,
                 "legs_lost": 0,
-                "leg_diff": 0
+                "leg_diff": 0,
+                "needs_shootout": False  # Nieuwe vlag voor stap 3
             }
 
     for m in matches:
         if is_doubles:
-            if not m.team1 or not m.team2:
-                session.refresh(m, ["team1", "team2"])
-            id_1, name_1 = m.team1_id, m.team1.name if m.team1 else "Team ?"
-            id_2, name_2 = m.team2_id, m.team2.name if m.team2 else "Team ?"
+            if not m.team1 or not m.team2: session.refresh(m, ["team1", "team2"])
+            id_1, id_2 = m.team1_id, m.team2_id
+            name_1, name_2 = (m.team1.name if m.team1 else "Team ?"), (m.team2.name if m.team2 else "Team ?")
         else:
-            if not m.player1 or not m.player2:
-                session.refresh(m, ["player1", "player2"])
-            id_1, name_1 = m.player1_id, m.player1.name if m.player1 else "Player ?"
-            id_2, name_2 = m.player2_id, m.player2.name if m.player2 else "Player ?"
+            if not m.player1 or not m.player2: session.refresh(m, ["player1", "player2"])
+            id_1, id_2 = m.player1_id, m.player2_id
+            name_1, name_2 = (m.player1.name if m.player1 else "Player ?"), (m.player2.name if m.player2 else "Player ?")
 
         if not id_1 or not id_2: continue
 
@@ -174,11 +180,28 @@ def calculate_poule_standings(session: Session, tournament: Tournament) -> Dict[
         stats_2["legs_won"] += m.score_p2
         stats_2["legs_lost"] += m.score_p1
 
-        # STAP 1 FIX: Punten naar 2 per winst 
+        winner_id = id_1 if m.score_p1 > m.score_p2 else id_2
         if m.score_p1 > m.score_p2:
             stats_1["points"] += 2
         else:
             stats_2["points"] += 2
+            
+        pair = tuple(sorted([id_1, id_2]))
+        h2h_winners[(m.poule_number, pair)] = winner_id
+
+    def compare_entities(a, b, poule_num):
+        # 1. Punten
+        if a["points"] != b["points"]:
+            return a["points"] - b["points"]
+        # 2. Leg Difference
+        if a["leg_diff"] != b["leg_diff"]:
+            return a["leg_diff"] - b["leg_diff"]
+        # 3. Head-to-Head
+        pair = tuple(sorted([a["id"], b["id"]]))
+        winner_id = h2h_winners.get((poule_num, pair))
+        if winner_id == a["id"]: return 1
+        if winner_id == b["id"]: return -1
+        return 0
 
     final_standings = {}
     for p_num in range(1, tournament.number_of_poules + 1):
@@ -187,9 +210,16 @@ def calculate_poule_standings(session: Session, tournament: Tournament) -> Dict[
             for p in poule_list:
                 p["leg_diff"] = p["legs_won"] - p["legs_lost"]
             
-            # Sortering op Punten en Leg-Difference 
-            # Head-to-Head komt in de volgende stap als extra sorteer-pass
-            poule_list.sort(key=lambda x: (x["points"], x["leg_diff"]), reverse=True)
+            # Sortering uitvoeren
+            poule_list.sort(key=functools.cmp_to_key(lambda a, b: compare_entities(a, b, p_num)), reverse=True)
+
+            # STAP 3 FIX: Controleer op onbesliste standen (Shoot-out nodig)
+            for i in range(len(poule_list) - 1):
+                # Als de comparator 0 teruggeeft tussen twee opeenvolgende spelers in de lijst
+                if compare_entities(poule_list[i], poule_list[i+1], p_num) == 0:
+                    poule_list[i]["needs_shootout"] = True
+                    poule_list[i+1]["needs_shootout"] = True
+
             final_standings[p_num] = poule_list
         else:
             final_standings[p_num] = []
