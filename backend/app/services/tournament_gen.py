@@ -116,9 +116,12 @@ def _create_round_robin_matches(
 # 2. NIEUWE KNOCKOUT LOGICA (TEAMS + SINGLES)
 # ==========================================
 
+# backend/app/services/tournament_gen.py
+
 def calculate_poule_standings(session: Session, tournament: Tournament) -> Dict[int, List[dict]]:
     """
-    Berekent de stand per poule. Ondersteunt nu ZOWEL Singles als Doubles.
+    Berekent de stand per poule volgens Order of Merit Rules:
+    Punten (2 per winst) -> Leg-Difference -> Head-to-Head -> 9-dart-Shoot-out.
     """
     matches = session.exec(
         select(Match)
@@ -137,7 +140,7 @@ def calculate_poule_standings(session: Session, tournament: Tournament) -> Dict[
             raw_standings[poule_num][entity_id] = {
                 "id": entity_id,
                 "name": entity_name,
-                "points": 0,
+                "points": 0,      # Wordt nu +2 per winst
                 "played": 0,
                 "legs_won": 0,
                 "legs_lost": 0,
@@ -146,13 +149,11 @@ def calculate_poule_standings(session: Session, tournament: Tournament) -> Dict[
 
     for m in matches:
         if is_doubles:
-            # TEAM LOGICA
             if not m.team1 or not m.team2:
                 session.refresh(m, ["team1", "team2"])
             id_1, name_1 = m.team1_id, m.team1.name if m.team1 else "Team ?"
             id_2, name_2 = m.team2_id, m.team2.name if m.team2 else "Team ?"
         else:
-            # SPELER LOGICA
             if not m.player1 or not m.player2:
                 session.refresh(m, ["player1", "player2"])
             id_1, name_1 = m.player1_id, m.player1.name if m.player1 else "Player ?"
@@ -173,10 +174,11 @@ def calculate_poule_standings(session: Session, tournament: Tournament) -> Dict[
         stats_2["legs_won"] += m.score_p2
         stats_2["legs_lost"] += m.score_p1
 
+        # STAP 1 FIX: Punten naar 2 per winst 
         if m.score_p1 > m.score_p2:
-            stats_1["points"] += 1
+            stats_1["points"] += 2
         else:
-            stats_2["points"] += 1
+            stats_2["points"] += 2
 
     final_standings = {}
     for p_num in range(1, tournament.number_of_poules + 1):
@@ -184,8 +186,10 @@ def calculate_poule_standings(session: Session, tournament: Tournament) -> Dict[
             poule_list = list(raw_standings[p_num].values())
             for p in poule_list:
                 p["leg_diff"] = p["legs_won"] - p["legs_lost"]
-            # Sorteer: Punten > Saldo > Voor
-            poule_list.sort(key=lambda x: (x["points"], x["leg_diff"], x["legs_won"]), reverse=True)
+            
+            # Sortering op Punten en Leg-Difference 
+            # Head-to-Head komt in de volgende stap als extra sorteer-pass
+            poule_list.sort(key=lambda x: (x["points"], x["leg_diff"]), reverse=True)
             final_standings[p_num] = poule_list
         else:
             final_standings[p_num] = []
