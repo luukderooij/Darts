@@ -968,7 +968,7 @@ FILE: backend/app\api\tournaments.py
 # FILE: backend/app/api/tournaments.py
 import uuid
 import math 
-from typing import List, Optional, Any
+from typing import List, Optional, Any, Dict
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select
 from sqlalchemy.orm import selectinload
@@ -990,13 +990,14 @@ from app.schemas.tournament import (
     TournamentReadWithMatches
 )
 
-
+# Toegevoegd: calculate_poule_standings
 from app.services.tournament_gen import (
     generate_poule_phase, 
     generate_round_robin_global,
     generate_knockout,
     generate_knockout_bracket,
-    assign_referees
+    assign_referees,
+    calculate_poule_standings 
 )
 from app.models import tournament
 
@@ -1102,6 +1103,28 @@ def read_tournament_by_id(
         raise HTTPException(status_code=404, detail="Tournament not found")
     return tournament
 
+# --- NIEUW ENDPOINT: Centrale Standen Berekening ---
+@router.get("/{tournament_id}/standings")
+def get_tournament_standings(
+    tournament_id: int,
+    session: Session = Depends(get_session)
+):
+    """
+    Geeft de berekende stand terug voor alle poules.
+    Bevat logica voor:
+    - 2 punten per winst
+    - Leg Saldo
+    - Head-to-Head
+    - 9-dart Shoot-out detectie (needs_shootout=True)
+    """
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+    
+    # Roep de centrale logica aan in tournament_gen.py
+    return calculate_poule_standings(session, tournament)
+# ---------------------------------------------------
+
 @router.get("/", response_model=List[TournamentRead])
 def read_tournaments(
     offset: int = 0,
@@ -1113,6 +1136,7 @@ def read_tournaments(
         select(Tournament)
         .where(Tournament.user_id == current_user.id)
         .options(selectinload(Tournament.players), selectinload(Tournament.boards))
+        .order_by(Tournament.created_at.desc()) # Sorteer op nieuwste eerst
         .offset(offset)
         .limit(limit)
     ).all()
@@ -1181,7 +1205,7 @@ def read_public_tournament(public_uuid: str, session: Session = Depends(get_sess
         else:
              m_dict['player2_name'] = "Bye"
              
-        # --- NEW: Resolve Referee Name ---
+        # --- Resolve Referee Name ---
         if m.referee:
             m_dict['referee_name'] = m.referee.name
         elif m.referee_team:
@@ -1283,8 +1307,14 @@ def delete_tournament(
     for m in matches:
         session.delete(m)
         
-    # 2. Delete Teams
-    teams = session.exec(select(Team).where(Team.tournament_id == tournament_id)).all()
+    # 2. Delete Teams (FIX: Via de koppeltabel zoeken)
+    # Omdat Team geen 'tournament_id' heeft, joinen we met TournamentTeamLink
+    teams = session.exec(
+        select(Team)
+        .join(TournamentTeamLink)
+        .where(TournamentTeamLink.tournament_id == tournament_id)
+    ).all()
+    
     for t in teams:
         session.delete(t)
         
@@ -1359,9 +1389,9 @@ def finalize_tournament_setup(
                 )
                 poule_matches.append(match) # Add to temp list
 
-        # --- NIEUW: Referee Toewijzen ---
+        # --- Referee Toewijzen ---
         assign_referees(poule_matches, poule_teams, is_doubles=True)
-        # --------------------------------
+        # -------------------------
 
         # Add to main list to save later
         matches_created.extend(poule_matches)
@@ -2130,6 +2160,7 @@ FILE: backend/app\services\tournament_gen.py
 
 import math
 import random
+import functools
 from typing import List, Dict, Any
 from sqlmodel import Session, select
 from app.models.match import Match
@@ -2246,9 +2277,17 @@ def _create_round_robin_matches(
 # 2. NIEUWE KNOCKOUT LOGICA (TEAMS + SINGLES)
 # ==========================================
 
+# backend/app/services/tournament_gen.py
+
+import functools
+# Voeg functools toe aan de imports bovenin backend/app/services/tournament_gen.py
+
+# backend/app/services/tournament_gen.py
+
 def calculate_poule_standings(session: Session, tournament: Tournament) -> Dict[int, List[dict]]:
     """
-    Berekent de stand per poule. Ondersteunt nu ZOWEL Singles als Doubles.
+    Berekent de stand per poule volgens Order of Merit Rules:
+    Punten (2 per winst) -> Leg-Difference -> Head-to-Head -> 9-dart-Shoot-out.
     """
     matches = session.exec(
         select(Match)
@@ -2259,6 +2298,7 @@ def calculate_poule_standings(session: Session, tournament: Tournament) -> Dict[
 
     is_doubles = tournament.mode == "doubles"
     raw_standings = {} 
+    h2h_winners = {} 
 
     def init_entity(poule_num, entity_id, entity_name):
         if poule_num not in raw_standings:
@@ -2271,22 +2311,19 @@ def calculate_poule_standings(session: Session, tournament: Tournament) -> Dict[
                 "played": 0,
                 "legs_won": 0,
                 "legs_lost": 0,
-                "leg_diff": 0
+                "leg_diff": 0,
+                "needs_shootout": False  # Nieuwe vlag voor stap 3
             }
 
     for m in matches:
         if is_doubles:
-            # TEAM LOGICA
-            if not m.team1 or not m.team2:
-                session.refresh(m, ["team1", "team2"])
-            id_1, name_1 = m.team1_id, m.team1.name if m.team1 else "Team ?"
-            id_2, name_2 = m.team2_id, m.team2.name if m.team2 else "Team ?"
+            if not m.team1 or not m.team2: session.refresh(m, ["team1", "team2"])
+            id_1, id_2 = m.team1_id, m.team2_id
+            name_1, name_2 = (m.team1.name if m.team1 else "Team ?"), (m.team2.name if m.team2 else "Team ?")
         else:
-            # SPELER LOGICA
-            if not m.player1 or not m.player2:
-                session.refresh(m, ["player1", "player2"])
-            id_1, name_1 = m.player1_id, m.player1.name if m.player1 else "Player ?"
-            id_2, name_2 = m.player2_id, m.player2.name if m.player2 else "Player ?"
+            if not m.player1 or not m.player2: session.refresh(m, ["player1", "player2"])
+            id_1, id_2 = m.player1_id, m.player2_id
+            name_1, name_2 = (m.player1.name if m.player1 else "Player ?"), (m.player2.name if m.player2 else "Player ?")
 
         if not id_1 or not id_2: continue
 
@@ -2303,10 +2340,28 @@ def calculate_poule_standings(session: Session, tournament: Tournament) -> Dict[
         stats_2["legs_won"] += m.score_p2
         stats_2["legs_lost"] += m.score_p1
 
+        winner_id = id_1 if m.score_p1 > m.score_p2 else id_2
         if m.score_p1 > m.score_p2:
-            stats_1["points"] += 1
+            stats_1["points"] += 2
         else:
-            stats_2["points"] += 1
+            stats_2["points"] += 2
+            
+        pair = tuple(sorted([id_1, id_2]))
+        h2h_winners[(m.poule_number, pair)] = winner_id
+
+    def compare_entities(a, b, poule_num):
+        # 1. Punten
+        if a["points"] != b["points"]:
+            return a["points"] - b["points"]
+        # 2. Leg Difference
+        if a["leg_diff"] != b["leg_diff"]:
+            return a["leg_diff"] - b["leg_diff"]
+        # 3. Head-to-Head
+        pair = tuple(sorted([a["id"], b["id"]]))
+        winner_id = h2h_winners.get((poule_num, pair))
+        if winner_id == a["id"]: return 1
+        if winner_id == b["id"]: return -1
+        return 0
 
     final_standings = {}
     for p_num in range(1, tournament.number_of_poules + 1):
@@ -2314,8 +2369,17 @@ def calculate_poule_standings(session: Session, tournament: Tournament) -> Dict[
             poule_list = list(raw_standings[p_num].values())
             for p in poule_list:
                 p["leg_diff"] = p["legs_won"] - p["legs_lost"]
-            # Sorteer: Punten > Saldo > Voor
-            poule_list.sort(key=lambda x: (x["points"], x["leg_diff"], x["legs_won"]), reverse=True)
+            
+            # Sortering uitvoeren
+            poule_list.sort(key=functools.cmp_to_key(lambda a, b: compare_entities(a, b, p_num)), reverse=True)
+
+            # STAP 3 FIX: Controleer op onbesliste standen (Shoot-out nodig)
+            for i in range(len(poule_list) - 1):
+                # Als de comparator 0 teruggeeft tussen twee opeenvolgende spelers in de lijst
+                if compare_entities(poule_list[i], poule_list[i+1], p_num) == 0:
+                    poule_list[i]["needs_shootout"] = True
+                    poule_list[i+1]["needs_shootout"] = True
+
             final_standings[p_num] = poule_list
         else:
             final_standings[p_num] = []
@@ -4405,7 +4469,7 @@ import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../../services/api';
 import AdminLayout from '../../components/layout/AdminLayout';
-import { Save, RefreshCcw, ShieldAlert, Settings, ChevronDown, ChevronRight, SaveAll, GitMerge, Trophy } from 'lucide-react';
+import { Save, RefreshCcw, ShieldAlert, Settings, ChevronDown, ChevronRight, SaveAll, GitMerge, Trophy , AlertCircle, Info} from 'lucide-react';
 import { Tournament, Match } from '../../types';
 
 interface MatchWithUI extends Match {
@@ -4523,19 +4587,64 @@ const ManageTournament = () => {
       ));
   };
 
+  const calculateStandings = (matches: MatchWithUI[]) => {
+  const stats: Record<string, { pts: number, ld: number, needs_shootout: boolean }> = {};
+  const h2hWinners: Record<string, string> = {};
+
+  matches.forEach(m => {
+    const p1 = m.player1_name || 'Bye';
+    const p2 = m.player2_name || 'Bye';
+    if (!stats[p1]) stats[p1] = { pts: 0, ld: 0, needs_shootout: false };
+    if (!stats[p2]) stats[p2] = { pts: 0, ld: 0, needs_shootout: false };
+
+    if (m.is_completed && m.player1_name && m.player2_name) {
+      stats[p1].ld += (m.score_p1 - m.score_p2);
+      stats[p2].ld += (m.score_p2 - m.score_p1);
+
+      const winner = m.score_p1 > m.score_p2 ? p1 : p2;
+      if (m.score_p1 > m.score_p2) stats[p1].pts += 2;
+      else stats[p2].pts += 2;
+
+      const pairKey = [p1, p2].sort().join('_vs_');
+      h2hWinners[pairKey] = winner;
+    }
+  });
+
+  const list = Object.entries(stats).map(([name, data]) => ({ name, ...data }));
+  list.sort((a, b) => {
+    if (b.pts !== a.pts) return b.pts - a.pts;
+    if (b.ld !== a.ld) return b.ld - a.ld;
+    const pairKey = [a.name, b.name].sort().join('_vs_');
+    const winner = h2hWinners[pairKey];
+    if (winner === a.name) return -1;
+    if (winner === b.name) return 1;
+    a.needs_shootout = true;
+    b.needs_shootout = true;
+    return 0;
+  });
+  return list;
+};
+
   const canStartKnockout = () => {
-      if (!tournament || !matches.length) return false;
-      if (tournament.format !== 'hybrid') return false; 
+    if (!tournament || !matches.length) return false;
+    if (tournament.format !== 'hybrid') return false; 
 
-      const pouleMatches = matches.filter(m => m.poule_number !== null);
-      const koMatches = matches.filter(m => m.poule_number === null);
+    const pouleMatches = matches.filter(m => m.poule_number !== null);
+    const koMatches = matches.filter(m => m.poule_number === null);
 
-      if (pouleMatches.length === 0) return false;
-      const allPoulesFinished = pouleMatches.every(m => m.is_completed);
-      const koNotStarted = koMatches.length === 0;
+    if (pouleMatches.length === 0) return false;
+    const allPoulesFinished = pouleMatches.every(m => m.is_completed);
+    const koNotStarted = koMatches.length === 0;
 
-      return allPoulesFinished && koNotStarted;
-  };
+    // Check voor 9-dart shootouts per poule
+    const pouleNumbers = [...new Set(pouleMatches.map(m => m.poule_number))];
+    const hasUnresolvedTies = pouleNumbers.some(pNum => {
+        const mInPoule = pouleMatches.filter(m => m.poule_number === pNum);
+        return calculateStandings(mInPoule).some(s => s.needs_shootout);
+    });
+
+    return allPoulesFinished && koNotStarted && !hasUnresolvedTies;
+};
 
   const handleStartKnockout = async () => {
       if (!confirm("Weet je zeker dat je de Poule-fase wilt afsluiten en de Knockout wilt genereren?")) return;
@@ -4666,20 +4775,39 @@ const ManageTournament = () => {
             </button>
         </div>
 
-        {canStartKnockout() && (
-            <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-6 flex justify-between items-center shadow-sm animate-pulse">
+        {/* Sectie voor het starten van de Knockout Fase */}
+        {tournament.status === 'active' && 
+        matches.filter(m => m.poule_number !== null).length > 0 && 
+        matches.filter(m => m.poule_number !== null).every(m => m.is_completed) && 
+        matches.filter(m => m.poule_number === null).length === 0 && (
+            <div className={`rounded-lg p-4 mb-6 flex justify-between items-center shadow-sm border ${
+                canStartKnockout() ? 'bg-green-50 border-green-200' : 'bg-amber-50 border-amber-200'
+            }`}>
                 <div className="flex items-center gap-3">
-                    <div className="bg-green-100 p-2 rounded-full text-green-600">
-                        <GitMerge size={24} />
+                    <div className={`p-2 rounded-full ${
+                        canStartKnockout() ? 'bg-green-100 text-green-600' : 'bg-amber-100 text-amber-600'
+                    }`}>
+                        {canStartKnockout() ? <GitMerge size={24} /> : <AlertCircle size={24} />}
                     </div>
                     <div>
-                        <h4 className="font-bold text-green-800">Poule Fase Voltooid!</h4>
-                        <p className="text-sm text-green-600">Alle wedstrijden zijn gespeeld. Je kunt nu de bracket genereren.</p>
+                        <h4 className={`font-bold ${canStartKnockout() ? 'text-green-800' : 'text-amber-800'}`}>
+                            {canStartKnockout() ? 'Klaar voor Knockout!' : 'Gelijkstand gedetecteerd'}
+                        </h4>
+                        <p className="text-sm opacity-80">
+                            {canStartKnockout() 
+                                ? 'Alle poulewedstrijden zijn klaar. Genereer nu de bracket.' 
+                                : 'Er is een 9-dart shootout nodig of pas scores aan om de tie te breken.'}
+                        </p>
                     </div>
                 </div>
                 <button 
+                    disabled={!canStartKnockout()}
                     onClick={handleStartKnockout}
-                    className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-6 rounded-lg shadow transition-transform transform hover:scale-105"
+                    className={`font-bold py-2 px-6 rounded-lg shadow transition-all ${
+                        canStartKnockout() 
+                        ? 'bg-green-600 hover:bg-green-700 text-white transform hover:scale-105' 
+                        : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                    }`}
                 >
                     Start Knockout Fase
                 </button>
@@ -5145,7 +5273,7 @@ FILE: frontend/src\pages\public\TournamentView.tsx
 import { useEffect, useState, useMemo, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import api from '../../services/api';
-import { Trophy, LayoutGrid, GitMerge, RefreshCw, Play, Pause, Medal } from 'lucide-react';
+import { Trophy, LayoutGrid, GitMerge, RefreshCw, Play, Pause, Medal, AlertCircle } from 'lucide-react';
 
 // --- Types ---
 interface Match {
@@ -5171,6 +5299,18 @@ interface Tournament {
   starting_legs_group?: number;
   starting_legs_ko?: number;
   matches: Match[];
+}
+
+// Nieuw Type voor de data die uit de backend /standings endpoint komt
+interface StandingsItem {
+  id: number;
+  name: string;
+  points: number;
+  played: number;
+  legs_won: number;
+  legs_lost: number;
+  leg_diff: number;
+  needs_shootout: boolean;
 }
 
 // --- Helper Components ---
@@ -5275,33 +5415,15 @@ const BracketView = ({ matches }: { matches: Match[] }) => {
     );
 };
 
-const calculateStandings = (matches: Match[]) => {
-  const stats: Record<string, { p: number, w: number, l: number, pts: number, ld: number }> = {};
-  matches.forEach(m => {
-    if (m.player1_name && !stats[m.player1_name]) stats[m.player1_name] = { p:0, w:0, l:0, pts:0, ld:0 };
-    if (m.player2_name && !stats[m.player2_name]) stats[m.player2_name] = { p:0, w:0, l:0, pts:0, ld:0 };
-
-    if (m.is_completed && m.player1_name && m.player2_name) {
-      const p1 = stats[m.player1_name];
-      const p2 = stats[m.player2_name];
-      p1.p++; p2.p++; 
-      p1.ld += (m.score_p1 - m.score_p2); 
-      p2.ld += (m.score_p2 - m.score_p1);
-
-      if (m.score_p1 > m.score_p2) { p1.w++; p1.pts += 2; p2.l++; } 
-      else { p2.w++; p2.pts += 2; p1.l++; }
-    }
-  });
-  return Object.entries(stats)
-    .map(([name, data]) => ({ name, ...data }))
-    .sort((a, b) => b.pts - a.pts || b.ld - a.ld);
-};
-
 // --- MAIN COMPONENT ---
 const TournamentView = () => {
   const { public_uuid } = useParams();
   
   const [tournament, setTournament] = useState<Tournament | null>(null);
+  
+  // Nieuwe state voor de officiële standen uit de backend
+  const [allStandings, setAllStandings] = useState<Record<number, StandingsItem[]>>({});
+  
   const [loading, setLoading] = useState(true);
   
   const [activeTab, setActiveTab] = useState<number | 'ko'>(1);
@@ -5312,10 +5434,20 @@ const TournamentView = () => {
 
   const loadData = async () => {
     try {
+      // 1. Haal toernooi details op (inclusief matches voor de lijst)
       const res = await api.get(`/tournaments/public/${public_uuid}`);
-      setTournament(res.data);
+      const tData = res.data;
+      setTournament(tData);
+
+      // 2. Haal de berekende standen op van de backend (Source of Truth)
+      // We gebruiken tData.id omdat de public user dat nu heeft
+      if (tData.id) {
+          const standRes = await api.get(`/tournaments/${tData.id}/standings`);
+          setAllStandings(standRes.data);
+      }
+
     } catch (err) {
-      console.error("Error loading tournament", err);
+      console.error("Error loading tournament data", err);
     } finally {
       setLoading(false);
     }
@@ -5327,7 +5459,6 @@ const TournamentView = () => {
     return () => clearInterval(interval);
   }, [public_uuid]);
 
-  // Derived State
   const availablePoules = useMemo(() => {
     if (!tournament) return [];
     const poules = new Set<number>();
@@ -5341,40 +5472,23 @@ const TournamentView = () => {
     return tournament?.matches.some(m => m.poule_number === null) || false;
   }, [tournament]);
 
-  // --- CRITICAL FIX: Tab Decision Logic ---
   useEffect(() => {
     if (tournament && !loading) {
-        // If we haven't decided the initial view yet...
         if (!hasInitialized) {
             if (hasKnockout) {
-                // FORCE Knockout view
                 setActiveTab('ko');
-                setIsAutoPlay(false); // Ensure AutoPlay is OFF
+                setIsAutoPlay(false);
             } else {
-                // Default to first poule if available
                 if (availablePoules.length > 0) {
                     setActiveTab(availablePoules[0]);
                 }
             }
-            // Mark as initialized so we can render
             setHasInitialized(true);
-        } else {
-            // Even if initialized, if Knockout suddenly appears (refresh), switch to it
-            // providing the user hasn't manually clicked another tab (we assume if they are on 'ko' or '1' it's fine)
-            // But strict requirement: "If knockout started, I want to see knockout".
-            if (hasKnockout && activeTab !== 'ko' && isAutoPlay === false) {
-                 // Optional: Force switch on refresh if user is idle? 
-                 // For now, we trust the initialization, but if you want it to FORCE jump every time KO appears:
-                 // setActiveTab('ko'); 
-            }
         }
     }
   }, [loading, hasKnockout, hasInitialized, tournament, availablePoules]);
 
-
-  // --- Auto-Rotate Logic ---
   useEffect(() => {
-    // Only run auto-play if explicitly enabled AND Knockout is NOT active
     if (isAutoPlay && !hasKnockout) { 
       autoPlayRef.current = setInterval(() => {
         setActiveTab((current) => {
@@ -5398,18 +5512,17 @@ const TournamentView = () => {
     return tournament.matches.filter(m => m.poule_number === activeTab);
   }, [tournament, activeTab]);
 
+  // Haal de juiste stand op uit de backend data
   const standings = useMemo(() => {
     if (activeTab === 'ko') return [];
-    return calculateStandings(filteredMatches);
-  }, [filteredMatches, activeTab]);
+    // We geven de lijst terug die de backend heeft berekend
+    return allStandings[activeTab as number] || [];
+  }, [allStandings, activeTab]);
 
   const handleTabClick = (tab: number | 'ko') => {
     setActiveTab(tab);
   };
 
-  // --- RENDER GUARD ---
-  // Don't show anything until we know WHICH tab to show.
-  // This prevents the "Poule 1" flash.
   if (loading || !tournament || !hasInitialized) {
       return (
         <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center text-white gap-4">
@@ -5421,8 +5534,6 @@ const TournamentView = () => {
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
-      
-      {/* --- HEADER --- */}
       <header className="bg-slate-900 text-white p-4 lg:p-6 shadow-xl sticky top-0 z-50">
         <div className="max-w-7xl mx-auto flex justify-between items-center">
             <div>
@@ -5441,7 +5552,6 @@ const TournamentView = () => {
             </div>
 
             <div className="flex items-center gap-4">
-                {/* Auto Play Toggle: Hidden if Knockout Active */}
                 {(availablePoules.length > 1 && !hasKnockout) && (
                     <button 
                         onClick={() => setIsAutoPlay(!isAutoPlay)}
@@ -5450,17 +5560,14 @@ const TournamentView = () => {
                             ? 'bg-blue-600 text-white border-blue-500 shadow-[0_0_15px_rgba(37,99,235,0.5)]' 
                             : 'bg-slate-800 text-slate-400 border-slate-700 hover:bg-slate-700'
                         }`}
-                        title={isAutoPlay ? "Pause Rotation" : "Start TV Mode"}
                     >
                         {isAutoPlay ? <Pause size={20} /> : <Play size={20} />}
                         <span className="hidden md:inline">{isAutoPlay ? 'AUTO ON' : 'TV MODE'}</span>
                     </button>
                 )}
-
                 <button 
                     onClick={loadData} 
-                    className="p-2 bg-slate-800 rounded-lg hover:bg-slate-700 text-slate-400 hover:text-white transition" 
-                    title="Refresh Data"
+                    className="p-2 bg-slate-800 rounded-lg hover:bg-slate-700 text-slate-400 hover:text-white transition"
                 >
                     <RefreshCw size={24} />
                 </button>
@@ -5469,8 +5576,6 @@ const TournamentView = () => {
       </header>
 
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 lg:p-8">
-        
-        {/* --- NAVIGATION TABS --- */}
         <div className="flex border-b border-gray-200 mb-8 overflow-x-auto no-scrollbar gap-1">
             {availablePoules.map(num => (
                 <button
@@ -5502,13 +5607,9 @@ const TournamentView = () => {
             )}
         </div>
 
-        {/* --- CONTENT AREA --- */}
         <div className="animate-fade-in">
             {activeTab !== 'ko' ? (
-                // === POULE VIEW ===
                 <div className="grid gap-8 xl:grid-cols-3">
-                    
-                    {/* Standings Table */}
                     <div className="xl:col-span-2 flex flex-col">
                         <div className="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden flex-1">
                             <div className="bg-gradient-to-r from-blue-600 to-blue-700 p-4 text-white">
@@ -5532,17 +5633,39 @@ const TournamentView = () => {
                                     <tbody className="text-gray-700">
                                         {standings.map((row, index) => {
                                             const isQualified = index < (tournament.qualifiers_per_poule || 2);
+                                            // Bereken Winst/Verlies voor display (Backend geeft alleen punten)
+                                            // Aanname: 2 punten per winst.
+                                            const wins = Math.floor(row.points / 2);
+                                            const losses = row.played - wins;
+
                                             return (
                                                 <tr key={row.name} className={`border-b border-gray-50 hover:bg-blue-50/50 transition-colors ${isQualified ? 'bg-green-50/30' : ''}`}>
                                                     <td className="p-4 text-center font-mono text-gray-400">{index + 1}</td>
+                                                    
                                                     <td className="p-4 font-bold text-lg flex items-center gap-3">
-                                                        {row.name}
-                                                        {isQualified && <Medal size={16} className="text-green-500" />}
+                                                        <span className="truncate">{row.name}</span>
+                                                        {isQualified && (
+                                                            <span title="Gekwalificeerd">
+                                                                <Medal size={16} className="text-green-500" />
+                                                            </span>
+                                                        )}
+                                                        {/* De Backend bepaalt nu of er een shootout nodig is */}
+                                                        {row.needs_shootout && (
+                                                            <span 
+                                                                className="flex items-center gap-1 text-[10px] bg-red-100 text-red-600 px-2 py-0.5 rounded-full animate-pulse font-bold border border-red-200"
+                                                                title="9-Dart Shoot-out vereist: Spelers staan exact gelijk"
+                                                            >
+                                                                <AlertCircle size={10} /> 9-DART SO
+                                                            </span>
+                                                        )}
                                                     </td>
-                                                    <td className="p-4 text-center font-medium text-green-600">{row.w}</td>
-                                                    <td className="p-4 text-center text-red-400">{row.l}</td>
-                                                    <td className="p-4 text-center text-gray-500 font-mono">{row.ld > 0 ? `+${row.ld}` : row.ld}</td>
-                                                    <td className="p-4 text-center font-bold text-2xl text-blue-700">{row.pts}</td>
+
+                                                    <td className="p-4 text-center font-medium text-green-600">{wins}</td>
+                                                    <td className="p-4 text-center text-red-400">{losses}</td>
+                                                    <td className="p-4 text-center text-gray-500 font-mono">
+                                                        {row.leg_diff > 0 ? `+${row.leg_diff}` : row.leg_diff}
+                                                    </td>
+                                                    <td className="p-4 text-center font-bold text-2xl text-blue-700">{row.points}</td>
                                                 </tr>
                                             );
                                         })}
@@ -5552,7 +5675,6 @@ const TournamentView = () => {
                         </div>
                     </div>
 
-                    {/* Matches List */}
                     <div className="flex flex-col">
                         <div className="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden flex-1 max-h-[600px] flex flex-col">
                             <div className="bg-gray-100 p-4 border-b border-gray-200">
@@ -5563,23 +5685,18 @@ const TournamentView = () => {
                                     <div key={match.id} className="p-4 hover:bg-gray-50 transition-colors">
                                         <div className="flex justify-between text-xs font-bold text-gray-400 uppercase tracking-wide mb-2">
                                             <span>Ronde {match.round_number}</span>
-                                            {match.is_completed && <span className="text-green-600">Finished</span>}
-                                            {/* NEW: Referee Display */}
                                             <span className="flex items-center gap-1 text-gray-500">
                                                 Ref: <span className="text-gray-700">{match.referee_name || "-"}</span>
                                             </span>
-                                            
-                                            {match.is_completed && <span className="text-green-600">Finished</span>}
+                                            {match.is_completed && <span className="text-green-600 font-bold">Finished</span>}
                                         </div>
                                         <div className="flex items-center justify-between gap-2">
                                             <span className={`flex-1 truncate text-right font-medium text-lg ${match.score_p1 > match.score_p2 && match.is_completed ? 'text-gray-900 font-bold' : 'text-gray-500'}`}>
                                                 {match.player1_name || 'Bye'}
                                             </span>
-                                            
                                             <div className={`px-3 py-1 rounded-lg font-mono font-bold text-lg min-w-[3.5rem] text-center ${match.is_completed ? 'bg-slate-800 text-white' : 'bg-gray-100 text-gray-400'}`}>
                                                 {match.is_completed ? `${match.score_p1}-${match.score_p2}` : 'VS'}
                                             </div>
-
                                             <span className={`flex-1 truncate text-left font-medium text-lg ${match.score_p2 > match.score_p1 && match.is_completed ? 'text-gray-900 font-bold' : 'text-gray-500'}`}>
                                                 {match.player2_name || 'Bye'}
                                             </span>
@@ -5591,7 +5708,6 @@ const TournamentView = () => {
                     </div>
                 </div>
             ) : (
-                // === KNOCKOUT VIEW ===
                 <div className="bg-white p-4 md:p-8 rounded-xl shadow-lg border border-gray-200 overflow-x-auto min-h-[500px]">
                     <BracketView matches={filteredMatches} />
                 </div>

@@ -215,8 +215,15 @@ def calculate_poule_standings(session: Session, tournament: Tournament) -> Dict[
 
             # STAP 3 FIX: Controleer op onbesliste standen (Shoot-out nodig)
             for i in range(len(poule_list) - 1):
-                # Als de comparator 0 teruggeeft tussen twee opeenvolgende spelers in de lijst
-                if compare_entities(poule_list[i], poule_list[i+1], p_num) == 0:
+                # OUDE CODE (Te strikt voor cirkels):
+                # if compare_entities(poule_list[i], poule_list[i+1], p_num) == 0:
+                
+                # NIEUWE CODE (Detecteer gelijke statistieken):
+                p1 = poule_list[i]
+                p2 = poule_list[i+1]
+                
+                # Als Punten EN Saldo gelijk zijn -> Flaggen als Shootout risico
+                if p1["points"] == p2["points"] and p1["leg_diff"] == p2["leg_diff"]:
                     poule_list[i]["needs_shootout"] = True
                     poule_list[i+1]["needs_shootout"] = True
 

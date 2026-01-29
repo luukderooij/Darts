@@ -1,7 +1,7 @@
 import { useEffect, useState, useMemo, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import api from '../../services/api';
-import { Trophy, LayoutGrid, GitMerge, RefreshCw, Play, Pause, Medal } from 'lucide-react';
+import { Trophy, LayoutGrid, GitMerge, RefreshCw, Play, Pause, Medal, AlertCircle } from 'lucide-react';
 
 // --- Types ---
 interface Match {
@@ -27,6 +27,18 @@ interface Tournament {
   starting_legs_group?: number;
   starting_legs_ko?: number;
   matches: Match[];
+}
+
+// Nieuw Type voor de data die uit de backend /standings endpoint komt
+interface StandingsItem {
+  id: number;
+  name: string;
+  points: number;
+  played: number;
+  legs_won: number;
+  legs_lost: number;
+  leg_diff: number;
+  needs_shootout: boolean;
 }
 
 // --- Helper Components ---
@@ -131,33 +143,15 @@ const BracketView = ({ matches }: { matches: Match[] }) => {
     );
 };
 
-const calculateStandings = (matches: Match[]) => {
-  const stats: Record<string, { p: number, w: number, l: number, pts: number, ld: number }> = {};
-  matches.forEach(m => {
-    if (m.player1_name && !stats[m.player1_name]) stats[m.player1_name] = { p:0, w:0, l:0, pts:0, ld:0 };
-    if (m.player2_name && !stats[m.player2_name]) stats[m.player2_name] = { p:0, w:0, l:0, pts:0, ld:0 };
-
-    if (m.is_completed && m.player1_name && m.player2_name) {
-      const p1 = stats[m.player1_name];
-      const p2 = stats[m.player2_name];
-      p1.p++; p2.p++; 
-      p1.ld += (m.score_p1 - m.score_p2); 
-      p2.ld += (m.score_p2 - m.score_p1);
-
-      if (m.score_p1 > m.score_p2) { p1.w++; p1.pts += 2; p2.l++; } 
-      else { p2.w++; p2.pts += 2; p1.l++; }
-    }
-  });
-  return Object.entries(stats)
-    .map(([name, data]) => ({ name, ...data }))
-    .sort((a, b) => b.pts - a.pts || b.ld - a.ld);
-};
-
 // --- MAIN COMPONENT ---
 const TournamentView = () => {
   const { public_uuid } = useParams();
   
   const [tournament, setTournament] = useState<Tournament | null>(null);
+  
+  // Nieuwe state voor de officiële standen uit de backend
+  const [allStandings, setAllStandings] = useState<Record<number, StandingsItem[]>>({});
+  
   const [loading, setLoading] = useState(true);
   
   const [activeTab, setActiveTab] = useState<number | 'ko'>(1);
@@ -168,10 +162,20 @@ const TournamentView = () => {
 
   const loadData = async () => {
     try {
+      // 1. Haal toernooi details op (inclusief matches voor de lijst)
       const res = await api.get(`/tournaments/public/${public_uuid}`);
-      setTournament(res.data);
+      const tData = res.data;
+      setTournament(tData);
+
+      // 2. Haal de berekende standen op van de backend (Source of Truth)
+      // We gebruiken tData.id omdat de public user dat nu heeft
+      if (tData.id) {
+          const standRes = await api.get(`/tournaments/${tData.id}/standings`);
+          setAllStandings(standRes.data);
+      }
+
     } catch (err) {
-      console.error("Error loading tournament", err);
+      console.error("Error loading tournament data", err);
     } finally {
       setLoading(false);
     }
@@ -183,7 +187,6 @@ const TournamentView = () => {
     return () => clearInterval(interval);
   }, [public_uuid]);
 
-  // Derived State
   const availablePoules = useMemo(() => {
     if (!tournament) return [];
     const poules = new Set<number>();
@@ -197,40 +200,23 @@ const TournamentView = () => {
     return tournament?.matches.some(m => m.poule_number === null) || false;
   }, [tournament]);
 
-  // --- CRITICAL FIX: Tab Decision Logic ---
   useEffect(() => {
     if (tournament && !loading) {
-        // If we haven't decided the initial view yet...
         if (!hasInitialized) {
             if (hasKnockout) {
-                // FORCE Knockout view
                 setActiveTab('ko');
-                setIsAutoPlay(false); // Ensure AutoPlay is OFF
+                setIsAutoPlay(false);
             } else {
-                // Default to first poule if available
                 if (availablePoules.length > 0) {
                     setActiveTab(availablePoules[0]);
                 }
             }
-            // Mark as initialized so we can render
             setHasInitialized(true);
-        } else {
-            // Even if initialized, if Knockout suddenly appears (refresh), switch to it
-            // providing the user hasn't manually clicked another tab (we assume if they are on 'ko' or '1' it's fine)
-            // But strict requirement: "If knockout started, I want to see knockout".
-            if (hasKnockout && activeTab !== 'ko' && isAutoPlay === false) {
-                 // Optional: Force switch on refresh if user is idle? 
-                 // For now, we trust the initialization, but if you want it to FORCE jump every time KO appears:
-                 // setActiveTab('ko'); 
-            }
         }
     }
   }, [loading, hasKnockout, hasInitialized, tournament, availablePoules]);
 
-
-  // --- Auto-Rotate Logic ---
   useEffect(() => {
-    // Only run auto-play if explicitly enabled AND Knockout is NOT active
     if (isAutoPlay && !hasKnockout) { 
       autoPlayRef.current = setInterval(() => {
         setActiveTab((current) => {
@@ -254,18 +240,17 @@ const TournamentView = () => {
     return tournament.matches.filter(m => m.poule_number === activeTab);
   }, [tournament, activeTab]);
 
+  // Haal de juiste stand op uit de backend data
   const standings = useMemo(() => {
     if (activeTab === 'ko') return [];
-    return calculateStandings(filteredMatches);
-  }, [filteredMatches, activeTab]);
+    // We geven de lijst terug die de backend heeft berekend
+    return allStandings[activeTab as number] || [];
+  }, [allStandings, activeTab]);
 
   const handleTabClick = (tab: number | 'ko') => {
     setActiveTab(tab);
   };
 
-  // --- RENDER GUARD ---
-  // Don't show anything until we know WHICH tab to show.
-  // This prevents the "Poule 1" flash.
   if (loading || !tournament || !hasInitialized) {
       return (
         <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center text-white gap-4">
@@ -277,8 +262,6 @@ const TournamentView = () => {
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
-      
-      {/* --- HEADER --- */}
       <header className="bg-slate-900 text-white p-4 lg:p-6 shadow-xl sticky top-0 z-50">
         <div className="max-w-7xl mx-auto flex justify-between items-center">
             <div>
@@ -297,7 +280,6 @@ const TournamentView = () => {
             </div>
 
             <div className="flex items-center gap-4">
-                {/* Auto Play Toggle: Hidden if Knockout Active */}
                 {(availablePoules.length > 1 && !hasKnockout) && (
                     <button 
                         onClick={() => setIsAutoPlay(!isAutoPlay)}
@@ -306,17 +288,14 @@ const TournamentView = () => {
                             ? 'bg-blue-600 text-white border-blue-500 shadow-[0_0_15px_rgba(37,99,235,0.5)]' 
                             : 'bg-slate-800 text-slate-400 border-slate-700 hover:bg-slate-700'
                         }`}
-                        title={isAutoPlay ? "Pause Rotation" : "Start TV Mode"}
                     >
                         {isAutoPlay ? <Pause size={20} /> : <Play size={20} />}
                         <span className="hidden md:inline">{isAutoPlay ? 'AUTO ON' : 'TV MODE'}</span>
                     </button>
                 )}
-
                 <button 
                     onClick={loadData} 
-                    className="p-2 bg-slate-800 rounded-lg hover:bg-slate-700 text-slate-400 hover:text-white transition" 
-                    title="Refresh Data"
+                    className="p-2 bg-slate-800 rounded-lg hover:bg-slate-700 text-slate-400 hover:text-white transition"
                 >
                     <RefreshCw size={24} />
                 </button>
@@ -325,8 +304,6 @@ const TournamentView = () => {
       </header>
 
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 lg:p-8">
-        
-        {/* --- NAVIGATION TABS --- */}
         <div className="flex border-b border-gray-200 mb-8 overflow-x-auto no-scrollbar gap-1">
             {availablePoules.map(num => (
                 <button
@@ -358,13 +335,9 @@ const TournamentView = () => {
             )}
         </div>
 
-        {/* --- CONTENT AREA --- */}
         <div className="animate-fade-in">
             {activeTab !== 'ko' ? (
-                // === POULE VIEW ===
                 <div className="grid gap-8 xl:grid-cols-3">
-                    
-                    {/* Standings Table */}
                     <div className="xl:col-span-2 flex flex-col">
                         <div className="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden flex-1">
                             <div className="bg-gradient-to-r from-blue-600 to-blue-700 p-4 text-white">
@@ -388,17 +361,39 @@ const TournamentView = () => {
                                     <tbody className="text-gray-700">
                                         {standings.map((row, index) => {
                                             const isQualified = index < (tournament.qualifiers_per_poule || 2);
+                                            // Bereken Winst/Verlies voor display (Backend geeft alleen punten)
+                                            // Aanname: 2 punten per winst.
+                                            const wins = Math.floor(row.points / 2);
+                                            const losses = row.played - wins;
+
                                             return (
                                                 <tr key={row.name} className={`border-b border-gray-50 hover:bg-blue-50/50 transition-colors ${isQualified ? 'bg-green-50/30' : ''}`}>
                                                     <td className="p-4 text-center font-mono text-gray-400">{index + 1}</td>
+                                                    
                                                     <td className="p-4 font-bold text-lg flex items-center gap-3">
-                                                        {row.name}
-                                                        {isQualified && <Medal size={16} className="text-green-500" />}
+                                                        <span className="truncate">{row.name}</span>
+                                                        {isQualified && (
+                                                            <span title="Gekwalificeerd">
+                                                                <Medal size={16} className="text-green-500" />
+                                                            </span>
+                                                        )}
+                                                        {/* De Backend bepaalt nu of er een shootout nodig is */}
+                                                        {row.needs_shootout && (
+                                                            <span 
+                                                                className="flex items-center gap-1 text-[10px] bg-red-100 text-red-600 px-2 py-0.5 rounded-full animate-pulse font-bold border border-red-200"
+                                                                title="9-Dart Shoot-out vereist: Spelers staan exact gelijk"
+                                                            >
+                                                                <AlertCircle size={10} /> 9-DART SO
+                                                            </span>
+                                                        )}
                                                     </td>
-                                                    <td className="p-4 text-center font-medium text-green-600">{row.w}</td>
-                                                    <td className="p-4 text-center text-red-400">{row.l}</td>
-                                                    <td className="p-4 text-center text-gray-500 font-mono">{row.ld > 0 ? `+${row.ld}` : row.ld}</td>
-                                                    <td className="p-4 text-center font-bold text-2xl text-blue-700">{row.pts}</td>
+
+                                                    <td className="p-4 text-center font-medium text-green-600">{wins}</td>
+                                                    <td className="p-4 text-center text-red-400">{losses}</td>
+                                                    <td className="p-4 text-center text-gray-500 font-mono">
+                                                        {row.leg_diff > 0 ? `+${row.leg_diff}` : row.leg_diff}
+                                                    </td>
+                                                    <td className="p-4 text-center font-bold text-2xl text-blue-700">{row.points}</td>
                                                 </tr>
                                             );
                                         })}
@@ -408,7 +403,6 @@ const TournamentView = () => {
                         </div>
                     </div>
 
-                    {/* Matches List */}
                     <div className="flex flex-col">
                         <div className="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden flex-1 max-h-[600px] flex flex-col">
                             <div className="bg-gray-100 p-4 border-b border-gray-200">
@@ -419,23 +413,18 @@ const TournamentView = () => {
                                     <div key={match.id} className="p-4 hover:bg-gray-50 transition-colors">
                                         <div className="flex justify-between text-xs font-bold text-gray-400 uppercase tracking-wide mb-2">
                                             <span>Ronde {match.round_number}</span>
-                                            {match.is_completed && <span className="text-green-600">Finished</span>}
-                                            {/* NEW: Referee Display */}
                                             <span className="flex items-center gap-1 text-gray-500">
                                                 Ref: <span className="text-gray-700">{match.referee_name || "-"}</span>
                                             </span>
-                                            
-                                            {match.is_completed && <span className="text-green-600">Finished</span>}
+                                            {match.is_completed && <span className="text-green-600 font-bold">Finished</span>}
                                         </div>
                                         <div className="flex items-center justify-between gap-2">
                                             <span className={`flex-1 truncate text-right font-medium text-lg ${match.score_p1 > match.score_p2 && match.is_completed ? 'text-gray-900 font-bold' : 'text-gray-500'}`}>
                                                 {match.player1_name || 'Bye'}
                                             </span>
-                                            
                                             <div className={`px-3 py-1 rounded-lg font-mono font-bold text-lg min-w-[3.5rem] text-center ${match.is_completed ? 'bg-slate-800 text-white' : 'bg-gray-100 text-gray-400'}`}>
                                                 {match.is_completed ? `${match.score_p1}-${match.score_p2}` : 'VS'}
                                             </div>
-
                                             <span className={`flex-1 truncate text-left font-medium text-lg ${match.score_p2 > match.score_p1 && match.is_completed ? 'text-gray-900 font-bold' : 'text-gray-500'}`}>
                                                 {match.player2_name || 'Bye'}
                                             </span>
@@ -447,7 +436,6 @@ const TournamentView = () => {
                     </div>
                 </div>
             ) : (
-                // === KNOCKOUT VIEW ===
                 <div className="bg-white p-4 md:p-8 rounded-xl shadow-lg border border-gray-200 overflow-x-auto min-h-[500px]">
                     <BracketView matches={filteredMatches} />
                 </div>

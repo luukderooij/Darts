@@ -1,7 +1,7 @@
 # FILE: backend/app/api/tournaments.py
 import uuid
 import math 
-from typing import List, Optional, Any
+from typing import List, Optional, Any, Dict
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select
 from sqlalchemy.orm import selectinload
@@ -23,13 +23,14 @@ from app.schemas.tournament import (
     TournamentReadWithMatches
 )
 
-
+# Toegevoegd: calculate_poule_standings
 from app.services.tournament_gen import (
     generate_poule_phase, 
     generate_round_robin_global,
     generate_knockout,
     generate_knockout_bracket,
-    assign_referees
+    assign_referees,
+    calculate_poule_standings 
 )
 from app.models import tournament
 
@@ -135,6 +136,28 @@ def read_tournament_by_id(
         raise HTTPException(status_code=404, detail="Tournament not found")
     return tournament
 
+# --- NIEUW ENDPOINT: Centrale Standen Berekening ---
+@router.get("/{tournament_id}/standings")
+def get_tournament_standings(
+    tournament_id: int,
+    session: Session = Depends(get_session)
+):
+    """
+    Geeft de berekende stand terug voor alle poules.
+    Bevat logica voor:
+    - 2 punten per winst
+    - Leg Saldo
+    - Head-to-Head
+    - 9-dart Shoot-out detectie (needs_shootout=True)
+    """
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+    
+    # Roep de centrale logica aan in tournament_gen.py
+    return calculate_poule_standings(session, tournament)
+# ---------------------------------------------------
+
 @router.get("/", response_model=List[TournamentRead])
 def read_tournaments(
     offset: int = 0,
@@ -146,6 +169,7 @@ def read_tournaments(
         select(Tournament)
         .where(Tournament.user_id == current_user.id)
         .options(selectinload(Tournament.players), selectinload(Tournament.boards))
+        .order_by(Tournament.created_at.desc()) # Sorteer op nieuwste eerst
         .offset(offset)
         .limit(limit)
     ).all()
@@ -214,7 +238,7 @@ def read_public_tournament(public_uuid: str, session: Session = Depends(get_sess
         else:
              m_dict['player2_name'] = "Bye"
              
-        # --- NEW: Resolve Referee Name ---
+        # --- Resolve Referee Name ---
         if m.referee:
             m_dict['referee_name'] = m.referee.name
         elif m.referee_team:
@@ -316,8 +340,14 @@ def delete_tournament(
     for m in matches:
         session.delete(m)
         
-    # 2. Delete Teams
-    teams = session.exec(select(Team).where(Team.tournament_id == tournament_id)).all()
+    # 2. Delete Teams (FIX: Via de koppeltabel zoeken)
+    # Omdat Team geen 'tournament_id' heeft, joinen we met TournamentTeamLink
+    teams = session.exec(
+        select(Team)
+        .join(TournamentTeamLink)
+        .where(TournamentTeamLink.tournament_id == tournament_id)
+    ).all()
+    
     for t in teams:
         session.delete(t)
         
@@ -392,9 +422,9 @@ def finalize_tournament_setup(
                 )
                 poule_matches.append(match) # Add to temp list
 
-        # --- NIEUW: Referee Toewijzen ---
+        # --- Referee Toewijzen ---
         assign_referees(poule_matches, poule_teams, is_doubles=True)
-        # --------------------------------
+        # -------------------------
 
         # Add to main list to save later
         matches_created.extend(poule_matches)
