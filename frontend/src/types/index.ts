@@ -33,7 +33,7 @@ export interface Tournament {
   number_of_poules?: number;
   player_count?: number;
   board_count?: number;
-  allow_byes?: boolean; // <--- Nieuw toegevoegd
+  allow_byes?: boolean; 
 }
 
 // We voegen Match en Leg later toe
@@ -52,4 +52,10 @@ export interface Match {
     player2?: Player | null;
 
     referee_name?: string;
+}
+
+export interface Team {
+  id: number;
+  name: string;
+  players: Player[];
 }

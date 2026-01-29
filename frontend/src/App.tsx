@@ -13,6 +13,7 @@ import ManageBoards from './pages/admin/ManageBoards';
 import Dashboard from './pages/admin/Dashboard';
 import ManageTournament from './pages/admin/ManageTournament'; 
 import Changelog from './pages/admin/Changelog'; 
+import ManageTeams from './pages/admin/ManageTeams';
 
 // Public Pages
 import TournamentView from './pages/public/TournamentView';
@@ -41,6 +42,7 @@ function App() {
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/dashboard/tournament/:id" element={<ManageTournament />} />
           <Route path="/dashboard/players" element={<ManagePlayers />} />
+          <Route path="/dashboard/teams" element={<ManageTeams />} />
           <Route path="/dashboard/create-tournament" element={<CreateTournament />} />
           <Route path="/dashboard/logs" element={<SystemLogs />} />
           <Route path="/dashboard/boards" element={<ManageBoards />} />
