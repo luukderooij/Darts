@@ -1,10 +1,56 @@
 import os
 
-# 1. Mappen die we recursief willen doorzoeken
-TARGET_DIRS = ["backend/app", "frontend/src", ".vscode"]
+# 1. Project Documentatie (Jouw tekstuele input)
+PROJECT_OVERVIEW_TEXT = """
+# PROJECT OVERVIEW: DART TOERNOOI MANAGER
+================================================================================
+1. Projectoverzicht
+De Dart Toernooi Manager is een full-stack webapplicatie ontworpen voor het stroomlijnen van darttoernooien. 
+Doelgroep: Lokale kroegen, dartverenigingen en regionale bonden.
+Spelvormen: Singles (1v1) en Doubles (2v2).
+Toernooi-modellen: Round Robin, Single/Double Elimination en Hybride.
 
-# 2. Specifieke bestanden in de root die cruciaal zijn voor context
-# Pas dit aan op basis van wat jij in je root hebt staan
+2. Technische Stack
+Backend: Python 3.12 met FastAPI.
+Database: SQLModel (SQLAlchemy + Pydantic) met SQLite/PostgreSQL.
+Frontend: React (TypeScript) met Tailwind CSS en Lucide Icons.
+Real-time: WebSockets voor score-updates.
+Deployment: Docker & Docker Compose.
+
+3. Architectuur & Datamodel
+Modellen: user, tournament, player, team, match, dartboard.
+
+4. Kernfunctionaliteiten
+- Wizard-configuratie & Auto-Generation van schema's.
+- Slimme Arbitrage: Automatische toewijzing van schrijvers.
+- Narrowcasting (TV Mode): Live carrousel voor toeschouwers.
+
+5. Business Logic
+- Match-validatie via state-machine (Best of X).
+- Smart Scheduling Logic: Gebalanceerde verdeling van speel- en schrijfrondes om "clumping" (opeenvolgende taken) en lange wachttijden te minimaliseren, gebaseerd op een rustfactor-algoritme.
+- Ranking-logica op basis van Punten (2 per winst) -> Leg-Difference (+/- Saldo) -> Head-to-Head (onderling resultaat) -> 9-dart-Shoot-out (indien 3 spelers gelijk staan). Dit is volgens Order of Merrit Rules
+
+5b. Knock-out Transitie & Seeding
+- Automatische Kwalificatie: Dynamische doorstroming van de top X spelers per poule naar een Single of Double Elimination bracket (2, 4, 8, 16, etc.).
+- Bye-Management: Als de setting Byes bij het maken van het tournooi wordt gekozen. Zal bij een onregelmatig aantal gekwalificeerden worden "Byes" (vrijlotingen) prioritair toegewezen aan de hoogst geplaatste spelers (bijv. poulewinnaars) om de bracket te balanceren.
+- Cross-Poule Matching: Om sportieve variatie te maximaliseren, worden spelers uit verschillende poules tegen elkaar gekoppeld (bijv. Winnaar Poule A vs. laagst geplaatste van Poule B).
+- Bracket Protection (Seeding): Implementatie van een beschermde indeling waarbij de nummers 1 en 2 uit dezelfde poule aan weerszijden van de bracket worden geplaatst. Dit garandeert dat zij elkaar pas in de finale weer kunnen treffen.
+
+6. Interface
+- Publieke Pagina's: Home, Live Match View, TV Mode.
+- Admin Dashboard: JWT beveiligd, Player/Tournament management.
+- Scorer Interface: Geoptimaliseerd voor tablets met numeriek keypad.
+
+7. DevOps & Security
+- OAuth2 met JWT.
+- Live systeemlogs via WebSockets.
+================================================================================
+"""
+
+# 2. Mappen die we recursief willen doorzoeken
+TARGET_DIRS = ["backend/app", "frontend/src"]
+
+# 3. Specifieke bestanden in de root
 IMPORTANT_ROOT_FILES = [
     "requirements.txt", 
     "package.json", 
@@ -12,10 +58,10 @@ IMPORTANT_ROOT_FILES = [
     "docker-compose.yml", 
     "Dockerfile", 
     "README.md",
-    ".env.example" # NOOIT je echte .env uploaden!
+    ".env.example"
 ]
 
-# 3. Uitgebreide set extensies voor code én configuratie
+# 4. Extensies & Uitsluitingen
 ALLOWED_EXTENSIONS = {
     ".py", ".tsx", ".ts", ".css", ".html", 
     ".json", ".yaml", ".yml", ".toml", ".md", ".sql"
@@ -33,8 +79,15 @@ def is_text_file(filename):
 
 with open(output_file, "w", encoding="utf-8") as outfile:
     
-    # STAP 1: Voeg specifieke root-bestanden toe
-    print("Scannen van losse belangrijke bestanden...")
+    # STAP 1: Schrijf de projectomschrijving bovenaan
+    print("Documentatie schrijven...")
+    outfile.write(PROJECT_OVERVIEW_TEXT)
+    outfile.write("\n\n" + "#" * 80 + "\n")
+    outfile.write("# SOURCE CODE START\n")
+    outfile.write("#" * 80 + "\n\n")
+
+    # STAP 2: Voeg specifieke root-bestanden toe
+    print("Scannen van belangrijke configuratiebestanden...")
     for filename in IMPORTANT_ROOT_FILES:
         if os.path.exists(filename):
             try:
@@ -48,7 +101,7 @@ with open(output_file, "w", encoding="utf-8") as outfile:
             except Exception as e:
                 print(f"Kon {filename} niet lezen: {e}")
 
-    # STAP 2: Loop door de mappen
+    # STAP 3: Loop door de mappen voor broncode
     print("Scannen van mappen...")
     for root_dir in TARGET_DIRS:
         if not os.path.exists(root_dir):
@@ -56,7 +109,6 @@ with open(output_file, "w", encoding="utf-8") as outfile:
             continue
             
         for root, dirs, files in os.walk(root_dir):
-            # Verwijder genegeerde mappen
             dirs[:] = [d for d in dirs if d not in IGNORE_DIRS]
             
             for file in files:

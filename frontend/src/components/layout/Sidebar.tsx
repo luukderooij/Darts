@@ -1,6 +1,6 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
-import { LayoutDashboard, Users, Trophy, LogOut, Activity, Target, FileText, X } from 'lucide-react';
+import { LayoutDashboard, Users, Trophy, LogOut, Activity, Target, FileText, X, Shield } from 'lucide-react';
 
 interface SidebarProps {
   isOpen: boolean;
@@ -20,6 +20,7 @@ const Sidebar = ({ isOpen, onClose }: SidebarProps) => {
   const menuItems = [
     { icon: LayoutDashboard, label: 'Dashboard', path: '/dashboard' },
     { icon: Users, label: 'Manage Players', path: '/dashboard/players' },
+    { icon: Shield, label: 'Manage Teams', path: '/dashboard/teams' },
     { icon: Target, label: 'Manage Boards', path: '/dashboard/boards' },
     { icon: Trophy, label: 'Create Tournament', path: '/dashboard/create-tournament' },
     { icon: Activity, label: 'System Logs', path: '/dashboard/logs' },

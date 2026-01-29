@@ -2,7 +2,7 @@ import uuid
 from typing import Optional, List
 from sqlmodel import SQLModel, Field, Relationship
 from datetime import datetime
-from app.models.links import TournamentPlayerLink, TournamentBoardLink
+from app.models.links import TournamentPlayerLink, TournamentBoardLink, TournamentTeamLink
 
 class Tournament(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -41,5 +41,4 @@ class Tournament(SQLModel, table=True):
     boards: List["Dartboard"] = Relationship(back_populates=None, link_model=TournamentBoardLink)
     matches: List["Match"] = Relationship(back_populates="tournament")
     
-    # --- NIEUW: Voeg deze regel toe om de cirkel rond te maken ---
-    teams: List["Team"] = Relationship(back_populates="tournament")
+    teams: List["Team"] = Relationship(back_populates="tournaments", link_model=TournamentTeamLink)

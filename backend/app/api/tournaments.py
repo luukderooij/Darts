@@ -13,7 +13,8 @@ from app.models.player import Player
 from app.models.match import Match
 from app.models.dartboard import Dartboard 
 from app.models.team import Team
-from app.api.users import get_current_user 
+from app.api.users import get_current_user
+from app.models.links import TournamentTeamLink
 
 from app.schemas.tournament import (
     TournamentCreate, 
@@ -182,7 +183,11 @@ def read_public_tournament(public_uuid: str, session: Session = Depends(get_sess
     player_map = {p.id: p.name for p in t.players}
     
     # We also need teams if it's a doubles tournament
-    teams = session.exec(select(Team).where(Team.tournament_id == t.id)).all()
+    teams = session.exec(
+        select(Team)
+        .join(TournamentTeamLink)
+        .where(TournamentTeamLink.tournament_id == t.id)
+    ).all()
     team_map = {team.id: team.name for team in teams}
 
     # 3. Enrich matches with names
