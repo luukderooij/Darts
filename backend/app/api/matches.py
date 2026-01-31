@@ -3,6 +3,8 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Header
 from sqlmodel import Session, select
 from sqlalchemy.orm import selectinload 
+from pydantic import BaseModel
+
 
 from app.db.session import get_session
 from app.models.match import Match
@@ -157,3 +159,26 @@ def get_matches_public(
         results.append(m_data)
         
     return results
+
+class MatchBoardUpdate(BaseModel):
+    board_number: int
+
+@router.patch("/{match_id}/assign-board", response_model=MatchRead)
+def assign_board(
+    match_id: int,
+    update_data: MatchBoardUpdate,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Handmatige override: Verplaats een wedstrijd naar een specifiek bord.
+    """
+    match = session.get(Match, match_id)
+    if not match:
+        raise HTTPException(status_code=404, detail="Match not found")
+    
+    match.board_number = update_data.board_number
+    session.add(match)
+    session.commit()
+    session.refresh(match)
+    return match
