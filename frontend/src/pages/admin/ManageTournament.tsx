@@ -51,8 +51,12 @@ const ManageTournament = () => {
     loadData();
   }, [id]);
 
-  const loadData = async () => {
-    setLoading(true);
+
+  // Voeg 'isBackground' parameter toe, standaard false
+  const loadData = async (isBackground = false) => {
+    // Alleen loading spinner tonen als het GEEN achtergrond refresh is
+    if (!isBackground) setLoading(true);
+    
     try {
       const tournRes = await api.get(`/tournaments/${id}`);
       const currentTourn = tournRes.data;
@@ -61,14 +65,22 @@ const ManageTournament = () => {
 
       if (currentTourn.public_uuid) {
           const matchesRes = await api.get(`/matches/by-tournament/${currentTourn.public_uuid}`);
-          setMatches(matchesRes.data);
+          
+          // Hier behouden we de lokale state van 'is_saving' en 'save_success' als we refreshen
+          // Dit voorkomt dat vinkjes direct verdwijnen tijdens de refresh
+          setMatches(prevMatches => {
+              const newMatches = matchesRes.data;
+              return newMatches.map((nm: MatchWithUI) => {
+                  const existing = prevMatches.find(pm => pm.id === nm.id);
+                  return existing ? { ...nm, is_saving: existing.is_saving, save_success: existing.save_success } : nm;
+              });
+          });
 
-          // OOK DE STANDEN OPHALEN (De Single Source of Truth)
           const standRes = await api.get(`/tournaments/${currentTourn.id}/standings`);
           setStandings(standRes.data);
 
-          // Open automatisch de hoogste ronde of poule fase
-          if (matchesRes.data.length > 0) {
+          // Alleen openklappen bij de EERSTE keer laden (niet bij background refresh)
+          if (!isBackground && matchesRes.data.length > 0) {
               const maxRoundMatch = matchesRes.data.reduce((prev: any, current: any) => {
                   return (prev.id > current.id) ? prev : current;
               });
@@ -82,9 +94,11 @@ const ManageTournament = () => {
     } catch (error) {
       console.error("Fout bij laden data:", error);
     } finally {
-      setLoading(false);
+      // Loading alleen uitzetten als we hem ook hadden aangezet
+      if (!isBackground) setLoading(false);
     }
   };
+
 
   // --- ACTIES ---
 
@@ -169,8 +183,10 @@ const ManageTournament = () => {
       }
   };
 
+
   const saveMatchScore = async (match: MatchWithUI) => {
       setMatches(prev => prev.map(m => m.id === match.id ? { ...m, is_saving: true } : m));
+      
       try {
           await api.put(`/matches/${match.id}/score`, {
               score_p1: match.score_p1,
@@ -180,19 +196,21 @@ const ManageTournament = () => {
           
           setMatches(prev => prev.map(m => m.id === match.id ? { ...m, is_saving: false, save_success: true, is_completed: true } : m));
           
-          // Data herladen zodat de tabel bovenin update!
-          loadData(); 
+          // AANPASSING HIER: Geef 'true' mee voor background refresh
+          loadData(true); 
 
           setTimeout(() => {
             setMatches(prev => prev.map(m => m.id === match.id ? { ...m, save_success: false } : m));
           }, 2000);
       } catch (err: any) {
+          // ... (foutafhandeling blijft hetzelfde)
           console.error(err);
           const errorMessage = err.response?.data?.detail || "Error saving score";
           alert(errorMessage); 
           setMatches(prev => prev.map(m => m.id === match.id ? { ...m, is_saving: false } : m));
       }
   };
+
 
   const handleKeyDown = (e: React.KeyboardEvent, match: MatchWithUI) => {
       if (e.key === 'Enter') {
@@ -270,7 +288,7 @@ const ManageTournament = () => {
                 <Settings className="text-gray-600" />
                 Beheer: <span className="text-blue-600">{tournament.name}</span>
             </h2>
-            <button onClick={loadData} className="p-2 bg-gray-200 rounded hover:bg-gray-300">
+            <button onClick={() => loadData()} className="p-2 bg-gray-200 rounded hover:bg-gray-300">
                 <RefreshCcw size={20} />
             </button>
         </div>
@@ -383,110 +401,115 @@ const ManageTournament = () => {
                         </div>
 
                         {isOpen && (
-                            <div className="p-0">
-                                {/* NIEUW: Standen tabel tonen in Admin als het een Poule is */}
-                                {isPoule && pouleStanding.length > 0 && (
-                                    <div className="mb-4 border-b border-gray-100 pb-4 bg-blue-50/30 p-4">
-                                        <h5 className="font-bold text-xs uppercase text-blue-400 mb-2 flex items-center gap-2"><LayoutGrid size={14}/> Huidige Stand</h5>
-                                        <div className="overflow-x-auto">
-                                            <table className="w-full text-xs text-left">
-                                                <thead>
-                                                    <tr className="text-gray-400 border-b">
-                                                        <th className="pb-1">#</th>
-                                                        <th className="pb-1">Naam</th>
-                                                        <th className="pb-1 text-center">Pts</th>
-                                                        <th className="pb-1 text-center">+/-</th>
-                                                        <th className="pb-1">Status</th>
-                                                    </tr>
-                                                </thead>
-                                                <tbody>
-                                                    {pouleStanding.map((p, idx) => (
-                                                        <tr key={p.id} className="border-b border-gray-100 last:border-0">
-                                                            <td className="py-2 font-mono text-gray-500 w-8">{idx + 1}</td>
-                                                            <td className="py-2 font-bold text-gray-700">{p.name}</td>
-                                                            <td className="py-2 text-center font-bold text-blue-600">{p.points}</td>
-                                                            <td className="py-2 text-center text-gray-500">{p.leg_diff}</td>
-                                                            <td className="py-2">
-                                                                {p.needs_shootout && (
-                                                                    <span className="flex items-center w-fit gap-1 text-[10px] bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-bold border border-red-200">
-                                                                        <AlertCircle size={10} /> SHOOTOUT NODIG
-                                                                    </span>
-                                                                )}
-                                                                {idx < (tournament?.qualifiers_per_poule || 2) && !p.needs_shootout && (
-                                                                     <span className="text-green-500"><Medal size={14}/></span>
-                                                                )}
-                                                            </td>
-                                                        </tr>
-                                                    ))}
-                                                </tbody>
-                                            </table>
-                                            <div className="mt-2 text-[10px] text-gray-400 italic">
-                                                * Bij een Shootout: Pas een wedstrijdscore van de winnaar aan (bijv. 3-0 ipv 3-2) om de tie te breken.
+                        // AANPASSING: We maken hier een Grid/Flex container van.
+                        // Op mobiel (flex-col-reverse) staan de wedstrijden BOVEN (dus geen verspringen) en de stand ONDER.
+                        // Op desktop (lg:grid) staan ze naast elkaar.
+                        <div className="p-0 flex flex-col-reverse lg:grid lg:grid-cols-3 lg:gap-0">
+                            
+                            {/* BLOK 1: DE WEDSTRIJDEN (Nu als eerste in de code) */}
+                            {/* We geven dit blok 2 kolommen breedte op desktop */}
+                            <div className="divide-y divide-gray-100 lg:col-span-2 lg:border-r lg:border-gray-100">
+                                {roundMatches.map(match => (
+                                    <div key={match.id} className={`p-3 transition-colors flex items-center justify-between ${match.save_success ? 'bg-green-50' : 'hover:bg-white'}`}>
+                                        <div className="w-16 flex flex-col items-center justify-center gap-1 border-r border-gray-100 mr-2 pr-2">
+                                            <div className="text-xs text-gray-400 font-mono">#{match.id}</div>
+                                            <div className="flex flex-col items-center mt-1">
+                                                <span className="text-[9px] text-gray-400 uppercase leading-none">Ref:</span>
+                                                <div className="text-[10px] text-blue-400 font-bold uppercase tracking-tighter" title={`Referee: ${match.referee_name}`}>
+                                                    {match.referee_name ? match.referee_name.split(' ')[0] : '-'}
+                                                </div>
                                             </div>
+                                        </div>
+
+                                        <div className="flex-1 flex items-center justify-center gap-2">
+                                            <div className={`flex-1 text-right truncate font-medium ${match.score_p1 > match.score_p2 && match.is_completed ? 'text-green-700 font-bold' : 'text-gray-700'}`}>
+                                                {match.player1_name || <span className="italic text-gray-400">Bye</span>}
+                                            </div>
+                                            <div className="flex items-center bg-white border rounded shadow-sm overflow-hidden focus-within:ring-2 focus-within:ring-blue-400 focus-within:border-blue-400 transition-all">
+                                                <input 
+                                                    type="number" 
+                                                    className={`w-12 text-center p-2 outline-none font-bold no-spinner ${match.save_success ? 'text-green-600' : 'text-gray-800'}`}
+                                                    value={match.score_p1}
+                                                    onChange={(e) => handleScoreChange(match.id, 'score_p1', e.target.value)}
+                                                    onFocus={(e) => e.target.select()} 
+                                                    onBlur={() => saveMatchScore(match)}
+                                                    onKeyDown={(e) => handleKeyDown(e, match)}
+                                                />
+                                                <span className="text-gray-300 font-light px-1">|</span>
+                                                <input 
+                                                    type="number" 
+                                                    className={`w-12 text-center p-2 outline-none font-bold no-spinner ${match.save_success ? 'text-green-600' : 'text-gray-800'}`}
+                                                    value={match.score_p2}
+                                                    onChange={(e) => handleScoreChange(match.id, 'score_p2', e.target.value)}
+                                                    onFocus={(e) => e.target.select()}
+                                                    onBlur={() => saveMatchScore(match)}
+                                                    onKeyDown={(e) => handleKeyDown(e, match)}
+                                                />
+                                            </div>
+                                            <div className={`flex-1 text-left truncate font-medium ${match.score_p2 > match.score_p1 && match.is_completed ? 'text-green-700 font-bold' : 'text-gray-700'}`}>
+                                                {match.player2_name || <span className="italic text-gray-400">Bye</span>}
+                                            </div>
+                                        </div>
+
+                                        <div className="w-20 flex justify-end gap-1">
+                                            {match.is_saving ? (
+                                                <span className="p-2 text-blue-500 animate-spin"><RefreshCcw size={16}/></span>
+                                            ) : match.save_success ? (
+                                                <span className="p-2 text-green-500"><SaveAll size={16}/></span>
+                                            ) : (
+                                                <button onClick={() => handleResetMatch(match.id)} className="p-2 text-gray-300 hover:text-red-500 transition" title="Reset">
+                                                    <RefreshCcw size={16} />
+                                                </button>
+                                            )}
                                         </div>
                                     </div>
-                                )}
-
-                                {/* WEDSTRIJDEN LIJST */}
-                                <div className="divide-y divide-gray-100">
-                                    {roundMatches.map(match => (
-                                        <div key={match.id} className={`p-3 transition-colors flex items-center justify-between ${match.save_success ? 'bg-green-50' : 'hover:bg-white'}`}>
-                                            <div className="w-16 flex flex-col items-center justify-center gap-1 border-r border-gray-100 mr-2 pr-2">
-                                                <div className="text-xs text-gray-400 font-mono">#{match.id}</div>
-                                                <div className="flex flex-col items-center mt-1">
-                                                    <span className="text-[9px] text-gray-400 uppercase leading-none">Ref:</span>
-                                                    <div className="text-[10px] text-blue-400 font-bold uppercase tracking-tighter" title={`Referee: ${match.referee_name}`}>
-                                                        {match.referee_name ? match.referee_name.split(' ')[0] : '-'}
-                                                    </div>
-                                                </div>
-                                            </div>
-
-                                            <div className="flex-1 flex items-center justify-center gap-2">
-                                                <div className={`flex-1 text-right truncate font-medium ${match.score_p1 > match.score_p2 && match.is_completed ? 'text-green-700 font-bold' : 'text-gray-700'}`}>
-                                                    {match.player1_name || <span className="italic text-gray-400">Bye</span>}
-                                                </div>
-                                                <div className="flex items-center bg-white border rounded shadow-sm overflow-hidden focus-within:ring-2 focus-within:ring-blue-400 focus-within:border-blue-400 transition-all">
-                                                    <input 
-                                                        type="number" 
-                                                        className={`w-12 text-center p-2 outline-none font-bold no-spinner ${match.save_success ? 'text-green-600' : 'text-gray-800'}`}
-                                                        value={match.score_p1}
-                                                        onChange={(e) => handleScoreChange(match.id, 'score_p1', e.target.value)}
-                                                        onFocus={(e) => e.target.select()} 
-                                                        onBlur={() => saveMatchScore(match)}
-                                                        onKeyDown={(e) => handleKeyDown(e, match)}
-                                                    />
-                                                    <span className="text-gray-300 font-light px-1">|</span>
-                                                    <input 
-                                                        type="number" 
-                                                        className={`w-12 text-center p-2 outline-none font-bold no-spinner ${match.save_success ? 'text-green-600' : 'text-gray-800'}`}
-                                                        value={match.score_p2}
-                                                        onChange={(e) => handleScoreChange(match.id, 'score_p2', e.target.value)}
-                                                        onFocus={(e) => e.target.select()}
-                                                        onBlur={() => saveMatchScore(match)}
-                                                        onKeyDown={(e) => handleKeyDown(e, match)}
-                                                    />
-                                                </div>
-                                                <div className={`flex-1 text-left truncate font-medium ${match.score_p2 > match.score_p1 && match.is_completed ? 'text-green-700 font-bold' : 'text-gray-700'}`}>
-                                                    {match.player2_name || <span className="italic text-gray-400">Bye</span>}
-                                                </div>
-                                            </div>
-
-                                            <div className="w-20 flex justify-end gap-1">
-                                                {match.is_saving ? (
-                                                    <span className="p-2 text-blue-500 animate-spin"><RefreshCcw size={16}/></span>
-                                                ) : match.save_success ? (
-                                                    <span className="p-2 text-green-500"><SaveAll size={16}/></span>
-                                                ) : (
-                                                    <button onClick={() => handleResetMatch(match.id)} className="p-2 text-gray-300 hover:text-red-500 transition" title="Reset">
-                                                        <RefreshCcw size={16} />
-                                                    </button>
-                                                )}
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
+                                ))}
                             </div>
-                        )}
+
+                            {/* BLOK 2: HET SCOREBOARD (Nu als tweede, of rechts op desktop) */}
+                            {isPoule && pouleStanding.length > 0 && (
+                                <div className="bg-blue-50/30 p-4 border-t lg:border-t-0 lg:col-span-1">
+                                    <h5 className="font-bold text-xs uppercase text-blue-400 mb-2 flex items-center gap-2"><LayoutGrid size={14}/> Huidige Stand</h5>
+                                    <div className="overflow-x-auto">
+                                        <table className="w-full text-xs text-left">
+                                            <thead>
+                                                <tr className="text-gray-400 border-b">
+                                                    <th className="pb-1">#</th>
+                                                    <th className="pb-1">Naam</th>
+                                                    <th className="pb-1 text-center">Pts</th>
+                                                    <th className="pb-1 text-center">+/-</th>
+                                                    <th className="pb-1">Status</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {pouleStanding.map((p, idx) => (
+                                                    <tr key={p.id} className="border-b border-gray-100 last:border-0">
+                                                        <td className="py-2 font-mono text-gray-500 w-8">{idx + 1}</td>
+                                                        <td className="py-2 font-bold text-gray-700">{p.name}</td>
+                                                        <td className="py-2 text-center font-bold text-blue-600">{p.points}</td>
+                                                        <td className="py-2 text-center text-gray-500">{p.leg_diff}</td>
+                                                        <td className="py-2">
+                                                            {p.needs_shootout && (
+                                                                <span className="flex items-center w-fit gap-1 text-[10px] bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-bold border border-red-200">
+                                                                    <AlertCircle size={10} /> SO
+                                                                </span>
+                                                            )}
+                                                            {idx < (tournament?.qualifiers_per_poule || 2) && !p.needs_shootout && (
+                                                                <span className="text-green-500"><Medal size={14}/></span>
+                                                            )}
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                        <div className="mt-2 text-[10px] text-gray-400 italic">
+                                            * Stand update live
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    )}
                     </div>
                 );
             })}
