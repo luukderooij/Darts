@@ -28,12 +28,13 @@ export interface Tournament {
   format: string;
   public_uuid?: string;
   scorer_uuid?: string;
-  
-  // Nieuwe velden die het dashboard nodig heeft:
+
   number_of_poules?: number;
   player_count?: number;
   board_count?: number;
   allow_byes?: boolean; 
+
+  qualifiers_per_poule?: number;
 }
 
 // We voegen Match en Leg later toe
