@@ -2410,85 +2410,175 @@ def calculate_poule_standings(session: Session, tournament: Tournament) -> Dict[
     return final_standings
 
 
-# HIER IS DE FUNCTIE WAAR DE ERROR OVER KLAAGDE
 def generate_knockout_bracket(session: Session, tournament: Tournament):
     """
-    Genereert bracket op basis van standings voor Singles én Doubles.
+    Genereert bracket volgens de regels van sectie 5b:
+    1. Byes naar allerbeste poulewinnaars (Global Ranking).
+    2. Cyclisch koppelen (A->B->C..).
+    3. Sterk tegen Zwak.
     """
+    # 1. Haal de standen op (reeds gesorteerd op Punten -> Saldo -> H2H)
     standings = calculate_poule_standings(session, tournament)
     is_doubles = tournament.mode == "doubles"
-
-    # Verzamel Qualifiers
+    
+    # 2. Flatten de lijst en voeg metadata toe (Poule Rank & Poule Nummer)
+    # We maken een lijst van alle qualifiers
     qualifiers = []
     q_per_poule = tournament.qualifiers_per_poule if tournament.qualifiers_per_poule else 2
-    
-    for p_num in range(1, tournament.number_of_poules + 1):
-        poule_list = standings.get(p_num, [])
-        top_x = poule_list[:q_per_poule]
-        qualifiers.extend(top_x)
+
+    for p_num, players in standings.items():
+        # Pak alleen de top X van deze poule
+        top_x = players[:q_per_poule]
+        for rank_idx, p in enumerate(top_x):
+            # Voeg extra info toe voor het sorteer-algoritme
+            p_data = p.copy()
+            p_data['poule_number'] = p_num
+            p_data['poule_rank'] = rank_idx + 1 # 1 = 1e, 2 = 2e, etc.
+            qualifiers.append(p_data)
 
     if not qualifiers:
-        print("Geen qualifiers. Zijn poules gespeeld?")
+        print("Geen qualifiers gevonden. Zijn de poules gespeeld?")
         return
 
-    # Bracket Grootte (Macht van 2)
-    count = len(qualifiers)
+    # 3. Bepaal Bracket Grootte (Macht van 2)
+    total_players = len(qualifiers)
     bracket_size = 2
-    while bracket_size < count:
+    while bracket_size < total_players:
         bracket_size *= 2
     
-    qualified_ids = [q["id"] for q in qualifiers]
+    num_byes = bracket_size - total_players
     
-    # Byes toevoegen
-    while len(qualified_ids) < bracket_size:
-        qualified_ids.append(None)
+    # ---------------------------------------------------------
+    # STAP 1: BYES TOEWIJZEN AAN DE BESTE SPELERS (GLOBAL RANK)
+    # ---------------------------------------------------------
+    # Sorteer alles op 'Global Strength':
+    # 1. Poule Positie (Laagste is beste: 1e, dan 2e..)
+    # 2. Punten (Hoogste is beste)
+    # 3. Leg Saldo (Hoogste is beste)
+    # 4. Legs Won (Hoogste is beste)
+    
+    qualifiers.sort(key=lambda x: (
+        x['poule_rank'], 
+        -x['points'], 
+        -x['leg_diff'], 
+        -x['legs_won']
+    ))
 
-    # Husselen (Simple Seeding)
-    random.shuffle(qualified_ids)
+    # De top N spelers krijgen een Bye
+    players_with_bye = qualifiers[:num_byes]
+    players_to_match = qualifiers[num_byes:]
+
+    print(f"Bracket Size: {bracket_size}, Byes: {num_byes}")
+    print(f"Byes gaan naar: {[p['name'] for p in players_with_bye]}")
+
+    matches_to_create = []
     
-    # Matches aanmaken
-    matches_in_first_round = bracket_size // 2
-    current_round = 1 
+    # Maak eerst de Bye-wedstrijden aan (Deze zijn direct 'completed')
+    current_round = 1
     
-    for i in range(matches_in_first_round):
-        p1_id = qualified_ids[i * 2]
-        p2_id = qualified_ids[i * 2 + 1]
-        
+    for bye_player in players_with_bye:
         match = Match(
             tournament_id=tournament.id,
             round_number=current_round,
-            poule_number=None, # KO Match
+            poule_number=None,
             best_of_legs=tournament.starting_legs_ko,
             best_of_sets=tournament.sets_per_match,
-            is_completed=False,
-            score_p1=0,
+            is_completed=True, # Direct klaar
+            score_p1=math.ceil(tournament.starting_legs_ko / 2), # 'Winst' score
             score_p2=0
         )
-        
-        # KOPPEL JUISTE KOLOMMEN
         if is_doubles:
-            match.team1_id = p1_id
-            match.team2_id = p2_id
-            # Bye logica
-            if p2_id is None and p1_id is not None:
-                match.score_p1 = math.ceil(tournament.starting_legs_ko / 2) + 1
-                match.is_completed = True
-            if p1_id is None:
-                match.is_completed = True
-        else: # Singles
-            match.player1_id = p1_id
-            match.player2_id = p2_id
-            # Bye logica
-            if p2_id is None and p1_id is not None:
-                match.score_p1 = math.ceil(tournament.starting_legs_ko / 2) + 1
-                match.is_completed = True
-            if p1_id is None:
-                match.is_completed = True
+            match.team1_id = bye_player['id']
+            match.team2_id = None # Bye
+        else:
+            match.player1_id = bye_player['id']
+            match.player2_id = None # Bye
+            
+        matches_to_create.append(match)
 
-        session.add(match)
+    # ---------------------------------------------------------
+    # STAP 2 & 3: CYCLISCH KOPPELEN & STERK TEGEN ZWAK
+    # ---------------------------------------------------------
+    # We hebben een pool 'players_to_match'.
+    # Zolang er spelers zijn:
+    # 1. Pak de sterkste beschikbare speler (P1).
+    # 2. Kijk naar de volgende poule (A -> B).
+    # 3. Zoek daar de ZWAKSTE beschikbare speler (P2).
+    # 4. Geen speler in B? Kijk in C.
     
+    # Sorteer players_to_match weer op sterkte (zodat we pop(0) kunnen doen voor de sterkste)
+    players_to_match.sort(key=lambda x: (
+        x['poule_rank'], 
+        -x['points'], 
+        -x['leg_diff']
+    ))
+
+    # Hulpfunctie om volgende poule te vinden
+    # We maken een lijst van beschikbare poule nummers om oneindige loops te voorkomen
+    available_poules = sorted(list(set(p['poule_number'] for p in players_to_match)))
+    max_poules = tournament.number_of_poules
+
+    while len(players_to_match) > 0:
+        # A. Pak Sterkste (staat vooraan door sort)
+        p1 = players_to_match.pop(0) 
+        
+        # B. Zoek Tegenstander
+        opponent = None
+        
+        # We proberen cyclisch te zoeken: p1.poule + 1, + 2, etc.
+        # We loopen maximaal N keer (aantal poules)
+        found_opponent_idx = -1
+        
+        for offset in range(1, max_poules + 1):
+            target_poule_num = ((p1['poule_number'] - 1 + offset) % max_poules) + 1
+            
+            # Zoek in de resterende lijst naar spelers van deze target poule
+            # We willen de ZWAKSTE van die poule. De lijst is gesorteerd op sterkte.
+            # Dus we zoeken van achteren naar voren naar iemand uit target_poule_num.
+            
+            candidates_indices = [
+                i for i, p in enumerate(players_to_match) 
+                if p['poule_number'] == target_poule_num
+            ]
+            
+            if candidates_indices:
+                # Pak de laatste (dat is de zwakste van die groep door onze sortering)
+                found_opponent_idx = candidates_indices[-1]
+                break
+        
+        # C. Fallback: Als we door alle offsets zijn en niemand vinden (bijv. laatste 2 komen uit dezelfde poule)
+        # Dan pakken we gewoon de zwakste die nog over is, ongeacht poule.
+        if found_opponent_idx == -1 and len(players_to_match) > 0:
+             found_opponent_idx = len(players_to_match) - 1
+
+        if found_opponent_idx != -1:
+            opponent = players_to_match.pop(found_opponent_idx)
+            
+            # Maak de Match
+            match = Match(
+                tournament_id=tournament.id,
+                round_number=current_round,
+                poule_number=None,
+                best_of_legs=tournament.starting_legs_ko,
+                best_of_sets=tournament.sets_per_match,
+                is_completed=False,
+                score_p1=0,
+                score_p2=0
+            )
+            
+            if is_doubles:
+                match.team1_id = p1['id']
+                match.team2_id = opponent['id']
+            else:
+                match.player1_id = p1['id']
+                match.player2_id = opponent['id']
+                
+            matches_to_create.append(match)
+            print(f"Match gemaakt: {p1['name']} (P{p1['poule_number']}#{p1['poule_rank']}) vs {opponent['name']} (P{opponent['poule_number']}#{opponent['poule_rank']})")
+
+    session.add_all(matches_to_create)
     session.commit()
-    print(f"Knockout (Teams/Singles) gegenereerd: {matches_in_first_round} wedstrijden.")
+    print(f"Knockout gegenereerd: {len(matches_to_create)} wedstrijden.")
 
 
 def check_and_advance_knockout(tournament_id: int, current_round: int, session: Session):
