@@ -52,10 +52,25 @@ Binnen die koppeling geldt altijd: de sterkste beschikbare speler speelt tegen d
 ​De nummer 2 van Poule A speelt tegen de nummer 4 van Poule B.
 ​(Enzovoort, tot alle spelers zijn voorzien).
 
+5c. Bordbeheer & Dynamische Allocatie
+Het systeem hanteert een flexibele toewijzingslogica om de beschikbare capaciteit van de locatie maximaal te benutten:
+Capaciteitsmodellen:
+- Poule-gebaseerd: Bij een 1-op-1 verhouding (of minder borden dan poules) wordt een vaste poule aan een specifiek bord toegewezen om onrust in de zaal te minimaliseren.
+- Overflow/Dynamisch: Indien er meer borden beschikbaar zijn dan actieve poules, worden vrije borden automatisch ingezet voor de eerstvolgende beschikbare wedstrijd uit de wachtrij (Queue), ongeacht de poule-herkomst.
+- Handmatige Override: Vanuit het Tournament Dashboard kan de admin op elk moment een actieve wedstrijd verplaatsen naar een ander bord. 
+
+5d. Slimme Arbitrage (Schrijver-logica)
+De "Smart Scheduling Logic" wordt uitgebreid met een Locatie-Restrictie om de fysieke belasting en verwarring van spelers te beperken:
+Nabijheids-algoritme: Bij de automatische toewijzing van een schrijver (meestal de verliezer van de vorige partij op dat bord) houdt het systeem rekening met de Bord-ID.
+Schrijver-beperking: Een speler wordt bij voorkeur alleen aangewezen als schrijver op het bord waar hij zojuist zelf heeft gegooid, of een bord in de directe nabijheid (indien gedefinieerd in de configuratie).
+Conflictpreventie: Het algoritme blokkeert de toewijzing van een schrijverstaken als de speler op een ander bord (bijv. in een andere poule) gelijktijdig moet gooien.
+Prioriteit: Spelen > Schrijven. Indien een schrijver moet spelen, zoekt het systeem automatisch de eerstvolgende beschikbare speler met de hoogste "rustfactor".   
+
 6. Interface
 - Publieke Pagina's: Home, Live Match View, TV Mode.
 - Admin Dashboard: JWT beveiligd, Player/Tournament management.
 - Scorer Interface: Geoptimaliseerd voor tablets met numeriek keypad.
+- Board Manager: Een interactieve grid-view waarin de status van elk bord (Bezet/Vrij/Defect) zichtbaar is en wedstrijden via drag-and-drop kunnen worden toegewezen.
 
 7. DevOps & Security
 - OAuth2 met JWT.
