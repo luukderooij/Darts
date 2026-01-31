@@ -12,6 +12,7 @@ class MatchRead(BaseModel):
     round_number: int
     
     poule_number: Optional[int] = None 
+    board_number: Optional[int] = None  
     best_of_legs: Optional[int] = 5
     best_of_sets: Optional[int] = 1
 
