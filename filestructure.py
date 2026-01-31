@@ -31,10 +31,26 @@ Modellen: user, tournament, player, team, match, dartboard.
 - Ranking-logica op basis van Punten (2 per winst) -> Leg-Difference (+/- Saldo) -> Head-to-Head (onderling resultaat) -> 9-dart-Shoot-out (indien 3 spelers gelijk staan). Dit is volgens Order of Merrit Rules
 
 5b. Knock-out Transitie & Seeding
-- Automatische Kwalificatie: Dynamische doorstroming van de top X spelers per poule naar een Single of Double Elimination bracket (2, 4, 8, 16, etc.).
-- Bye-Management: Als de setting Byes bij het maken van het tournooi wordt gekozen. Zal bij een onregelmatig aantal gekwalificeerden worden "Byes" (vrijlotingen) prioritair toegewezen aan de hoogst geplaatste spelers (bijv. poulewinnaars) om de bracket te balanceren.
-- Cross-Poule Matching: Om sportieve variatie te maximaliseren, worden spelers uit verschillende poules tegen elkaar gekoppeld (bijv. Winnaar Poule A vs. laagst geplaatste van Poule B).
-- Bracket Protection (Seeding): Implementatie van een beschermde indeling waarbij de nummers 1 en 2 uit dezelfde poule aan weerszijden van de bracket worden geplaatst. Dit garandeert dat zij elkaar pas in de finale weer kunnen treffen.
+Cross-Poule Matching: Dynamische Knock-out
+​Dit toernooi gebruikt een slim systeem om de knock-outfase te bepalen. Het doel is maximale sportieve variatie en een eerlijke verdeling van weerstand. Het systeem werkt in drie heldere stappen:
+​1. Bepalen van de Byes (Vrijlotingen)
+Eerst kijkt het systeem of het aantal spelers precies in een knock-outschema past (4, 8, 16, 32, etc.).
+​Past het niet precies? (Bijv. 15 spelers voor een schema van 16). Dan worden de ontbrekende plekken opgevuld met Byes indien voor deze setting is gekozen. 
+​Deze vrijlotingen gaan naar de allerbeste poulewinnaars (op basis van hun prestaties over alle poules heen). Zij slaan de eerste ronde over.
+​2. Cyclisch Koppelen (De rest van het veld)
+De spelers die geen Bye hebben, worden aan elkaar gekoppeld.
+​Meerdere Poules: Er wordt gekoppeld in een cirkel (Poule A ➤ Poule B ➤ Poule C ➤ ... ➤ Poule A).
+​1 Poule: Er wordt intern gekoppeld.
+​3. Sterk tegen Zwak
+Binnen die koppeling geldt altijd: de sterkste beschikbare speler speelt tegen de zwakste beschikbare speler.
+​Voorbeeld (3 poules van 5 spelers = 15 deelnemers)
+​Er is een schema van 16 nodig. Dat betekent 1 Bye en 7 wedstrijden.
+​De Bye: De allerbeste nummer 1 (bijvoorbeeld die van Poule A) krijgt een Bye en is direct door.
+​De Matches: De overige 14 spelers worden volgens het doorschuif-systeem gematcht:
+​De nummer 1 van Poule B speelt tegen de nummer 5 van Poule C.
+​De nummer 1 van Poule C speelt tegen de nummer 5 van Poule A.
+​De nummer 2 van Poule A speelt tegen de nummer 4 van Poule B.
+​(Enzovoort, tot alle spelers zijn voorzien).
 
 6. Interface
 - Publieke Pagina's: Home, Live Match View, TV Mode.
