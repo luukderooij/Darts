@@ -5,6 +5,7 @@ from typing import List, Optional, Any, Dict
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select
 from sqlalchemy.orm import selectinload
+from pydantic import BaseModel, EmailStr
 
 from app.db.session import get_session
 from app.models.tournament import Tournament
@@ -23,7 +24,6 @@ from app.schemas.tournament import (
     TournamentReadWithMatches
 )
 
-# Toegevoegd: calculate_poule_standings
 from app.services.tournament_gen import (
     generate_poule_phase, 
     generate_round_robin_global,
@@ -32,9 +32,22 @@ from app.services.tournament_gen import (
     assign_referees,
     calculate_poule_standings 
 )
-from app.models import tournament
 
 router = APIRouter()
+
+# --- HELPER: TOEGANGSCONTROLE ---
+def verify_tournament_access(tournament: Tournament, user: User):
+    """
+    Controleert of de gebruiker de eigenaar OF een co-admin is.
+    Gooit een 403 error als toegang geweigerd wordt.
+    """
+    is_owner = tournament.user_id == user.id
+    # We gebruiken getattr om veilig te checken, mocht de relatie nog leeg zijn
+    admins = getattr(tournament, 'admins', [])
+    is_co_admin = any(u.id == user.id for u in admins)
+
+    if not (is_owner or is_co_admin):
+         raise HTTPException(status_code=403, detail="Access denied: You are not the owner or admin.")
 
 @router.post("/", response_model=TournamentRead)
 def create_tournament(
@@ -47,17 +60,12 @@ def create_tournament(
     if tourn_in.player_ids:
         players_to_link = session.exec(select(Player).where(Player.id.in_(tourn_in.player_ids))).all()
     
-    # Check minimum players (raw count)
     if len(players_to_link) < 2:
         raise HTTPException(status_code=400, detail="Selecteer minimaal 2 spelers.")
 
     # 2. Validatie Poulegrootte
     if tourn_in.format == "hybrid" and tourn_in.number_of_poules > 0:
-            
-            # Bepaal hoeveel 'entiteiten' (spelers of teams) er in de poule komen
             entity_count = len(players_to_link)
-            
-            # Als het koppels zijn, delen we het aantal spelers door 2
             if tourn_in.mode == "doubles":
                 entity_count = math.ceil(entity_count / 2)
 
@@ -77,7 +85,6 @@ def create_tournament(
              raise HTTPException(status_code=400, detail="Ongeldige borden geselecteerd.")
 
     # 4. Create Tournament Object
-    # We exclude ids because we link them manually via relationships
     tourn_data = tourn_in.model_dump(exclude={"player_ids", "board_ids"})
     tournament = Tournament.model_validate(tourn_data)
     
@@ -94,8 +101,7 @@ def create_tournament(
     session.commit()
     session.refresh(tournament)
     
-    # 6. Generate Matches based on Format (ONLY FOR SINGLES)
-    # For doubles, we wait for the /finalize endpoint because teams need to be created first
+    # 6. Generate Matches (Singles)
     if tournament.mode == "singles":
             if tournament.format == "hybrid":
                 generate_poule_phase(
@@ -131,39 +137,45 @@ def read_tournament_by_id(
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user)
 ):
+    # AANGEPAST: We halen de admins en players op
+    # We filteren NIET direct op user_id in de SQL, dat doen we in de check daarna
     statement = (
         select(Tournament)
         .where(Tournament.id == tournament_id)
-        .options(selectinload(Tournament.players)) # Laad spelers expliciet
+        .options(
+            selectinload(Tournament.players), 
+            selectinload(Tournament.admins) # Zorg dat admins geladen zijn!
+        )
     )
     tournament = session.exec(statement).first()
 
     if not tournament:
         raise HTTPException(status_code=404, detail="Tournament not found")
+    
+    # --- SECURITY CHECK ---
+    verify_tournament_access(tournament, current_user)
+    # ---------------------------------
+        
     return tournament
 
-
-# --- NIEUW ENDPOINT: Centrale Standen Berekening ---
 @router.get("/{tournament_id}/standings")
 def get_tournament_standings(
     tournament_id: int,
-    session: Session = Depends(get_session)
+    session: Session = Depends(get_session),
+    # Deze endpoint wordt gebruikt in het dashboard, dus beveiligen we hem ook
+    current_user: User = Depends(get_current_user) 
 ):
-    """
-    Geeft de berekende stand terug voor alle poules.
-    Bevat logica voor:
-    - 2 punten per winst
-    - Leg Saldo
-    - Head-to-Head
-    - 9-dart Shoot-out detectie (needs_shootout=True)
-    """
     tournament = session.get(Tournament, tournament_id)
     if not tournament:
         raise HTTPException(status_code=404, detail="Tournament not found")
     
-    # Roep de centrale logica aan in tournament_gen.py
+    # --- SECURITY CHECK ---
+    # We laden admins even handmatig bij omdat session.get dat niet altijd doet
+    session.refresh(tournament, ["admins"])
+    verify_tournament_access(tournament, current_user)
+    # ----------------------
+
     return calculate_poule_standings(session, tournament)
-# ---------------------------------------------------
 
 @router.get("/", response_model=List[TournamentRead])
 def read_tournaments(
@@ -172,16 +184,18 @@ def read_tournaments(
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user)
 ):
+    # TODO: Voor volledigheid zou je hier ook toernooien moeten ophalen 
+    # waar de user 'admin' van is, niet alleen eigenaar.
+    # Voor nu laten we dit op eigenaar staan voor de standaard lijst.
     tournaments = session.exec(
         select(Tournament)
         .where(Tournament.user_id == current_user.id)
         .options(selectinload(Tournament.players), selectinload(Tournament.boards))
-        .order_by(Tournament.created_at.desc()) # Sorteer op nieuwste eerst
+        .order_by(Tournament.created_at.desc())
         .offset(offset)
         .limit(limit)
     ).all()
     
-    # Fill counts manually
     results = []
     for t in tournaments:
         t_data = t.model_dump()
@@ -193,15 +207,14 @@ def read_tournaments(
 
 @router.get("/public/{public_uuid}", response_model=TournamentReadWithMatches)
 def read_public_tournament(public_uuid: str, session: Session = Depends(get_session)):
-    # 1. Fetch tournament with matches and players
-    # We use options to efficiently load relationships in one go
+    # Publieke endpoints hebben GEEN user check nodig
     t = session.exec(
         select(Tournament)
         .where(Tournament.public_uuid == public_uuid)
         .options(
             selectinload(Tournament.matches).options(
-                selectinload(Match.referee),      # Load Referee Player
-                selectinload(Match.referee_team)  # Load Referee Team
+                selectinload(Match.referee),
+                selectinload(Match.referee_team)
             ), 
             selectinload(Tournament.players)
         )
@@ -210,10 +223,8 @@ def read_public_tournament(public_uuid: str, session: Session = Depends(get_sess
     if not t:
         raise HTTPException(status_code=404, detail="Tournament not found")
 
-    # 2. Create map for players and teams for fast lookup
     player_map = {p.id: p.name for p in t.players}
     
-    # We also need teams if it's a doubles tournament
     teams = session.exec(
         select(Team)
         .join(TournamentTeamLink)
@@ -221,15 +232,12 @@ def read_public_tournament(public_uuid: str, session: Session = Depends(get_sess
     ).all()
     team_map = {team.id: team.name for team in teams}
 
-    # 3. Enrich matches with names
     matches_data = []
-    # Sort matches by ID to keep order
     sorted_matches = sorted(t.matches, key=lambda m: m.id)
     
     for m in sorted_matches:
         m_dict = m.model_dump()
         
-        # Resolve Name 1 (Player > Team > Bye)
         if m.player1_id:
             m_dict['player1_name'] = player_map.get(m.player1_id, "Bye")
         elif m.team1_id:
@@ -237,7 +245,6 @@ def read_public_tournament(public_uuid: str, session: Session = Depends(get_sess
         else:
              m_dict['player1_name'] = "Bye"
 
-        # Resolve Name 2
         if m.player2_id:
             m_dict['player2_name'] = player_map.get(m.player2_id, "Bye")
         elif m.team2_id:
@@ -245,18 +252,15 @@ def read_public_tournament(public_uuid: str, session: Session = Depends(get_sess
         else:
              m_dict['player2_name'] = "Bye"
              
-        # --- Resolve Referee Name ---
         if m.referee:
             m_dict['referee_name'] = m.referee.name
         elif m.referee_team:
             m_dict['referee_name'] = m.referee_team.name
         else:
             m_dict['referee_name'] = "-" 
-        # ---------------------------------
 
         matches_data.append(m_dict)
 
-    # 4. Build response
     response = t.model_dump()
     response['matches'] = matches_data
     response['player_count'] = len(t.players)
@@ -273,12 +277,15 @@ def start_knockout(
     t = session.get(Tournament, tournament_id)
     if not t:
         raise HTTPException(status_code=404, detail="Tournament not found")
+    
+    # --- SECURITY CHECK ---
+    session.refresh(t, ["admins"])
+    verify_tournament_access(t, current_user)
+    # ----------------------
         
-    # Call the NEW function from tournament_gen
     generate_knockout_bracket(session, t)
     
     return {"message": "Knockout phase generated"}
-
 
 @router.patch("/{tournament_id}", response_model=TournamentRead)
 def update_tournament_settings(
@@ -287,12 +294,16 @@ def update_tournament_settings(
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user)
 ):
-    """
-    Update tournament settings (e.g. allow_byes) on the fly.
-    """
-    tournament = session.get(Tournament, tournament_id)
+    # Laad tournament inclusief admins voor de check
+    statement = select(Tournament).where(Tournament.id == tournament_id).options(selectinload(Tournament.admins))
+    tournament = session.exec(statement).first()
+
     if not tournament:
         raise HTTPException(status_code=404, detail="Tournament not found")
+    
+    # --- SECURITY CHECK ---
+    verify_tournament_access(tournament, current_user)
+    # ----------------------
     
     tourn_data = tourn_update.model_dump(exclude_unset=True)
     for key, value in tourn_data.items():
@@ -311,9 +322,16 @@ def update_round_format(
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user)
 ):
-    """
-    Batch update: Adjust 'Best of X' for ALL unplayed matches in a specific round.
-    """
+    # Eerst toernooi checken voor security
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Toernooi niet gevonden")
+    
+    # --- SECURITY CHECK ---
+    session.refresh(tournament, ["admins"])
+    verify_tournament_access(tournament, current_user)
+    # ----------------------
+
     statement = select(Match).where(
         Match.tournament_id == tournament_id,
         Match.round_number == round_number,
@@ -331,7 +349,6 @@ def update_round_format(
     session.commit()
     return {"message": f"{len(matches)} wedstrijden geüpdatet naar Best of {best_of_legs} legs."}
 
-
 @router.delete("/{tournament_id}")
 def delete_tournament(
     tournament_id: int,
@@ -342,13 +359,17 @@ def delete_tournament(
     if not tournament:
         raise HTTPException(status_code=404, detail="Tournament not found")
     
+    # --- SECURITY CHECK ---
+    session.refresh(tournament, ["admins"])
+    verify_tournament_access(tournament, current_user)
+    # ----------------------
+    
     # 1. Delete Matches
     matches = session.exec(select(Match).where(Match.tournament_id == tournament_id)).all()
     for m in matches:
         session.delete(m)
         
-    # 2. Delete Teams (FIX: Via de koppeltabel zoeken)
-    # Omdat Team geen 'tournament_id' heeft, joinen we met TournamentTeamLink
+    # 2. Delete Teams
     teams = session.exec(
         select(Team)
         .join(TournamentTeamLink)
@@ -364,35 +385,33 @@ def delete_tournament(
     
     return {"ok": True}
 
-
 @router.post("/{tournament_id}/finalize")
 def finalize_tournament_setup(
     tournament_id: int, 
-    session: Session = Depends(get_session)
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user) # Toegevoegd voor security
 ):
-    """
-    Trigger match generation after teams are created.
-    Specific for Doubles/Teams tournaments.
-    """
     tournament = session.get(Tournament, tournament_id)
     if not tournament:
         raise HTTPException(status_code=404, detail="Toernooi niet gevonden")
 
+    # --- SECURITY CHECK ---
+    session.refresh(tournament, ["admins"])
+    verify_tournament_access(tournament, current_user)
+    # ----------------------
+
     if tournament.mode == "singles":
         return {"message": "Already generated (singles)"}
 
-    # Fetch all teams
     teams = session.exec(select(Team).where(Team.tournament_id == tournament_id)).all()
     
     if len(teams) < 2:
         raise HTTPException(status_code=400, detail="Te weinig teams om wedstrijden te genereren.")
 
-    # Remove old matches (safety)
     existing_matches = session.exec(select(Match).where(Match.tournament_id == tournament_id)).all()
     for m in existing_matches:
         session.delete(m)
     
-    # --- Generation Logic for Teams (Poule Phase) ---
     num_poules = tournament.number_of_poules
     poules = [[] for _ in range(num_poules)]
     
@@ -400,16 +419,13 @@ def finalize_tournament_setup(
         poule_index = i % num_poules
         poules[poule_index].append(team)
 
-        matches_created = []
+    matches_created = []
     
     for poule_idx, poule_teams in enumerate(poules):
         poule_number = poule_idx + 1
         n = len(poule_teams)
-        
-        # Temporary list for this poule's matches
         poule_matches = [] 
 
-        # Round Robin Generation
         for i in range(n):
             for j in range(i + 1, n):
                 t1 = poule_teams[i]
@@ -420,22 +436,61 @@ def finalize_tournament_setup(
                     poule_number=poule_number,
                     team1_id=t1.id,
                     team2_id=t2.id,
-                    round_number=1, # Note: Round logic is simple here, might need improvement for perfect referee spacing
+                    round_number=1, 
                     best_of_legs=tournament.starting_legs_group,
                     best_of_sets=tournament.sets_per_match,
                     is_completed=False,
                     score_p1=0,
                     score_p2=0
                 )
-                poule_matches.append(match) # Add to temp list
+                poule_matches.append(match)
 
-        # --- Referee Toewijzen ---
         assign_referees(poule_matches, poule_teams, is_doubles=True)
-        # -------------------------
-
-        # Add to main list to save later
         matches_created.extend(poule_matches)
         session.add_all(poule_matches)
 
     session.commit()
     return {"message": f"Setup finalized. {len(matches_created)} matches generated for {len(teams)} teams."}
+
+
+class AddAdminRequest(BaseModel):
+    email: EmailStr
+
+@router.post("/{tournament_id}/admins", response_model=TournamentRead)
+def add_admin_to_tournament(
+    tournament_id: int,
+    admin_req: AddAdminRequest,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Voeg een andere gebruiker toe als co-admin op basis van email.
+    Alleen de EIGENAAR mag dit doen.
+    """
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Toernooi niet gevonden")
+    
+    # Security Check: Alleen de EIGENAAR mag admins toevoegen (niet de co-admins)
+    if tournament.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Alleen de eigenaar mag beheerders toevoegen.")
+
+    # Zoek de nieuwe admin
+    new_admin = session.exec(select(User).where(User.email == admin_req.email)).first()
+    if not new_admin:
+        raise HTTPException(status_code=404, detail="Gebruiker met dit e-mailadres niet gevonden.")
+    
+    if new_admin.id == current_user.id:
+         raise HTTPException(status_code=400, detail="Je bent al de eigenaar.")
+
+    # Check of hij al admin is
+    if new_admin in tournament.admins:
+        raise HTTPException(status_code=400, detail="Deze gebruiker is al beheerder.")
+
+    # Toevoegen
+    tournament.admins.append(new_admin)
+    session.add(tournament)
+    session.commit()
+    session.refresh(tournament)
+    
+    return tournament

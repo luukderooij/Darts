@@ -12,6 +12,7 @@ from app.schemas.team import TeamCreateManual, TeamAutoGenerate, TeamRead, TeamL
 from app.api.users import get_current_user 
 from sqlalchemy.orm import selectinload
 from app.services import csv_service
+from app.models.user import User
 
 router = APIRouter()
 
@@ -29,10 +30,11 @@ def generate_team_name(players: List[Player]) -> str:
 @router.get("/", response_model=List[TeamRead])
 def read_all_teams(
     session: Session = Depends(get_session),
-    current_user = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
-    """Haal alle teams op die in de database staan (voor de 'Manage Teams' pagina)."""
-    teams = session.exec(select(Team)).all()
+    # Alleen teams ophalen van de ingelogde gebruiker
+    statement = select(Team).where(Team.user_id == current_user.id)
+    teams = session.exec(statement).all()
     return teams
 
 # --- ENDPOINT 2: Teams van een specifiek toernooi ophalen ---
@@ -92,6 +94,7 @@ def create_manual_team(
 
     # 3. Maak het Team object (ZONDER tournament_id)
     team = Team(name=final_name)
+    team.user_id = current_user.id
     team.players = players
     session.add(team)
     session.commit()
@@ -164,6 +167,7 @@ def create_auto_teams(
         
         # A. Maak Team
         team = Team(name=auto_name)
+        team.user_id = current_user.id
         team.players = pair_players
         session.add(team)
         session.commit() 

@@ -16,3 +16,7 @@ class TeamPlayerLink(SQLModel, table=True):
 class TournamentTeamLink(SQLModel, table=True):
     tournament_id: Optional[int] = Field(default=None, foreign_key="tournament.id", primary_key=True)
     team_id: Optional[int] = Field(default=None, foreign_key="team.id", primary_key=True)
+
+class TournamentAdminLink(SQLModel, table=True):
+    tournament_id: Optional[int] = Field(default=None, foreign_key="tournament.id", primary_key=True)
+    user_id: Optional[int] = Field(default=None, foreign_key="user.id", primary_key=True)

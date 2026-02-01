@@ -23,7 +23,7 @@ def create_player(
         last_name=player_in.last_name,
         nickname=player_in.nickname,
         email=player_in.email,
-        # user_id=current_user.id (Uncomment if you want to link players to the admin who created them)
+        user_id=current_user.id  
     )
     
     session.add(player)
@@ -36,9 +36,10 @@ def read_players(
     skip: int = 0,
     limit: int = 100,
     session: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user) # Zorg dat de user bekend is
 ):
-    statement = select(Player).offset(skip).limit(limit)
+    # Filter: Alleen spelers waar user_id gelijk is aan current_user.id
+    statement = select(Player).where(Player.user_id == current_user.id).offset(skip).limit(limit)
     players = session.exec(statement).all()
     return players
 
@@ -67,9 +68,9 @@ def export_template():
 async def import_players_csv(
     file: UploadFile = File(...), 
     session: Session = Depends(get_session),
-    current_user = Depends(get_current_user)
+    current_user: User = Depends(get_current_user) # Zorg dat type hint User is
 ):
     content = await file.read()
-    count = csv_service.process_player_import(content, session)
-    # Stuur het aantal terug voor betere feedback in de UI
+    # Geef current_user.id mee aan de functie
+    count = csv_service.process_player_import(content, session, current_user.id) 
     return {"message": f"{count} spelers succesvol geïmporteerd.", "count": count}

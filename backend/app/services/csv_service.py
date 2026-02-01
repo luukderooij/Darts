@@ -32,7 +32,7 @@ def generate_player_template():
         headers={"Content-Disposition": "attachment; filename=dart_players_template.csv"}
     )
 
-def process_player_import(content: bytes, session: Session) -> int:
+def process_player_import(content: bytes, session: Session, user_id: int) -> int:
     """Importeert spelers en negeert de 'sep=' regel als die aanwezig is."""
     try:
         decoded_content = content.decode('utf-8')
@@ -74,7 +74,8 @@ def process_player_import(content: bytes, session: Session) -> int:
             first_name=first_name,
             last_name=clean_row.get('last_name') or clean_row.get('achternaam'),
             nickname=clean_row.get('nickname') or clean_row.get('bijnaam'),
-            email=email
+            email=email,
+            user_id=user_id
         )
         session.add(player)
         added_count += 1

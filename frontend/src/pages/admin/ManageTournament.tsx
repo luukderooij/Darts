@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../../services/api';
 import AdminLayout from '../../components/layout/AdminLayout';
-import { Save, RefreshCcw, ShieldAlert, Settings, ChevronDown, ChevronRight, SaveAll, GitMerge, Trophy, AlertCircle, LayoutGrid, Medal } from 'lucide-react';
+import { Save, RefreshCcw, ShieldAlert, Settings, ChevronDown, ChevronRight, SaveAll, GitMerge, Trophy, AlertCircle, LayoutGrid, Medal, UserPlus} from 'lucide-react';
 import { Dartboard, Tournament, Match } from '../../types';
 
 // Uitgebreide interface voor UI-specifieke properties
@@ -49,7 +49,8 @@ const ManageTournament = () => {
   // Settings State
   const [allowByes, setAllowByes] = useState(true);
   const [settingsDirty, setSettingsDirty] = useState(false);
-  
+  const [newAdminEmail, setNewAdminEmail] = useState('');
+
   // UI State: Welke rondes zijn opengeklapt?
   const [openRounds, setOpenRounds] = useState<Record<string, boolean>>({});
   const [allBoards, setAllBoards] = useState<Dartboard[]>([]);
@@ -236,6 +237,22 @@ const loadData = async (isBackground = false) => {
       }
   };
 
+  // 7. Admin Toevoegen
+  const handleAddAdmin = async (e: React.FormEvent) => {
+      e.preventDefault();
+      if (!newAdminEmail) return;
+
+      try {
+          await api.post(`/tournaments/${id}/admins`, { email: newAdminEmail });
+          alert(`Gebruiker ${newAdminEmail} is succesvol toegevoegd als admin!`);
+          setNewAdminEmail(''); // Veld leegmaken
+      } catch (err: any) {
+          console.error(err);
+          // Toon de specifieke foutmelding van de backend (bijv. "Gebruiker niet gevonden")
+          alert(err.response?.data?.detail || "Kon admin niet toevoegen.");
+      }
+  };
+
   // --- RENDERING HELPERS ---
   
   const handleKeyDown = (e: React.KeyboardEvent, match: MatchWithUI) => {
@@ -407,6 +424,34 @@ const loadData = async (isBackground = false) => {
                     <span className="font-medium text-gray-700">Allow Byes (Vrijlotingen toestaan in KO)</span>
                 </label>
             </div>
+        </div>
+
+        {/* ADMINS CARD */}
+        <div className="bg-white p-6 rounded-lg shadow-sm border border-purple-200 mb-8">
+            <h3 className="font-bold text-lg flex items-center gap-2 mb-4 text-gray-800">
+                <UserPlus className="text-purple-500" /> Extra Beheerders
+            </h3>
+            <p className="text-sm text-gray-500 mb-4">
+                Geef een andere gebruiker volledige rechten om dit toernooi te beheren. 
+                De gebruiker moet al geregistreerd zijn.
+            </p>
+            
+            <form onSubmit={handleAddAdmin} className="flex gap-3">
+                <input 
+                    type="email" 
+                    placeholder="E-mailadres van de gebruiker (bijv. jan@darts.nl)" 
+                    className="flex-1 border border-gray-300 rounded-md p-2 text-sm focus:ring-2 focus:ring-purple-500 outline-none"
+                    value={newAdminEmail}
+                    onChange={(e) => setNewAdminEmail(e.target.value)}
+                    required
+                />
+                <button 
+                    type="submit" 
+                    className="bg-purple-600 text-white px-4 py-2 rounded-md font-bold hover:bg-purple-700 transition flex items-center gap-2"
+                >
+                    <UserPlus size={18} /> Toevoegen
+                </button>
+            </form>
         </div>
 
         {/* WEDSTRIJDEN LIJST */}
