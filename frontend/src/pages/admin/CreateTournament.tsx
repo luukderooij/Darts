@@ -76,9 +76,8 @@ const CreateTournament = () => {
                 setAllBoards(bRes.data);
                 setGlobalTeams(tRes.data);
                 
-                // Selecteer standaard alle borden als suggestie
                 if (bRes.data.length > 0) {
-                    setSelectedBoardIds(bRes.data.map((b: Dartboard) => b.id));
+                    setSelectedBoardIds([bRes.data[0].id]); 
                 }
             } catch (err) {
                 console.error(err);
