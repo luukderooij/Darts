@@ -466,15 +466,15 @@ const loadData = async (isBackground = false) => {
                                 
                                 {/* KOLOM 1 & 2: WEDSTRIJDEN */}
                                 <div className="divide-y divide-gray-100 lg:col-span-2 lg:border-r lg:border-gray-100">
-                                    {roundMatches.map(match => (
+                                    {roundMatches.map((match, index) => (
                                         <div key={match.id} className={`p-3 transition-colors flex items-center justify-between ${match.save_success ? 'bg-green-50' : 'hover:bg-white'}`}>
                                             
                                             {/* LINKS: ID + Bord + Ref */}
                                             <div className="flex flex-col items-center mr-4 gap-2 border-r border-gray-100 pr-4 min-w-[120px]">
                                                 
-                                                {/* Match ID */}
+                                                {/* Match Nummer (Gewoon optellen vanaf 1) */}
                                                 <div className="text-[10px] text-gray-400 font-mono">
-                                                    Match #{match.id}
+                                                    Match #{index + 1}
                                                 </div>
 
                                                 {/* BORD SELECTOR */}
