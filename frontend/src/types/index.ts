@@ -35,6 +35,7 @@ export interface Tournament {
   allow_byes?: boolean; 
 
   qualifiers_per_poule?: number;
+  players: Player[];
 }
 
 // We voegen Match en Leg later toe

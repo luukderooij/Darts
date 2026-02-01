@@ -5,6 +5,9 @@ class MatchScoreUpdate(BaseModel):
     score_p1: int
     score_p2: int
     is_completed: bool = False
+    referee_id: Optional[int] = None
+    referee_team_id: Optional[int] = None
+    custom_referee_name: Optional[str] = None
 
 class MatchRead(BaseModel):
     id: int

@@ -36,9 +36,6 @@ class Match(SQLModel, table=True):
         sa_relationship_kwargs={"foreign_keys": "[Match.player2_id]"}
     )
 
-    # ... existing fields (id, round_number, poule_number, etc.) ...
-    
-    # --- REFEREE FIELDS (NEW) ---
     referee_id: Optional[int] = Field(default=None, foreign_key="player.id")
     referee_team_id: Optional[int] = Field(default=None, foreign_key="team.id")
 
@@ -62,3 +59,5 @@ class Match(SQLModel, table=True):
     team2: Optional["Team"] = Relationship(
         sa_relationship_kwargs={"foreign_keys": "[Match.team2_id]"}
     )
+
+    custom_referee_name: Optional[str] = None

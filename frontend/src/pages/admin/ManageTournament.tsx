@@ -15,7 +15,10 @@ interface MatchWithUI extends Match {
   is_completed: boolean;
   round_number: number;
   poule_number: number | null;
-  board_number?: number | null; // NIEUW: Bordnummer veld
+  board_number?: number | null; 
+  referee_id?: number | null;     
+  custom_referee_name?: string | null; 
+  referee_name?: string;               
   
   // UI States
   is_saving?: boolean;
@@ -165,7 +168,9 @@ const loadData = async (isBackground = false) => {
           await api.put(`/matches/${match.id}/score`, {
               score_p1: match.score_p1,
               score_p2: match.score_p2,
-              is_completed: true 
+              is_completed: true,
+              referee_id: match.referee_id,        
+              custom_referee_name: match.custom_referee_name 
           });
           setMatches(prev => prev.map(m => m.id === match.id ? { ...m, is_saving: false, save_success: true, is_completed: true } : m));
           loadData(true); // Background refresh voor standen
@@ -270,6 +275,34 @@ const loadData = async (isBackground = false) => {
       if (typeA !== typeB) return typeA === 'P' ? -1 : 1;
       return numA - numB;
   });
+
+  const handleRefereeChange = async (matchId: number, value: string) => {
+    let payload: any = { 
+        // We sturen de huidige scores mee omdat de backend-validator dit vereist
+        score_p1: matches.find(m => m.id === matchId)?.score_p1 || 0,
+        score_p2: matches.find(m => m.id === matchId)?.score_p2 || 0
+    };
+
+    if (value === "CUSTOM_PROMPT") {
+        const customName = prompt("Voer de naam van de schrijver in:");
+        if (!customName) return;
+        payload.custom_referee_name = customName;
+        payload.referee_id = null;
+    } else if (value === "") {
+        payload.referee_id = null;
+        payload.custom_referee_name = null;
+    } else {
+        payload.referee_id = parseInt(value);
+        payload.custom_referee_name = null;
+    }
+
+    try {
+        await api.put(`/matches/${matchId}/score`, payload);
+        loadData(false); // Ververs de lijst
+    } catch (err) {
+        console.error("Update failed", err);
+    }
+};
 
   if (loading) {
     return (
@@ -437,37 +470,72 @@ const loadData = async (isBackground = false) => {
                                         <div key={match.id} className={`p-3 transition-colors flex items-center justify-between ${match.save_success ? 'bg-green-50' : 'hover:bg-white'}`}>
                                             
                                             {/* LINKS: ID + Bord + Ref */}
-                                            <div className="flex items-center mr-2">
+                                            <div className="flex flex-col items-center mr-4 gap-2 border-r border-gray-100 pr-4 min-w-[120px]">
                                                 
-                                                {/* ID + REF */}
-                                                <div className="w-16 flex flex-col items-center justify-center gap-1 border-r border-gray-100 pr-2 mr-2">
-                                                    <div className="text-xs text-gray-400 font-mono">#{match.id}</div>
-                                                    <div className="flex flex-col items-center mt-1">
-                                                        <span className="text-[9px] text-gray-400 uppercase leading-none">Ref:</span>
-                                                        <div className="text-[10px] text-blue-400 font-bold uppercase tracking-tighter" title={`Referee: ${match.referee_name}`}>
-                                                            {match.referee_name ? match.referee_name.split(' ')[0] : '-'}
-                                                        </div>
-                                                    </div>
+                                                {/* Match ID */}
+                                                <div className="text-[10px] text-gray-400 font-mono">
+                                                    Match #{match.id}
                                                 </div>
 
-                                                {/* NIEUW: BORD NUMMER */}
-                                                    <div className="flex flex-col items-center mr-2 px-1 py-1 bg-gray-100 rounded border border-gray-200 min-w-[3.5rem]">
-                                                        <span className="text-[9px] text-gray-400 font-bold uppercase mb-0.5">Bord</span>
-                                                        <select 
-                                                            className="w-full text-center bg-transparent font-bold text-gray-700 outline-none text-xs p-0 cursor-pointer appearance-none"
-                                                            value={match.board_number || ''}
-                                                            onChange={(e) => handleBoardChange(match.id, e.target.value)}
-                                                            title="Klik om bord te wijzigen"
-                                                        >
-                                                            <option value="">-</option>
-                                                            {allBoards.map(board => (
-<option key={board.id} value={board.number}>
-    {board.number} {board.name !== (`Bord ${board.number}`) ? `(${board.name})` : ''}
-</option>
-                                                            ))}
-                                                        </select>
-                                                    </div>
+                                                {/* BORD SELECTOR */}
+                                                <div className="w-full">
+                                                    <select 
+                                                        className="w-full bg-gray-50 border border-gray-200 text-gray-700 text-xs rounded px-2 py-1 outline-none focus:border-blue-500 font-medium"
+                                                        value={match.board_number || ''}
+                                                        onChange={(e) => handleBoardChange(match.id, e.target.value)}
+                                                        title="Wijzig Bord"
+                                                    >
+                                                        <option value="">-- Bord --</option>
+                                                        {allBoards.map(board => (
+                                                            <option key={board.id} value={board.number}>
+                                                                Bord {board.number} {board.name ? `(${board.name})` : ''}
+                                                            </option>
+                                                        ))}
+                                                    </select>
+                                                    
+                                                    {/* NIEUW: Locatie in het grijs eronder tonen */}
+                                                    {match.board_number && (
+                                                        <div className="text-[10px] text-gray-400 mt-0.5 truncate max-w-[120px] italic">
+                                                            {allBoards.find(b => b.number === match.board_number)?.name || ''}
+                                                        </div>
+                                                    )}
+                                                </div>
 
+                                                {/* SCHRIJVER SELECTOR (Vervangt de dubbele tekst) */}
+                                                <div className="w-full">
+                                                    <select 
+                                                        className={`w-full text-xs rounded px-2 py-1 outline-none border focus:border-blue-500 ${
+                                                            match.referee_id || match.custom_referee_name 
+                                                            ? 'bg-blue-50 border-blue-200 text-blue-800 font-bold' 
+                                                            : 'bg-white border-gray-200 text-gray-400 italic'
+                                                        }`}
+                                                        value={match.referee_id || (match.custom_referee_name ? "CUSTOM_DISPLAY" : "")}
+                                                        onChange={(e) => handleRefereeChange(match.id, e.target.value)}
+                                                        title={match.referee_name || "Geen schrijver"}
+                                                    >
+                                                        <option value="">-- Schrijver --</option>
+                                                        
+                                                        {/* Optie voor Custom Naam (indien aanwezig) */}
+                                                        {match.custom_referee_name && (
+                                                            <option value="CUSTOM_DISPLAY">
+                                                                ✎ {match.custom_referee_name}
+                                                            </option>
+                                                        )}
+
+                                                        {/* Deelnemers Lijst */}
+                                                        <optgroup label="Spelers">
+                                                            {tournament?.players?.map(p => (
+                                                                <option key={p.id} value={p.id}>
+                                                                    {p.first_name} {p.last_name}
+                                                                </option>
+                                                            ))}
+                                                        </optgroup>
+
+                                                        <option value="CUSTOM_PROMPT" className="font-bold text-blue-600">
+                                                            + Handmatig invoeren...
+                                                        </option>
+                                                    </select>
+                                                </div>
                                             </div>
 
                                             {/* MIDDEN: SCORE */}

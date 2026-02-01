@@ -2,6 +2,7 @@
 from typing import List, Optional
 from pydantic import BaseModel
 from datetime import datetime
+from app.schemas.player import PlayerRead
 
 # --- Input Schema (Create) ---
 class TournamentCreate(BaseModel):
@@ -51,6 +52,8 @@ class TournamentRead(BaseModel):
     # Counts
     player_count: int = 0
     board_count: int = 0
+
+    players: List[PlayerRead] = []
     
     class Config:
         from_attributes = True

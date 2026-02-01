@@ -131,10 +131,17 @@ def read_tournament_by_id(
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user)
 ):
-    tournament = session.get(Tournament, tournament_id)
+    statement = (
+        select(Tournament)
+        .where(Tournament.id == tournament_id)
+        .options(selectinload(Tournament.players)) # Laad spelers expliciet
+    )
+    tournament = session.exec(statement).first()
+
     if not tournament:
         raise HTTPException(status_code=404, detail="Tournament not found")
     return tournament
+
 
 # --- NIEUW ENDPOINT: Centrale Standen Berekening ---
 @router.get("/{tournament_id}/standings")
