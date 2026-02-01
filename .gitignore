@@ -208,3 +208,6 @@ __marimo__/
 
 backend/darts.db
 project_context.txt
+
+frontend/node_modules/
+node_modules/

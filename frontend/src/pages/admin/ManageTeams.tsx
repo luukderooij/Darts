@@ -3,6 +3,7 @@ import api from '../../services/api';
 import AdminLayout from '../../components/layout/AdminLayout';
 import { Player, Team } from '../../types';
 import { Users, UserPlus, Trash2, Shield } from 'lucide-react';
+import ImportExportActions from '../../components/admin/ImportExportActions';
 
 const ManageTeams = () => {
     const [teams, setTeams] = useState<Team[]>([]);
@@ -90,7 +91,7 @@ const ManageTeams = () => {
                         <h3 className="font-bold text-gray-700 mb-4 flex items-center gap-2">
                             <UserPlus size={20} className="text-green-600"/> Nieuw Team Maken
                         </h3>
-                        
+                        <ImportExportActions targetPath="teams" onSuccess={loadData} />
                         <form onSubmit={handleCreate}>
                             <div className="mb-4">
                                 <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Naam (Optioneel)</label>

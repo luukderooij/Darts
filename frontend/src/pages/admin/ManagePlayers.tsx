@@ -3,6 +3,7 @@ import api from '../../services/api';
 import { Trash2, UserPlus } from 'lucide-react';
 import AdminLayout from '../../components/layout/AdminLayout';
 import { Player } from '../../types';
+import ImportExportActions from '../../components/admin/ImportExportActions';
 
 const ManagePlayers = () => {
   const [players, setPlayers] = useState<Player[]>([]);
@@ -82,6 +83,8 @@ const ManagePlayers = () => {
         {/* --- Add Player Form --- */}
         <div className="bg-white p-6 rounded-lg shadow-sm mb-8">
           <h3 className="text-lg font-semibold mb-4 text-gray-700">Add New Player</h3>
+          
+          <ImportExportActions targetPath="players" onSuccess={loadPlayers} />
           
           <form onSubmit={handleAddPlayer} className="space-y-4">
             

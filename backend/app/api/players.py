@@ -1,13 +1,12 @@
 from typing import List
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlmodel import Session, select
 
 from app.db.session import get_session
 from app.models.player import Player
 from app.schemas.player import PlayerCreate, PlayerRead
+from app.services import csv_service
 
-# --- THE FIX IS HERE ---
-# We import from 'users', not 'auth'
 from app.api.users import get_current_user 
 from app.models.user import User
 
@@ -56,3 +55,21 @@ def delete_player(
     session.delete(player)
     session.commit()
     return {"ok": True}
+
+
+@router.get("/export-template")
+def export_template():
+    """Download de CSV template via een GET verzoek."""
+    return csv_service.generate_player_template()
+
+
+@router.post("/import-csv")
+async def import_players_csv(
+    file: UploadFile = File(...), 
+    session: Session = Depends(get_session),
+    current_user = Depends(get_current_user)
+):
+    content = await file.read()
+    count = csv_service.process_player_import(content, session)
+    # Stuur het aantal terug voor betere feedback in de UI
+    return {"message": f"{count} spelers succesvol geïmporteerd.", "count": count}

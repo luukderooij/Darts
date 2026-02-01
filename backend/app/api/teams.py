@@ -1,6 +1,6 @@
 import random
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from sqlmodel import Session, select
 
 from app.db.session import get_session
@@ -11,6 +11,7 @@ from app.models.links import TournamentTeamLink # <--- Vergeet deze import niet!
 from app.schemas.team import TeamCreateManual, TeamAutoGenerate, TeamRead, TeamLinkInput
 from app.api.users import get_current_user 
 from sqlalchemy.orm import selectinload
+from app.services import csv_service
 
 router = APIRouter()
 
@@ -197,3 +198,20 @@ def delete_team(
     session.delete(team)
     session.commit()
     return {"ok": True}
+
+
+
+@router.get("/export-template")
+def export_team_template():
+    return csv_service.generate_team_template()
+
+@router.post("/import-csv")
+async def import_teams_csv(
+    file: UploadFile = File(...),
+    tournament_id: int = None, # Optioneel: direct linken aan een toernooi
+    session: Session = Depends(get_session),
+    current_user = Depends(get_current_user)
+):
+    content = await file.read()
+    count = csv_service.process_team_import(content, session, tournament_id)
+    return {"message": f"{count} teams verwerkt.", "count": count}
