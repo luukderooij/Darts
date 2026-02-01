@@ -23,7 +23,6 @@ const Sidebar = ({ isOpen, onClose }: SidebarProps) => {
     { icon: Shield, label: 'Manage Teams', path: '/dashboard/teams' },
     { icon: Target, label: 'Manage Boards', path: '/dashboard/boards' },
     { icon: Trophy, label: 'Create Tournament', path: '/dashboard/create-tournament' },
-    { icon: Activity, label: 'System Logs', path: '/dashboard/logs' },
     { icon: FileText, label: 'Changelog', path: '/dashboard/changelog' },
   ];
 

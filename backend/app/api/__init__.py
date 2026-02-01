@@ -1,1 +1,1 @@
-from . import auth, users, players, tournaments, matches, websockets, dartboards
+from . import auth, users, players, tournaments, matches, dartboards

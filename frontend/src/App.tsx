@@ -8,7 +8,6 @@ import Register from './pages/auth/Register';
 // Admin Pages
 import ManagePlayers from './pages/admin/ManagePlayers';
 import CreateTournament from './pages/admin/CreateTournament';
-import SystemLogs from './pages/admin/SystemLogs';
 import ManageBoards from './pages/admin/ManageBoards';
 import Dashboard from './pages/admin/Dashboard';
 import ManageTournament from './pages/admin/ManageTournament'; 
@@ -44,7 +43,6 @@ function App() {
           <Route path="/dashboard/players" element={<ManagePlayers />} />
           <Route path="/dashboard/teams" element={<ManageTeams />} />
           <Route path="/dashboard/create-tournament" element={<CreateTournament />} />
-          <Route path="/dashboard/logs" element={<SystemLogs />} />
           <Route path="/dashboard/boards" element={<ManageBoards />} />
           <Route path="/dashboard/changelog" element={<Changelog />} />
 

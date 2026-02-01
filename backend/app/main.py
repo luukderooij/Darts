@@ -7,7 +7,7 @@ from app.core.config import settings
 from app.db.session import init_db
 
 # Import API route modules
-from app.api import auth, users, players, tournaments, matches, websockets, dartboards, teams, system
+from app.api import auth, users, players, tournaments, matches, dartboards, teams, system
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -55,10 +55,6 @@ app.include_router(matches.router, prefix="/api/matches", tags=["Matches"])
 app.include_router(dartboards.router, prefix="/api/dartboards", tags=["Dartboards"])
 app.include_router(teams.router, prefix="/api/teams", tags=["Teams"])
 app.include_router(system.router, prefix="/api/system", tags=["system"])
-
-# WebSocket router for real-time logs
-# Note: The frontend will connect via ws://localhost:8000/ws/logs
-app.include_router(websockets.router, prefix="/ws", tags=["WebSockets"])
 app.include_router(dartboards.router, prefix="/api/dartboards", tags=["Dartboards"])
 
 # --- Root Endpoint (Health Check) ---
