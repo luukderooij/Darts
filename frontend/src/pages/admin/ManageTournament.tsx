@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../../services/api';
 import AdminLayout from '../../components/layout/AdminLayout';
-import { Save, RefreshCcw, ShieldAlert, Settings, ChevronDown, ChevronRight, SaveAll, GitMerge, Trophy, AlertCircle, LayoutGrid, Medal, UserPlus} from 'lucide-react';
+import { Save, RefreshCcw, ShieldAlert, Settings, ChevronDown, ChevronRight, SaveAll, GitMerge, Trophy, AlertCircle, LayoutGrid, Medal, UserPlus, Monitor, X} from 'lucide-react';
 import { Dartboard, Tournament, Match } from '../../types';
 
 // Uitgebreide interface voor UI-specifieke properties
@@ -36,6 +36,11 @@ interface StandingsItem {
   needs_shootout: boolean;
 }
 
+interface BoardCode {
+    board_number: number;
+    code: string;
+}
+
 const ManageTournament = () => {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -54,6 +59,22 @@ const ManageTournament = () => {
   // UI State: Welke rondes zijn opengeklapt?
   const [openRounds, setOpenRounds] = useState<Record<string, boolean>>({});
   const [allBoards, setAllBoards] = useState<Dartboard[]>([]);
+
+  const [showCodesModal, setShowCodesModal] = useState(false);
+  const [boardCodes, setBoardCodes] = useState<BoardCode[]>([]);
+
+
+    const handleShowCodes = async () => {
+        try {
+            // Roep de nieuwe endpoint aan die we in de backend hebben gemaakt
+            const res = await api.post(`/scorer/generate-codes/${id}`);
+            setBoardCodes(res.data);
+            setShowCodesModal(true);
+        } catch (err) {
+            alert("Kon codes niet ophalen.");
+        }
+    };
+
 
   useEffect(() => {
     loadData();
@@ -363,6 +384,12 @@ const loadData = async (isBackground = false) => {
                 <Settings className="text-gray-600" />
                 Beheer: <span className="text-blue-600">{tournament.name}</span>
             </h2>
+            <button 
+            onClick={handleShowCodes} 
+            className="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 transition flex items-center gap-2 font-bold shadow-sm"
+        >
+            <Monitor size={18} /> Bord Codes
+        </button>
             <button onClick={() => loadData()} className="p-2 bg-gray-200 rounded hover:bg-gray-300 transition">
                 <RefreshCcw size={20} />
             </button>
@@ -679,6 +706,29 @@ const loadData = async (isBackground = false) => {
             })}
         </div>
       </div>
+
+      {/* --- CODES MODAL --- */}
+{showCodesModal && (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setShowCodesModal(false)}>
+        <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="bg-indigo-600 p-4 text-white flex justify-between items-center">
+                <h3 className="font-bold text-lg flex items-center gap-2"><Monitor /> Koppelcodes voor Tablets</h3>
+                <button onClick={() => setShowCodesModal(false)}><X /></button>
+            </div>
+            <div className="p-6 grid grid-cols-2 gap-4">
+                {boardCodes.map(b => (
+                    <div key={b.board_number} className="bg-gray-50 border-2 border-dashed border-gray-300 rounded-lg p-4 text-center">
+                        <div className="text-xs font-bold text-gray-400 uppercase mb-1">Bord {b.board_number}</div>
+                        <div className="text-4xl font-mono font-bold text-indigo-600 tracking-widest">{b.code}</div>
+                    </div>
+                ))}
+            </div>
+            <div className="p-4 bg-gray-50 text-center text-sm text-gray-500">
+                Ga op de tablet naar <b>/scorer</b> en voer de code in.
+            </div>
+        </div>
+    </div>
+)}
     </AdminLayout>
   );
 };

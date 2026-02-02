@@ -21,6 +21,9 @@ import Home from './pages/Home';
 
 import ScorerMatchList from './pages/scorer/MatchList';
 import Scoreboard from './pages/scorer/Scoreboard';
+import ScorerLogin from './pages/scorer/ScorerLogin';
+import ScorerStandby from './pages/scorer/ScorerStandby';
+
 
 function App() {
   return (
@@ -49,9 +52,12 @@ function App() {
           {/* Scorer Routes (Tablet View) */}
           <Route path="/board/:scorer_uuid" element={<ScorerMatchList />} />
           <Route path="/board/:scorer_uuid/match/:match_id" element={<Scoreboard />} />
+          <Route path="/scorer" element={<ScorerLogin />} />
+          <Route path="/scorer/standby" element={<ScorerStandby />} />
 
           {/* Default Redirect */}
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
+
         </Routes>
       </BrowserRouter>
     </AuthProvider>

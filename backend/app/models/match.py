@@ -1,5 +1,6 @@
 from typing import Optional
 from sqlmodel import SQLModel, Field, Relationship
+from pydantic import BaseModel
 
 class Match(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -61,3 +62,13 @@ class Match(SQLModel, table=True):
     )
 
     custom_referee_name: Optional[str] = None
+
+class MatchDetail(BaseModel):
+    id: int
+    score_p1: int
+    score_p2: int
+    is_completed: bool
+    
+    player1_name: str
+    player2_name: str
+    referee_name: str

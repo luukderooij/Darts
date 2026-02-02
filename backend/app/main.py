@@ -7,7 +7,7 @@ from app.core.config import settings
 from app.db.session import init_db
 
 # Import API route modules
-from app.api import auth, users, players, tournaments, matches, dartboards, teams, system
+from app.api import auth, users, players, tournaments, matches, dartboards, teams, system, scorer
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -56,6 +56,7 @@ app.include_router(dartboards.router, prefix="/api/dartboards", tags=["Dartboard
 app.include_router(teams.router, prefix="/api/teams", tags=["Teams"])
 app.include_router(system.router, prefix="/api/system", tags=["system"])
 app.include_router(dartboards.router, prefix="/api/dartboards", tags=["Dartboards"])
+app.include_router(scorer.router, prefix="/api/scorer", tags=["Scorer"])
 
 # --- Root Endpoint (Health Check) ---
 @app.get("/")
