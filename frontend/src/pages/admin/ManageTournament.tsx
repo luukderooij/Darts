@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../../services/api';
 import AdminLayout from '../../components/layout/AdminLayout';
-import { Save, RefreshCcw, ShieldAlert, Settings, ChevronDown, ChevronRight, SaveAll, GitMerge, Trophy, AlertCircle, LayoutGrid, Medal, UserPlus, Monitor, X} from 'lucide-react';
+import { Save, RefreshCcw, ShieldAlert, Settings, ChevronDown, ChevronRight, SaveAll, GitMerge, Trophy, AlertCircle, LayoutGrid, Medal, UserPlus, Monitor, X, Link as LinkIcon} from 'lucide-react';
 import { Dartboard, Tournament, Match } from '../../types';
 
 // Uitgebreide interface voor UI-specifieke properties
@@ -708,6 +708,7 @@ const loadData = async (isBackground = false) => {
       </div>
 
       {/* --- CODES MODAL --- */}
+{/* --- CODES MODAL --- */}
 {showCodesModal && (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setShowCodesModal(false)}>
         <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full overflow-hidden" onClick={e => e.stopPropagation()}>
@@ -715,20 +716,50 @@ const loadData = async (isBackground = false) => {
                 <h3 className="font-bold text-lg flex items-center gap-2"><Monitor /> Koppelcodes voor Tablets</h3>
                 <button onClick={() => setShowCodesModal(false)}><X /></button>
             </div>
-            <div className="p-6 grid grid-cols-2 gap-4">
-                {boardCodes.map(b => (
-                    <div key={b.board_number} className="bg-gray-50 border-2 border-dashed border-gray-300 rounded-lg p-4 text-center">
-                        <div className="text-xs font-bold text-gray-400 uppercase mb-1">Bord {b.board_number}</div>
-                        <div className="text-4xl font-mono font-bold text-indigo-600 tracking-widest">{b.code}</div>
-                    </div>
-                ))}
+            
+            <div className="p-6 grid grid-cols-1 gap-4">
+                {boardCodes.map((b) => {
+                    // Gebruik de scorer_uuid van het toernooi voor de link
+                    const directUrl = `${window.location.origin}/board/${tournament?.scorer_uuid}`;
+                    
+                    return (
+                        <div key={b.board_number} className="bg-gray-50 border-2 border-dashed border-gray-300 rounded-lg p-4 flex items-center justify-between">
+                            <div className="text-left">
+                                <div className="text-xs font-bold text-gray-400 uppercase mb-1">Bord {b.board_number}</div>
+                                <div className="text-4xl font-mono font-bold text-indigo-600 tracking-widest">{b.code}</div>
+                            </div>
+                            
+                            <div className="flex flex-col gap-2">
+                                <a 
+                                    href={directUrl}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="flex items-center gap-2 px-3 py-2 bg-indigo-100 text-indigo-700 rounded-md hover:bg-indigo-200 transition text-sm font-bold"
+                                >
+                                    <Monitor size={16} /> Open Scorer
+                                </a>
+                                <button 
+                                    onClick={() => {
+                                        navigator.clipboard.writeText(directUrl);
+                                        alert(`Link voor bord ${b.board_number} gekopieerd!`);
+                                    }}
+                                    className="text-[10px] text-gray-400 hover:text-indigo-600 underline text-center"
+                                >
+                                    Kopieer Link
+                                </button>
+                            </div>
+                        </div>
+                    );
+                })}
             </div>
-            <div className="p-4 bg-gray-50 text-center text-sm text-gray-500">
-                Ga op de tablet naar <b>/scorer</b> en voer de code in.
+            
+            <div className="p-4 bg-gray-50 text-center text-sm text-gray-500 border-t">
+                Scan de code op de tablet of gebruik de directe links hierboven.
             </div>
         </div>
     </div>
 )}
+
     </AdminLayout>
   );
 };
