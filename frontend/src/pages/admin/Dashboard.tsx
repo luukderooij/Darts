@@ -1,81 +1,9 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../../services/api';
 import AdminLayout from '../../components/layout/AdminLayout';
-import { Trophy, Calendar, Users, ExternalLink, Copy, Target, LayoutGrid, Tablet, ChevronDown, GitMerge, Trash2 } from 'lucide-react';
+import { Trophy, Calendar, Users, ExternalLink, Copy, Target, LayoutGrid, Trash2 } from 'lucide-react';
 import { Tournament } from '../../types';
-
-// --- Helper Component for the Dropdown ---
-const ScorerMenu = ({ tournament }: { tournament: Tournament }) => {
-  const [isOpen, setIsOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
-        setIsOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
-
-  const pouleCount = tournament.number_of_poules || 1;
-  const poules = Array.from({ length: pouleCount }, (_, i) => i + 1);
-
-  return (
-    <div className="relative" ref={menuRef}>
-      <button 
-        onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center gap-2 px-4 py-2 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded font-medium hover:bg-indigo-100 transition"
-      >
-        <Tablet size={18} />
-        Scorer
-        <ChevronDown size={14} />
-      </button>
-
-      {isOpen && (
-        <div className="absolute right-0 mt-2 w-56 bg-white rounded-lg shadow-xl border border-gray-100 z-50 overflow-hidden">
-          {/* Main Link: All Matches */}
-          <Link 
-            to={`/board/${tournament.scorer_uuid}`}
-            target="_blank"
-            className="block px-4 py-2 text-sm text-gray-700 hover:bg-indigo-50 hover:text-indigo-700 font-bold border-b border-gray-100"
-          >
-            All Matches
-          </Link>
-          
-          {/* Poule Links */}
-          <div className="max-h-48 overflow-y-auto">
-            {poules.map(num => (
-              <Link
-                key={num}
-                to={`/board/${tournament.scorer_uuid}?poule=${num}`}
-                target="_blank"
-                className="block px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 flex justify-between items-center"
-              >
-                <span>Poule {num}</span>
-                <Target size={12} className="opacity-50"/>
-              </Link>
-            ))}
-          </div>
-
-          {/* Knockout Link */}
-          {(tournament.format === 'hybrid' || tournament.format === 'knockout') && (
-            <Link
-                to={`/board/${tournament.scorer_uuid}?poule=ko`}
-                target="_blank"
-                className="block px-4 py-2 text-sm text-orange-600 hover:bg-orange-50 flex justify-between items-center border-t border-gray-100 font-medium"
-            >
-                <span>Knockout Phase</span>
-                <GitMerge size={14} />
-            </Link>
-          )}
-        </div>
-      )}
-    </div>
-  );
-};
 
 const Dashboard = () => {
   const [tournaments, setTournaments] = useState<Tournament[]>([]);
@@ -86,6 +14,7 @@ const Dashboard = () => {
     const fetchTournaments = async () => {
       try {
         const res = await api.get('/tournaments/');
+        // Sorteer op datum (nieuwste eerst)
         const sorted = res.data.sort((a: Tournament, b: Tournament) => 
           new Date(b.date).getTime() - new Date(a.date).getTime()
         );
@@ -105,12 +34,10 @@ const Dashboard = () => {
     alert("Public link copied to clipboard!");
   };
 
-  // --- RESTORED: Delete Logic ---
   const handleDelete = async (id: number) => {
     const confirmed = window.confirm(
         "Are you sure you want to delete this tournament?\n\nThis will permanently delete all matches, scores, and teams associated with it."
     );
-    
     if (!confirmed) return;
 
     try {
@@ -192,11 +119,6 @@ const Dashboard = () => {
                       Public View
                     </Link>
 
-                    {/* Scorer Menu */}
-                    {t.scorer_uuid && (
-                        <ScorerMenu tournament={t} />
-                    )}
-
                     <button 
                       onClick={() => navigate(`/dashboard/tournament/${t.id}`)}
                       className="bg-slate-800 text-white px-5 py-2 rounded font-medium hover:bg-slate-900 transition shadow-sm"
@@ -204,7 +126,6 @@ const Dashboard = () => {
                       Manage
                     </button>
 
-                    {/* RESTORED: Delete Button */}
                     <button 
                       onClick={() => handleDelete(t.id)}
                       className="p-2 text-red-300 hover:text-red-600 hover:bg-red-50 rounded transition border border-transparent hover:border-red-200"
