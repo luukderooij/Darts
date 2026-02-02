@@ -2,7 +2,11 @@ import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../../services/api';
 import AdminLayout from '../../components/layout/AdminLayout';
-import { Save, RefreshCcw, ShieldAlert, Settings, ChevronDown, ChevronRight, SaveAll, GitMerge, Trophy, AlertCircle, LayoutGrid, Medal, UserPlus, Monitor, X, Link as LinkIcon, Target, User } from 'lucide-react';
+import { 
+    Save, RefreshCcw, ShieldAlert, Settings, ChevronDown, ChevronRight, 
+    SaveAll, GitMerge, Trophy, AlertCircle, LayoutGrid, Medal, 
+    UserPlus, Monitor, X, Link as LinkIcon, Target, User 
+} from 'lucide-react';
 import { Dartboard, Tournament, Match } from '../../types';
 
 // Uitgebreide interface voor UI-specifieke properties
@@ -62,9 +66,6 @@ const ManageTournament = () => {
 
   const [showCodesModal, setShowCodesModal] = useState(false);
   const [boardCodes, setBoardCodes] = useState<BoardCode[]>([]);
-
-
-
 
     const handleShowCodes = async () => {
         try {
@@ -538,125 +539,164 @@ const loadData = async (isBackground = false) => {
                         {isOpen && (
                             <div className="p-0 flex flex-col-reverse lg:grid lg:grid-cols-3 lg:gap-0">
                                 
+
 {/* KOLOM 1 & 2: WEDSTRIJDEN */}
 <div className="divide-y divide-gray-100 lg:col-span-2 lg:border-r lg:border-gray-100">
     {roundMatches.map((match, index) => (
-        <div key={match.id} className={`p-4 transition-colors flex flex-col md:flex-row md:items-center justify-between gap-4 ${match.save_success ? 'bg-green-50' : 'hover:bg-white'}`}>
+        <div key={match.id} className={`p-4 transition-colors ${match.save_success ? 'bg-green-50' : 'hover:bg-white'}`}>
             
-            {/* 1. HEADER (Mobiel): Match # en Reset knop */}
-            <div className="flex justify-between items-center md:hidden border-b border-gray-100 pb-2 mb-2">
-                <span className="text-[10px] text-gray-400 font-mono uppercase tracking-wider">Match #{index + 1}</span>
-                {/* Reset knop (Mobiel) */}
-                <button onClick={() => handleResetMatch(match.id)} className="p-1 text-gray-300 hover:text-red-500 transition-colors">
-                    <RefreshCcw size={14} />
-                </button>
-            </div>
+            {/* CONTAINER: Flex op desktop (naast elkaar), Block op mobiel (onder elkaar) */}
+            <div className="flex flex-col md:flex-row gap-4">
 
-            {/* 2. INSTELLINGEN (Bord & Schrijver) - Gegroepeerd */}
-            {/* Mobiel: Naast elkaar (grid-cols-2). Desktop: Onder elkaar (flex-col) in linker kolom */}
-            <div className="grid grid-cols-2 md:flex md:flex-col gap-3 md:gap-2 md:w-48 md:border-r md:border-gray-100 md:pr-4 md:mr-2">
-                
-                {/* A. BORD SELECTOR */}
-                <div className="flex flex-col gap-1">
-                    <label className="text-[10px] font-bold text-gray-400 uppercase flex items-center gap-1.5">
-                        <Target size={12} className="text-blue-400"/> Bord
-                    </label>
-                    <div className="relative">
-                        <select 
-                            className="w-full bg-gray-50 border border-gray-200 text-xs rounded px-2 py-1.5 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 font-medium appearance-none"
-                            value={match.board_number || ''}
-                            onChange={(e) => handleBoardChange(match.id, e.target.value)}
-                        >
-                            <option value="">-- Kies --</option>
-                            {allBoards.map(board => (
-                                <option key={board.id} value={board.number}>
-                                    Bord {board.number} {board.name ? `(${board.name})` : ''}
-                                </option>
-                            ))}
-                        </select>
-                        {/* Klein pijltje voor styling (optioneel, browser default is ook prima) */}
-                        <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-500">
-                            <ChevronDown size={12} />
-                        </div>
+                {/* --- SEGMENT 1: INSTELLINGEN (Bord & Schrijver) --- */}
+                {/* Desktop: Vaste breedte links met scheidingslijn. Mobiel: Volle breedte boven. */}
+                <div className="flex flex-col gap-3 md:w-56 md:border-r md:border-gray-100 md:pr-4 shrink-0">
+                    
+                    {/* Match ID Aanduiding (Klein) */}
+                    <div className="text-[10px] text-gray-400 font-mono uppercase tracking-wider mb-1">
+                        Match #{index + 1}
                     </div>
-                </div>
 
-                {/* B. SCHRIJVER SELECTOR */}
-                <div className="flex flex-col gap-1">
-                    <label className="text-[10px] font-bold text-gray-400 uppercase flex items-center gap-1.5">
-                        <User size={12} className="text-purple-400"/> Schrijver
-                    </label>
-                    <div className="relative">
-                        <select 
-                            className={`w-full text-xs rounded px-2 py-1.5 outline-none border appearance-none ${
-                                match.referee_id || match.custom_referee_name 
-                                ? 'bg-blue-50 border-blue-200 text-blue-800 font-bold' 
-                                : 'bg-white border-gray-200 text-gray-400'
-                            }`}
-                            value={match.referee_id || (match.custom_referee_name ? "CUSTOM_DISPLAY" : "")}
-                            onChange={(e) => handleRefereeChange(match.id, e.target.value)}
-                        >
-                            <option value="">-- Kies --</option>
-                            {match.custom_referee_name && <option value="CUSTOM_DISPLAY">✎ {match.custom_referee_name}</option>}
-                            <optgroup label="Spelers">
-                                {tournament?.players?.map(p => (
-                                    <option key={p.id} value={p.id}>{p.name}</option>
+                    {/* Bord Selectie */}
+                    <div className="flex flex-col">
+                        <label className="text-[10px] font-bold text-gray-500 uppercase flex items-center gap-1 mb-1">
+                            <Target size={10} className="text-blue-500"/> Bord
+                        </label>
+                        <div className="relative">
+                            <select 
+                                className="w-full bg-gray-50 border border-gray-200 text-xs rounded px-2 py-1.5 outline-none focus:border-blue-500 font-medium appearance-none"
+                                value={match.board_number || ''}
+                                onChange={(e) => handleBoardChange(match.id, e.target.value)}
+                            >
+                                <option value="">-- Kies --</option>
+                                {allBoards.map(board => (
+                                    <option key={board.id} value={board.number}>
+                                        Bord {board.number} {board.name ? `(${board.name})` : ''}
+                                    </option>
                                 ))}
-                            </optgroup>
-                            <option value="CUSTOM_PROMPT" className="text-blue-600 font-bold">+ Handmatig</option>
-                        </select>
-                         <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-500">
-                            <ChevronDown size={12} />
+                            </select>
+                            <ChevronDown size={12} className="absolute right-2 top-2 text-gray-400 pointer-events-none"/>
+                        </div>
+                    </div>
+
+                    {/* Schrijver Selectie */}
+                    <div className="flex flex-col">
+                        <label className="text-[10px] font-bold text-gray-500 uppercase flex items-center gap-1 mb-1">
+                            <User size={10} className="text-purple-500"/> Schrijver
+                        </label>
+                        <div className="relative">
+                            <select 
+                                className={`w-full text-xs rounded px-2 py-1.5 outline-none border appearance-none ${
+                                    match.referee_id || match.custom_referee_name 
+                                    ? 'bg-blue-50 border-blue-200 text-blue-800 font-bold' 
+                                    : 'bg-white border-gray-200 text-gray-400'
+                                }`}
+                                value={match.referee_id || (match.custom_referee_name ? "CUSTOM_DISPLAY" : "")}
+                                onChange={(e) => handleRefereeChange(match.id, e.target.value)}
+                            >
+                                <option value="">-- Kies --</option>
+                                {match.custom_referee_name && <option value="CUSTOM_DISPLAY">✎ {match.custom_referee_name}</option>}
+                                <optgroup label="Spelers">
+                                    {tournament?.players?.map(p => (
+                                        <option key={p.id} value={p.id}>{p.name}</option>
+                                    ))}
+                                </optgroup>
+                                <option value="CUSTOM_PROMPT" className="text-blue-600 font-bold">+ Handmatig</option>
+                            </select>
+                            <ChevronDown size={12} className="absolute right-2 top-2 text-gray-400 pointer-events-none"/>
                         </div>
                     </div>
                 </div>
-            </div>
 
-            {/* 3. SCORE & SPELERS (Centraal) */}
-            <div className="flex items-center justify-between gap-3 flex-1">
-                {/* Speler 1 */}
-                <div className={`flex-1 text-right text-sm md:text-base truncate font-medium ${match.score_p1 > match.score_p2 && match.is_completed ? 'text-green-700 font-bold' : 'text-gray-700'}`}>
-                    {match.player1_name || 'Bye'}
+                {/* --- SEGMENT 2: WEDSTRIJD & SCORES --- */}
+                <div className="flex-1 flex flex-col justify-center">
+                    
+                    {/* A. MOBIELE WEERGAVE (Onder elkaar) */}
+                    <div className="md:hidden flex flex-col gap-3">
+                        {/* Speler 1 Rij */}
+                        <div className={`flex items-center justify-between p-3 rounded-lg border ${match.score_p1 > match.score_p2 && match.is_completed ? 'bg-green-50 border-green-200 shadow-sm' : 'bg-white border-gray-200'}`}>
+                            <span className="font-bold text-gray-800 text-sm truncate pr-2">{match.player1_name || 'Bye'}</span>
+                            <input 
+                                type="number" 
+                                className={`w-14 h-10 text-center rounded border border-gray-300 outline-none font-bold text-xl ${match.save_success ? 'text-green-600 border-green-300' : 'text-gray-900'}`}
+                                value={match.score_p1}
+                                onChange={(e) => handleScoreChange(match.id, 'score_p1', e.target.value)}
+                                onBlur={() => saveMatchScore(match)}
+                                onKeyDown={(e) => handleKeyDown(e, match)}
+                            />
+                        </div>
+
+                        {/* Speler 2 Rij */}
+                        <div className={`flex items-center justify-between p-3 rounded-lg border ${match.score_p2 > match.score_p1 && match.is_completed ? 'bg-green-50 border-green-200 shadow-sm' : 'bg-white border-gray-200'}`}>
+                            <span className="font-bold text-gray-800 text-sm truncate pr-2">{match.player2_name || 'Bye'}</span>
+                            <input 
+                                type="number" 
+                                className={`w-14 h-10 text-center rounded border border-gray-300 outline-none font-bold text-xl ${match.save_success ? 'text-green-600 border-green-300' : 'text-gray-900'}`}
+                                value={match.score_p2}
+                                onChange={(e) => handleScoreChange(match.id, 'score_p2', e.target.value)}
+                                onBlur={() => saveMatchScore(match)}
+                                onKeyDown={(e) => handleKeyDown(e, match)}
+                            />
+                        </div>
+
+                        {/* Reset Knop Mobiel (Klein onderaan) */}
+                        <div className="flex justify-end mt-1">
+                            <button 
+                                onClick={() => handleResetMatch(match.id)} 
+                                className="text-xs text-gray-400 underline hover:text-red-500 flex items-center gap-1"
+                            >
+                                <RefreshCcw size={10} /> Reset Score
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* B. DESKTOP WEERGAVE (Naast elkaar, netjes uitgelijnd) */}
+                    <div className="hidden md:flex items-center gap-4">
+                        {/* Speler 1 (Rechts uitgelijnd) */}
+                        <div className={`flex-1 text-right text-base font-medium truncate ${match.score_p1 > match.score_p2 && match.is_completed ? 'text-green-700 font-bold' : 'text-gray-700'}`}>
+                            {match.player1_name || 'Bye'}
+                        </div>
+
+                        {/* Score Inputs (Centraal) */}
+                        <div className="flex items-center bg-white border border-gray-300 rounded shadow-sm overflow-hidden focus-within:ring-2 focus-within:ring-blue-100 focus-within:border-blue-400 transition-all shrink-0 h-10">
+                            <input 
+                                type="number" 
+                                className={`w-12 h-full text-center outline-none font-bold no-spinner text-lg border-r border-gray-100 ${match.save_success ? 'text-green-600' : 'text-gray-800'}`}
+                                value={match.score_p1}
+                                onChange={(e) => handleScoreChange(match.id, 'score_p1', e.target.value)}
+                                onBlur={() => saveMatchScore(match)}
+                                onKeyDown={(e) => handleKeyDown(e, match)}
+                            />
+                            <input 
+                                type="number" 
+                                className={`w-12 h-full text-center outline-none font-bold no-spinner text-lg ${match.save_success ? 'text-green-600' : 'text-gray-800'}`}
+                                value={match.score_p2}
+                                onChange={(e) => handleScoreChange(match.id, 'score_p2', e.target.value)}
+                                onBlur={() => saveMatchScore(match)}
+                                onKeyDown={(e) => handleKeyDown(e, match)}
+                            />
+                        </div>
+
+                        {/* Speler 2 (Links uitgelijnd) */}
+                        <div className={`flex-1 text-left text-base font-medium truncate ${match.score_p2 > match.score_p1 && match.is_completed ? 'text-green-700 font-bold' : 'text-gray-700'}`}>
+                            {match.player2_name || 'Bye'}
+                        </div>
+
+                        {/* Reset Knop Desktop */}
+                        <div className="w-8 flex justify-end">
+                            {match.is_saving ? (
+                                <RefreshCcw size={16} className="animate-spin text-blue-500" />
+                            ) : match.save_success ? (
+                                <SaveAll size={16} className="text-green-500" />
+                            ) : (
+                                <button onClick={() => handleResetMatch(match.id)} className="p-2 text-gray-300 hover:text-red-500 transition-colors" title="Reset Match">
+                                    <RefreshCcw size={16} />
+                                </button>
+                            )}
+                        </div>
+                    </div>
+
                 </div>
-
-                {/* Score Inputs */}
-                <div className="flex items-center bg-white border-2 border-gray-100 rounded-lg shadow-sm overflow-hidden focus-within:border-blue-400 transition-colors shrink-0">
-                    <input 
-                        type="number" 
-                        className={`w-12 h-10 text-center outline-none font-bold no-spinner text-lg ${match.save_success ? 'text-green-600' : 'text-gray-800'}`}
-                        value={match.score_p1}
-                        onChange={(e) => handleScoreChange(match.id, 'score_p1', e.target.value)}
-                        onBlur={() => saveMatchScore(match)}
-                        onKeyDown={(e) => handleKeyDown(e, match)}
-                    />
-                    <div className="h-full w-px bg-gray-100"></div>
-                    <input 
-                        type="number" 
-                        className={`w-12 h-10 text-center outline-none font-bold no-spinner text-lg ${match.save_success ? 'text-green-600' : 'text-gray-800'}`}
-                        value={match.score_p2}
-                        onChange={(e) => handleScoreChange(match.id, 'score_p2', e.target.value)}
-                        onBlur={() => saveMatchScore(match)}
-                        onKeyDown={(e) => handleKeyDown(e, match)}
-                    />
-                </div>
-
-                {/* Speler 2 */}
-                <div className={`flex-1 text-left text-sm md:text-base truncate font-medium ${match.score_p2 > match.score_p1 && match.is_completed ? 'text-green-700 font-bold' : 'text-gray-700'}`}>
-                    {match.player2_name || 'Bye'}
-                </div>
-            </div>
-
-            {/* 4. ACTIES (Desktop: Rechts) */}
-            <div className="hidden md:flex w-8 justify-end">
-                {match.is_saving ? (
-                    <RefreshCcw size={16} className="animate-spin text-blue-500" />
-                ) : match.save_success ? (
-                    <SaveAll size={16} className="text-green-500" />
-                ) : (
-                    <button onClick={() => handleResetMatch(match.id)} className="p-2 text-gray-300 hover:text-red-500 transition-colors" title="Reset Match">
-                        <RefreshCcw size={16} />
-                    </button>
-                )}
             </div>
         </div>
     ))}
