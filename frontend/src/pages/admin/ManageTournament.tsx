@@ -9,6 +9,10 @@ import {
 } from 'lucide-react';
 import { Dartboard, Tournament, Match } from '../../types';
 
+import { polyfill } from 'mobile-drag-drop';
+import { scrollBehaviourDragImageTranslateOverride } from 'mobile-drag-drop/scroll-behaviour';
+import 'mobile-drag-drop/default.css';
+
 // Uitgebreide interface voor UI-specifieke properties
 interface MatchWithUI extends Match {
   best_of_legs: number;
@@ -82,6 +86,13 @@ const ManageTournament = () => {
     };
 
   useEffect(() => {
+    // Activeer de mobile drag & drop workaround
+    polyfill({
+        dragImageTranslateOverride: scrollBehaviourDragImageTranslateOverride
+    });
+    
+    // Voorkom dat iOS/Android probeert te scrollen als je een draggable item vastpakt
+    window.addEventListener( 'touchmove', function() {}, {passive: false});
     loadData();
   }, [id]);
 
@@ -475,6 +486,12 @@ const ManageTournament = () => {
         .no-spinner { 
           -moz-appearance: textfield; 
         }
+          /* --- NIEUW: Zorgt dat mobiel slepen soepel werkt --- */
+        .draggable-item {
+            touch-action: none; /* Voorkomt scrollen van de pagina als je dit item vastpakt */
+            user-select: none;  /* Voorkomt dat tekst geselecteerd wordt */
+            -webkit-user-select: none;
+        }
       `}</style>
 
       <div className="max-w-5xl mx-auto pb-20">
@@ -636,8 +653,7 @@ const ManageTournament = () => {
                                                 onDragStart={(e) => onDragStart(e, 'player', p.id)}
                                                 onDragOver={onDragOver}
                                                 onDrop={(e) => onDropAny(e, 'player', p.id)}
-                                                className="p-3 border border-gray-200 rounded bg-white hover:border-purple-400 hover:shadow-md cursor-grab active:cursor-grabbing transition-all flex items-center gap-3 group"
-                                            >
+                                                className="draggable-item p-3 border border-gray-200 rounded bg-white hover:border-purple-400 hover:shadow-md cursor-grab active:cursor-grabbing transition-all flex items-center gap-3 group"                                            >
                                                 <div className="bg-gray-100 p-1.5 rounded text-gray-400 group-hover:text-purple-500">
                                                     <User size={16}/>
                                                 </div>
@@ -668,7 +684,7 @@ const ManageTournament = () => {
                                         onDragStart={(e) => onDragStart(e, 'match', match.id)}
                                         onDragOver={onDragOver}
                                         onDrop={(e) => onDropAny(e, 'match', match.id)}
-                                        className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden cursor-move hover:shadow-md transition-shadow group"
+                                        className="draggable-item bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden cursor-move hover:shadow-md transition-shadow group"
                                     >
                                         <div className="bg-orange-50 p-2 border-b border-orange-100 font-bold text-orange-800 text-xs flex justify-between items-center">
                                             <span className="flex items-center gap-1"><LayoutGrid size={12}/> Match {idx + 1}</span>
@@ -683,8 +699,7 @@ const ManageTournament = () => {
                                                     onDragStart={(e) => onDragStart(e, 'player', match.player1_id!)}
                                                     onDragOver={onDragOver}
                                                     onDrop={(e) => onDropAny(e, 'player', match.player1_id!)}
-                                                    className="p-2 border border-gray-100 rounded bg-gray-50 hover:bg-white hover:border-blue-400 cursor-grab flex items-center gap-2 text-sm"
-                                                >
+                                                    className="draggable-item p-2 border border-gray-100 rounded bg-gray-50 hover:bg-white hover:border-blue-400 cursor-grab flex items-center gap-2 text-sm"                                                >
                                                     <span className="font-bold text-gray-700 truncate">{match.player1_name}</span>
                                                 </div>
                                             )}
@@ -696,8 +711,7 @@ const ManageTournament = () => {
                                                     onDragStart={(e) => onDragStart(e, 'player', match.player2_id!)}
                                                     onDragOver={onDragOver}
                                                     onDrop={(e) => onDropAny(e, 'player', match.player2_id!)}
-                                                    className="p-2 border border-gray-100 rounded bg-gray-50 hover:bg-white hover:border-blue-400 cursor-grab flex items-center gap-2 text-sm"
-                                                >
+                                                    className="draggable-item p-2 border border-gray-100 rounded bg-gray-50 hover:bg-white hover:border-blue-400 cursor-grab flex items-center gap-2 text-sm"                                                >
                                                     <span className="font-bold text-gray-700 truncate">{match.player2_name}</span>
                                                 </div>
                                             )}
