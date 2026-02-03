@@ -258,10 +258,34 @@ def calculate_poule_standings(session: Session, tournament: Tournament) -> Dict[
 
     return final_standings
 
+# Voeg deze helper toe bovenaan of vlak voor generate_knockout_bracket
+def get_bracket_order(num_items: int) -> List[int]:
+    """
+    Geeft de index-volgorde terug voor een standaard seeded bracket.
+    Bijv voor 4 items (Halve finales): [0, 3, 2, 1] -> Seed 1 vs 4, Seed 3 vs 2
+    """
+    if num_items == 0: return []
+    # Start met finale: seeds 1 en 2
+    rounds = [1, 2]
+    
+    # Bouw op tot het gewenste aantal (powers of 2)
+    while len(rounds) < num_items:
+        next_round = []
+        for seed in rounds:
+            next_round.append(seed)
+            next_round.append((len(rounds) * 2 + 1) - seed)
+        rounds = next_round
+        
+    # Converteer seeds (1-based) naar 0-based index en pas de pairing volgorde aan
+    # We willen dat Match 1 (index 0) speelt tegen Match 2 (index 1) in de volgende ronde.
+    # Standaard lijst: 1, 8, 5, 4, 3, 6, 7, 2
+    # Paar 1: 1 vs 8. Paar 2: 5 vs 4.
+    # Als we ze gewoon in deze volgorde in de DB zetten, speelt (1vs8) tegen (5vs4). Dat klopt!
+    return [x - 1 for x in rounds]
 
 def generate_knockout_bracket(session: Session, tournament: Tournament):
     """
-    Genereert bracket: 1. Byes (Global Rank), 2. Cyclisch koppelen, 3. Sterk vs Zwak.
+    Genereert bracket met correcte seeding zodat toppers elkaar pas in de finale treffen.
     """
     standings = calculate_poule_standings(session, tournament)
     is_doubles = tournament.mode == "doubles"
@@ -269,6 +293,7 @@ def generate_knockout_bracket(session: Session, tournament: Tournament):
     qualifiers = []
     q_per_poule = tournament.qualifiers_per_poule if tournament.qualifiers_per_poule else 2
 
+    # 1. Verzamel alle qualifiers
     for p_num, players in standings.items():
         top_x = players[:q_per_poule]
         for rank_idx, p in enumerate(top_x):
@@ -281,6 +306,15 @@ def generate_knockout_bracket(session: Session, tournament: Tournament):
         print("Geen qualifiers gevonden.")
         return
 
+    # 2. Global Ranking (voor Seeds)
+    # Sorteer iedereen op prestatie (Punten > Saldo > Won > Rank)
+    qualifiers.sort(key=lambda x: (
+        x['poule_rank'],      # Eerst alle nummers 1
+        -x['points'],         # Dan meeste punten
+        -x['leg_diff'],       # Dan beste saldo
+        -x['legs_won']
+    ))
+
     total_players = len(qualifiers)
     bracket_size = 2
     while bracket_size < total_players:
@@ -288,25 +322,18 @@ def generate_knockout_bracket(session: Session, tournament: Tournament):
     
     num_byes = bracket_size - total_players
     
-    # 1. Global Ranking voor Byes
-    qualifiers.sort(key=lambda x: (
-        x['poule_rank'], 
-        -x['points'], 
-        -x['leg_diff'], 
-        -x['legs_won']
-    ))
+    # De lijst 'bracket_slots' gaat alle 'Units' bevatten (Matches of Byes)
+    # We vullen ze eerst op volgorde van sterkte (Seed 1, Seed 2, ...)
+    bracket_slots = []
 
-    players_with_bye = qualifiers[:num_byes]
-    players_to_match = qualifiers[num_byes:]
-
-    matches_to_create = []
-    current_round = 1
-    
-    # Maak Bye-wedstrijden
-    for bye_player in players_with_bye:
+    # A. Maak Byes voor de top seeds
+    for i in range(num_byes):
+        player = qualifiers[i]
+        
+        # Maak een VOLTOOIDE match (Bye)
         match = Match(
             tournament_id=tournament.id,
-            round_number=current_round,
+            round_number=1,
             poule_number=None,
             best_of_legs=tournament.starting_legs_ko,
             best_of_sets=tournament.sets_per_match,
@@ -315,55 +342,77 @@ def generate_knockout_bracket(session: Session, tournament: Tournament):
             score_p2=0
         )
         if is_doubles:
-            match.team1_id = bye_player['id']
-            match.team2_id = None
+            match.team1_id = player['id']
         else:
-            match.player1_id = bye_player['id']
-            match.player2_id = None
-        matches_to_create.append(match)
+            match.player1_id = player['id']
+            
+        bracket_slots.append(match)
 
-    # 2. Cyclisch Koppelen (Sterk vs Zwak)
-    players_to_match.sort(key=lambda x: (x['poule_rank'], -x['points'], -x['leg_diff']))
-    max_poules = tournament.number_of_poules
-
-    while len(players_to_match) > 0:
-        p1 = players_to_match.pop(0) 
-        opponent = None
-        found_opponent_idx = -1
+    # B. Maak Wedstrijden voor de rest (Sterk vs Zwak principe overgebleven veld)
+    remaining_players = qualifiers[num_byes:]
+    # We hebben nu (bracket_size / 2) - num_byes aan "echte" wedstrijden nodig
+    # We koppelen de overgebleven sterkste aan de overgebleven zwakste
+    # Omdat 'qualifiers' al gesorteerd is, is remaining_players[0] de sterkste "niet-bye" speler.
+    
+    while len(remaining_players) > 1:
+        p1 = remaining_players.pop(0) # Sterkste overgebleven
         
-        for offset in range(1, max_poules + 1):
-            target_poule_num = ((p1['poule_number'] - 1 + offset) % max_poules) + 1
-            candidates_indices = [
-                i for i, p in enumerate(players_to_match) 
-                if p['poule_number'] == target_poule_num
-            ]
-            if candidates_indices:
-                found_opponent_idx = candidates_indices[-1] # Pak zwakste
+        # Zoek tegenstander (liefst uit andere poule) - Cyclisch zoeken
+        opponent = None
+        found_idx = -1
+        max_poules = tournament.number_of_poules
+
+        # Probeer van zwak naar sterk te zoeken naar iemand uit andere poule
+        for i in range(len(remaining_players) -1, -1, -1):
+            cand = remaining_players[i]
+            if cand['poule_number'] != p1['poule_number']:
+                found_idx = i
                 break
         
-        if found_opponent_idx == -1 and len(players_to_match) > 0:
-             found_opponent_idx = len(players_to_match) - 1
+        if found_idx == -1:
+            found_idx = len(remaining_players) - 1 # Pak gewoon de zwakste
+            
+        opponent = remaining_players.pop(found_idx)
 
-        if found_opponent_idx != -1:
-            opponent = players_to_match.pop(found_opponent_idx)
-            match = Match(
-                tournament_id=tournament.id,
-                round_number=current_round,
-                poule_number=None,
-                best_of_legs=tournament.starting_legs_ko,
-                best_of_sets=tournament.sets_per_match,
-                is_completed=False,
-                score_p1=0, score_p2=0
-            )
-            if is_doubles:
-                match.team1_id = p1['id']
-                match.team2_id = opponent['id']
-            else:
-                match.player1_id = p1['id']
-                match.player2_id = opponent['id']
-            matches_to_create.append(match)
+        match = Match(
+            tournament_id=tournament.id,
+            round_number=1,
+            poule_number=None,
+            best_of_legs=tournament.starting_legs_ko,
+            best_of_sets=tournament.sets_per_match,
+            is_completed=False,
+            score_p1=0, score_p2=0
+        )
+        if is_doubles:
+            match.team1_id = p1['id']
+            match.team2_id = opponent['id']
+        else:
+            match.player1_id = p1['id']
+            match.player2_id = opponent['id']
+            
+        bracket_slots.append(match)
 
-    session.add_all(matches_to_create)
+    # 3. REORDERING (De Fix)
+    # We hebben nu een lijst 'bracket_slots' die gesorteerd is op sterkte van de "hoofdrolspeler".
+    # Slot 0 = Seed 1 (Bye), Slot 1 = Seed 2 (Bye), Slot X = Match met Seed Y.
+    # We moeten deze lijst husselen naar de bracket volgorde (1, 8, 4, 5, 3, 6, 2, 7)
+    
+    # Aantal slots in ronde 1 (matches + byes) zou bracket_size / 2 moeten zijn
+    # Bijv: 6 spelers -> bracket 8 -> 2 Byes, 2 Matches. Totaal 4 slots in de boom.
+    num_slots_in_round = bracket_size // 2
+    
+    # Haal de index-volgorde op
+    order_indices = get_bracket_order(num_slots_in_round)
+    
+    final_matches_list = []
+    
+    # We plaatsen de matches in de database in de volgorde van het schema (Boven naar Beneden)
+    # Hierdoor pakt 'check_and_advance' straks automatisch Match 1 vs Match 2.
+    for idx in order_indices:
+        if idx < len(bracket_slots):
+            final_matches_list.append(bracket_slots[idx])
+
+    session.add_all(final_matches_list)
     session.commit()
 
 

@@ -77,3 +77,8 @@ class SwapRequest(BaseModel):
     entity_id_1: int
     entity_id_2: int
     confirmed: bool = False
+
+class SwapMatchRequest(BaseModel):
+    """Gebruikt voor het wisselen van volledige wedstrijden"""
+    match_id_1: int
+    match_id_2: int

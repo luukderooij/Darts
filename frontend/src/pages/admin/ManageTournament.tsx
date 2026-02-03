@@ -394,9 +394,27 @@ const ManageTournament = () => {
         doSwap(false);
     };
 
-    // HTML5 Drag Handlers
-    const onDragStart = (e: React.DragEvent, entityId: number) => {
-        e.dataTransfer.setData("entityId", entityId.toString());
+    // --- MATCH SWAP LOGIC ---
+    const handleMatchDrop = async (sourceMatchId: number, targetMatchId: number) => {
+        if (sourceMatchId === targetMatchId) return;
+        try {
+            await api.post(`/tournaments/${id}/swap-matches`, {
+                match_id_1: sourceMatchId,
+                match_id_2: targetMatchId
+            });
+            loadData(false);
+        } catch (err: any) {
+            alert("Fout bij wisselen wedstrijden: " + (err.response?.data?.detail || err.message));
+        }
+    };
+
+    // --- DRAG HANDLERS (UPDATED) ---
+    
+    // Start met slepen (Speler OF Match)
+    const onDragStart = (e: React.DragEvent, type: 'player' | 'match', id: number) => {
+        e.stopPropagation(); // Belangrijk! Zorgt dat match-drag niet start als je een speler pakt
+        e.dataTransfer.setData("type", type);
+        e.dataTransfer.setData("id", id.toString());
         e.dataTransfer.effectAllowed = "move";
     };
 
@@ -404,11 +422,24 @@ const ManageTournament = () => {
         e.preventDefault(); // Nodig om te kunnen droppen
     };
 
-    const onDrop = (e: React.DragEvent, targetId: number) => {
+    // Drop handler
+    const onDropAny = (e: React.DragEvent, targetType: 'player' | 'match', targetId: number) => {
         e.preventDefault();
-        const sourceId = parseInt(e.dataTransfer.getData("entityId"));
-        if (!isNaN(sourceId)) {
-            handleDrop(sourceId, targetId);
+        e.stopPropagation();
+        
+        const sourceType = e.dataTransfer.getData("type");
+        const sourceId = parseInt(e.dataTransfer.getData("id"));
+
+        if (isNaN(sourceId)) return;
+
+        // Scenario 1: Speler op Speler (Bestaande logica)
+        if (sourceType === 'player' && targetType === 'player') {
+            handleDrop(sourceId, targetId); // Je oude handleDrop functie voor spelers
+        }
+        
+        // Scenario 2: Match op Match (Nieuwe logica)
+        if (sourceType === 'match' && targetType === 'match') {
+            handleMatchDrop(sourceId, targetId);
         }
     };
 
@@ -574,56 +605,110 @@ const ManageTournament = () => {
             </button>
         </div>
 
-{/* --- VIEW: POULE MANAGER (DRAG & DROP) --- */}
-        {activeTab === 'poules' && (
-            <div className="animate-fade-in">
-                 <div className="bg-blue-50 border border-blue-200 p-4 rounded-lg mb-6 flex items-start gap-3">
-                    <div className="p-2 bg-blue-100 text-blue-600 rounded-full mt-1"><ArrowRightLeft size={20}/></div>
-                    <div>
-                        <h4 className="font-bold text-blue-800">Spelers Wisselen</h4>
-                        <p className="text-sm text-blue-600">Sleep een speler naar een andere speler om hun posities (en wedstrijden) om te wisselen. <br/><strong>Let op:</strong> Als het toernooi al bezig is, worden de scores van deze spelers gereset.</p>
+{/* --- VIEW: POULE & KNOCKOUT MANAGER (DRAG & DROP) --- */}
+            {activeTab === 'poules' && (
+                <div className="animate-fade-in space-y-8">
+                     <div className="bg-blue-50 border border-blue-200 p-4 rounded-lg flex items-start gap-3">
+                        <div className="p-2 bg-blue-100 text-blue-600 rounded-full mt-1"><ArrowRightLeft size={20}/></div>
+                        <div>
+                            <h4 className="font-bold text-blue-800">Indeling & Seeding Aanpassen</h4>
+                            <p className="text-sm text-blue-600">Sleep spelers naar een andere positie om te wisselen. <br/>Dit werkt voor Poules én voor Ronde 1 van de Knockout (bracket seeding).</p>
+                        </div>
                     </div>
-                </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                    {/* HIER GEBRUIKEN WE NU pouleLayout IN PLAATS VAN standings */}
-                    {Object.entries(pouleLayout)
-                        .sort(([a], [b]) => Number(a) - Number(b)) // Zorg dat poule 1, 2, 3 op volgorde staan
-                        .map(([pouleNum, participants]) => (
-                        <div key={pouleNum} className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-                            <div className="bg-gray-50 p-3 border-b border-gray-200 font-bold text-gray-700 flex justify-between items-center">
-                                <span>Poule {pouleNum}</span>
-                                <span className="text-xs bg-gray-200 px-2 py-1 rounded text-gray-600">{participants.length} spelers</span>
-                            </div>
-                            <div className="p-2 space-y-2 min-h-[100px]">
-                                {participants.map(p => (
-                                    <div
-                                        key={p.id}
+                    {/* SECTIE 1: POULES */}
+                    <div>
+                        <h3 className="font-bold text-gray-700 mb-3 flex items-center gap-2"><LayoutGrid size={20}/> Poule Indeling</h3>
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                            {Object.entries(pouleLayout)
+                                .sort(([a], [b]) => Number(a) - Number(b))
+                                .map(([pouleNum, participants]) => (
+                                <div key={pouleNum} className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+                                    <div className="bg-gray-50 p-3 border-b border-gray-200 font-bold text-gray-700 flex justify-between items-center">
+                                        <span>Poule {pouleNum}</span>
+                                        <span className="text-xs bg-gray-200 px-2 py-1 rounded text-gray-600">{participants.length} spelers</span>
+                                    </div>
+                                    <div className="p-2 space-y-2 min-h-[50px]">
+                                        {participants.map(p => (
+                                            <div
+                                                key={p.id}
+                                                draggable
+                                                onDragStart={(e) => onDragStart(e, 'player', p.id)}
+                                                onDragOver={onDragOver}
+                                                onDrop={(e) => onDropAny(e, 'player', p.id)}
+                                                className="p-3 border border-gray-200 rounded bg-white hover:border-purple-400 hover:shadow-md cursor-grab active:cursor-grabbing transition-all flex items-center gap-3 group"
+                                            >
+                                                <div className="bg-gray-100 p-1.5 rounded text-gray-400 group-hover:text-purple-500">
+                                                    <User size={16}/>
+                                                </div>
+                                                <div className="font-medium text-gray-800">{p.name}</div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            ))}
+                            {Object.keys(pouleLayout).length === 0 && <p className="text-gray-400 italic">Geen poules actief.</p>}
+                        </div>
+                    </div>
+
+{/* SECTIE 2: KNOCKOUT (Ronde 1) */}
+                    {matches.some(m => m.poule_number === null) && (
+                        <div className="border-t pt-6">
+                            <h3 className="font-bold text-gray-700 mb-3 flex items-center gap-2"><GitMerge size={20}/> Knockout Seeding (Ronde 1)</h3>
+                            <p className="text-xs text-gray-500 mb-4">Tip: Sleep een <span className="font-bold">hele wedstrijd</span> om de volgorde te wijzigen (bijv. Byes verplaatsen), of sleep <span className="font-bold">spelers</span> om specifieke matchups aan te passen.</p>
+                            
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                                {matches
+                                    .filter(m => m.poule_number === null && m.round_number === 1)
+                                    .sort((a,b) => a.id - b.id)
+                                    .map((match, idx) => (
+                                    <div 
+                                        key={match.id} 
                                         draggable
-                                        onDragStart={(e) => onDragStart(e, p.id)}
+                                        onDragStart={(e) => onDragStart(e, 'match', match.id)}
                                         onDragOver={onDragOver}
-                                        onDrop={(e) => onDrop(e, p.id)}
-                                        className="p-3 border border-gray-200 rounded bg-white hover:border-purple-400 hover:shadow-md cursor-grab active:cursor-grabbing transition-all flex items-center gap-3 group"
+                                        onDrop={(e) => onDropAny(e, 'match', match.id)}
+                                        className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden cursor-move hover:shadow-md transition-shadow group"
                                     >
-                                        <div className="bg-gray-100 p-1.5 rounded text-gray-400 group-hover:text-purple-500">
-                                            <LayoutGrid size={16}/>
+                                        <div className="bg-orange-50 p-2 border-b border-orange-100 font-bold text-orange-800 text-xs flex justify-between items-center">
+                                            <span className="flex items-center gap-1"><LayoutGrid size={12}/> Match {idx + 1}</span>
+                                            {match.player2_name === "Bye" ? <span className="bg-green-200 text-green-800 px-1 rounded">BYE</span> : <span className="opacity-50">vs</span>}
                                         </div>
-                                        <div className="font-medium text-gray-800">{p.name}</div>
+                                        
+                                        <div className="p-2 space-y-2 cursor-default"> {/* cursor-default reset de cursor voor de inhoud */}
+                                            {/* Speler 1 */}
+                                            {match.player1_id && (
+                                                <div
+                                                    draggable
+                                                    onDragStart={(e) => onDragStart(e, 'player', match.player1_id!)}
+                                                    onDragOver={onDragOver}
+                                                    onDrop={(e) => onDropAny(e, 'player', match.player1_id!)}
+                                                    className="p-2 border border-gray-100 rounded bg-gray-50 hover:bg-white hover:border-blue-400 cursor-grab flex items-center gap-2 text-sm"
+                                                >
+                                                    <span className="font-bold text-gray-700 truncate">{match.player1_name}</span>
+                                                </div>
+                                            )}
+                                            
+                                            {/* Speler 2 */}
+                                            {match.player2_id && (
+                                                <div
+                                                    draggable
+                                                    onDragStart={(e) => onDragStart(e, 'player', match.player2_id!)}
+                                                    onDragOver={onDragOver}
+                                                    onDrop={(e) => onDropAny(e, 'player', match.player2_id!)}
+                                                    className="p-2 border border-gray-100 rounded bg-gray-50 hover:bg-white hover:border-blue-400 cursor-grab flex items-center gap-2 text-sm"
+                                                >
+                                                    <span className="font-bold text-gray-700 truncate">{match.player2_name}</span>
+                                                </div>
+                                            )}
+                                        </div>
                                     </div>
                                 ))}
                             </div>
                         </div>
-                    ))}
-                    
-                    {/* Fallback als er geen poules zijn gevonden */}
-                    {Object.keys(pouleLayout).length === 0 && (
-                        <div className="col-span-full text-center py-10 text-gray-400">
-                            Geen poule-indeling gevonden. Controleer of het schema is gegenereerd.
-                        </div>
                     )}
                 </div>
-            </div>
-        )}
+            )}
 
         {/* --- VIEW: WEDSTRIJDEN LIJST --- */}
         {activeTab === 'matches' && (
