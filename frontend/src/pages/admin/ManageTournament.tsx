@@ -5,7 +5,7 @@ import AdminLayout from '../../components/layout/AdminLayout';
 import { 
     Save, RefreshCcw, ShieldAlert, Settings, ChevronDown, ChevronRight, 
     SaveAll, GitMerge, Trophy, AlertCircle, LayoutGrid, Medal, 
-    UserPlus, Monitor, X, Target, User, Edit2 
+    UserPlus, Monitor, X, Target, User, Edit2, ArrowRightLeft
 } from 'lucide-react';
 import { Dartboard, Tournament, Match } from '../../types';
 
@@ -67,6 +67,9 @@ const ManageTournament = () => {
   const [allBoards, setAllBoards] = useState<Dartboard[]>([]);
   const [showCodesModal, setShowCodesModal] = useState(false);
   const [boardCodes, setBoardCodes] = useState<BoardCode[]>([]);
+
+  // TAB STATE
+  const [activeTab, setActiveTab] = useState<'matches' | 'poules'>('matches');
 
     const handleShowCodes = async () => {
         try {
@@ -312,6 +315,30 @@ const ManageTournament = () => {
       return numA - numB;
   });
 
+  // --- NIEUW: Genereer poule-overzicht uit de wedstrijden (ipv standings) ---
+  const pouleLayout = matches.reduce((acc, match) => {
+      // Sla knockout wedstrijden over, we willen alleen poules
+      if (match.poule_number === null) return acc; 
+
+      const pNum = match.poule_number;
+      if (!acc[pNum]) acc[pNum] = [];
+
+      // Helper functie om te checken of speler al in de lijst staat voor deze poule
+      const addPlayer = (id: number | undefined | null, name: string) => {
+          if (!id) return; // Geen ID (bijv. placeholder/bye)? Sla over.
+          // Als speler nog niet in de lijst van deze poule staat, voeg toe
+          if (!acc[pNum].find(p => p.id === id)) {
+              acc[pNum].push({ id, name });
+          }
+      };
+
+      // Voeg beide spelers van de match toe aan de lijst
+      addPlayer(match.player1_id, match.player1_name);
+      addPlayer(match.player2_id, match.player2_name);
+
+      return acc;
+  }, {} as Record<number, { id: number, name: string }[]>);
+
   const handleRefereeChange = async (matchId: number, value: string) => {
     let payload: any = { 
         score_p1: matches.find(m => m.id === matchId)?.score_p1 || 0,
@@ -338,6 +365,52 @@ const ManageTournament = () => {
         console.error("Update failed", err);
     }
   };
+
+  // --- POULE SWAP LOGIC ---
+    const handleDrop = async (sourceId: number, targetId: number) => {
+        if (sourceId === targetId) return;
+        
+        const doSwap = async (confirmed: boolean) => {
+            try {
+                const res = await api.post(`/tournaments/${id}/swap-participants`, {
+                    entity_id_1: sourceId,
+                    entity_id_2: targetId,
+                    confirmed: confirmed
+                });
+
+                if (res.data.require_confirmation) {
+                    if (window.confirm(res.data.message)) {
+                        doSwap(true); // Retry met bevestiging
+                    }
+                } else {
+                    // Succes! Herlaad data
+                    loadData(false);
+                }
+            } catch (err: any) {
+                alert("Er ging iets mis bij het wisselen: " + (err.response?.data?.detail || err.message));
+            }
+        };
+
+        doSwap(false);
+    };
+
+    // HTML5 Drag Handlers
+    const onDragStart = (e: React.DragEvent, entityId: number) => {
+        e.dataTransfer.setData("entityId", entityId.toString());
+        e.dataTransfer.effectAllowed = "move";
+    };
+
+    const onDragOver = (e: React.DragEvent) => {
+        e.preventDefault(); // Nodig om te kunnen droppen
+    };
+
+    const onDrop = (e: React.DragEvent, targetId: number) => {
+        e.preventDefault();
+        const sourceId = parseInt(e.dataTransfer.getData("entityId"));
+        if (!isNaN(sourceId)) {
+            handleDrop(sourceId, targetId);
+        }
+    };
 
   if (loading) {
     return (
@@ -375,14 +448,13 @@ const ManageTournament = () => {
 
       <div className="max-w-5xl mx-auto pb-20">
         
-        {/* HEADER - RESPONSIVE AANPASSING */}
+        {/* HEADER */}
         <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-4 mb-6">
             <h2 className="text-2xl md:text-3xl font-bold text-gray-800 flex items-center gap-2 md:gap-3">
                 <Settings className="text-gray-600 w-6 h-6 md:w-8 md:h-8" />
                 <span className="truncate flex-1">Beheer: <span className="text-blue-600">{tournament.name}</span></span>
             </h2>
             
-            {/* Knoppen Groep: Op mobiel volledige breedte, op desktop normaal */}
             <div className="flex gap-2 w-full md:w-auto">
                 <button 
                     onClick={handleShowCodes} 
@@ -482,291 +554,363 @@ const ManageTournament = () => {
             </form>
         </div>
 
-        {/* WEDSTRIJDEN LIJST */}
-        <div className="space-y-4">
-            {sortedGroupKeys.map((groupKey) => {
-                const [type, numStr] = groupKey.split('-');
-                const number = Number(numStr);
-                const roundMatches = groupedMatches[groupKey].sort((a,b) => {
-                    if (a.round_number !== b.round_number) return a.round_number - b.round_number;
-                    return a.id - b.id;
-                });
-                
-                const isOpen = openRounds[groupKey];
-                const isPoule = type === 'P';
-                const pouleStanding = isPoule ? (standings[number] || []) : [];
+        {/* --- TABS --- */}
+        <div className="flex border-b border-gray-200 mb-6">
+            <button
+                onClick={() => setActiveTab('matches')}
+                className={`px-6 py-3 font-bold text-sm flex items-center gap-2 border-b-2 transition-colors ${
+                    activeTab === 'matches' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'
+                }`}
+            >
+                <Trophy size={18} /> Wedstrijden
+            </button>
+            <button
+                onClick={() => setActiveTab('poules')}
+                className={`px-6 py-3 font-bold text-sm flex items-center gap-2 border-b-2 transition-colors ${
+                    activeTab === 'poules' ? 'border-purple-600 text-purple-600' : 'border-transparent text-gray-500 hover:text-gray-700'
+                }`}
+            >
+                <ArrowRightLeft size={18} /> Poule Indeling (Slepen)
+            </button>
+        </div>
 
-                return (
-                    <div key={groupKey} className={`rounded-lg shadow-sm border overflow-hidden ${isPoule ? 'bg-white border-gray-200' : 'bg-orange-50/50 border-orange-200'}`}>
-                        
-                        {/* RONDE HEADER */}
-                        <div 
-                            className={`p-4 flex justify-between items-center cursor-pointer select-none ${isPoule ? 'bg-gray-50' : 'bg-orange-100 text-orange-900'}`} 
-                            onClick={() => toggleRound(groupKey)}
-                        >
-                            <div className="flex items-center gap-2 font-bold text-gray-700">
-                                {isOpen ? <ChevronDown size={20} /> : <ChevronRight size={20} />}
-                                
-                                {isPoule ? (
-                                   <span className="flex items-center gap-2"><Trophy size={16} className="text-blue-500"/> Poule {number}</span>
-                                ) : (
-                                    <span className="text-orange-800 flex items-center gap-2">
-                                        <GitMerge size={16}/> Knockout - {getRoundName(number, roundMatches.length)}
-                                    </span>
-                                )}
-                                
-                                <span className={`text-xs px-2 py-0.5 rounded font-normal ${isPoule ? 'bg-gray-200 text-gray-600' : 'bg-orange-200 text-orange-800'}`}>
-                                    {roundMatches.length} wedstrijden
-                                </span>
+{/* --- VIEW: POULE MANAGER (DRAG & DROP) --- */}
+        {activeTab === 'poules' && (
+            <div className="animate-fade-in">
+                 <div className="bg-blue-50 border border-blue-200 p-4 rounded-lg mb-6 flex items-start gap-3">
+                    <div className="p-2 bg-blue-100 text-blue-600 rounded-full mt-1"><ArrowRightLeft size={20}/></div>
+                    <div>
+                        <h4 className="font-bold text-blue-800">Spelers Wisselen</h4>
+                        <p className="text-sm text-blue-600">Sleep een speler naar een andere speler om hun posities (en wedstrijden) om te wisselen. <br/><strong>Let op:</strong> Als het toernooi al bezig is, worden de scores van deze spelers gereset.</p>
+                    </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {/* HIER GEBRUIKEN WE NU pouleLayout IN PLAATS VAN standings */}
+                    {Object.entries(pouleLayout)
+                        .sort(([a], [b]) => Number(a) - Number(b)) // Zorg dat poule 1, 2, 3 op volgorde staan
+                        .map(([pouleNum, participants]) => (
+                        <div key={pouleNum} className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+                            <div className="bg-gray-50 p-3 border-b border-gray-200 font-bold text-gray-700 flex justify-between items-center">
+                                <span>Poule {pouleNum}</span>
+                                <span className="text-xs bg-gray-200 px-2 py-1 rounded text-gray-600">{participants.length} spelers</span>
                             </div>
-                            
-                            {/* Best of X input voor Knockout */}
-                            {isOpen && !isPoule && (
-                                <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
-                                    <span className="text-xs text-gray-500 font-bold">Zet Best of:</span>
-                                    <input type="number" min="1" className="w-12 text-center border rounded p-1 text-xs no-spinner" 
-                                        placeholder={roundMatches[0].best_of_legs?.toString() || "5"}
-                                        onKeyDown={(e) => e.key === 'Enter' && handleBatchUpdateRound(number, parseInt(e.currentTarget.value))}
-                                    />
-                                </div>
-                            )}
+                            <div className="p-2 space-y-2 min-h-[100px]">
+                                {participants.map(p => (
+                                    <div
+                                        key={p.id}
+                                        draggable
+                                        onDragStart={(e) => onDragStart(e, p.id)}
+                                        onDragOver={onDragOver}
+                                        onDrop={(e) => onDrop(e, p.id)}
+                                        className="p-3 border border-gray-200 rounded bg-white hover:border-purple-400 hover:shadow-md cursor-grab active:cursor-grabbing transition-all flex items-center gap-3 group"
+                                    >
+                                        <div className="bg-gray-100 p-1.5 rounded text-gray-400 group-hover:text-purple-500">
+                                            <LayoutGrid size={16}/>
+                                        </div>
+                                        <div className="font-medium text-gray-800">{p.name}</div>
+                                    </div>
+                                ))}
+                            </div>
                         </div>
+                    ))}
+                    
+                    {/* Fallback als er geen poules zijn gevonden */}
+                    {Object.keys(pouleLayout).length === 0 && (
+                        <div className="col-span-full text-center py-10 text-gray-400">
+                            Geen poule-indeling gevonden. Controleer of het schema is gegenereerd.
+                        </div>
+                    )}
+                </div>
+            </div>
+        )}
 
-                        {isOpen && (
-                            <div className="p-0 flex flex-col-reverse lg:grid lg:grid-cols-3 lg:gap-0">
+        {/* --- VIEW: WEDSTRIJDEN LIJST --- */}
+        {activeTab === 'matches' && (
+            <div className="space-y-4">
+                {sortedGroupKeys.map((groupKey) => {
+                    const [type, numStr] = groupKey.split('-');
+                    const number = Number(numStr);
+                    const roundMatches = groupedMatches[groupKey].sort((a,b) => {
+                        if (a.round_number !== b.round_number) return a.round_number - b.round_number;
+                        return a.id - b.id;
+                    });
+                    
+                    const isOpen = openRounds[groupKey];
+                    const isPoule = type === 'P';
+                    const pouleStanding = isPoule ? (standings[number] || []) : [];
+
+                    return (
+                        <div key={groupKey} className={`rounded-lg shadow-sm border overflow-hidden ${isPoule ? 'bg-white border-gray-200' : 'bg-orange-50/50 border-orange-200'}`}>
+                            
+                            {/* RONDE HEADER */}
+                            <div 
+                                className={`p-4 flex justify-between items-center cursor-pointer select-none ${isPoule ? 'bg-gray-50' : 'bg-orange-100 text-orange-900'}`} 
+                                onClick={() => toggleRound(groupKey)}
+                            >
+                                <div className="flex items-center gap-2 font-bold text-gray-700">
+                                    {isOpen ? <ChevronDown size={20} /> : <ChevronRight size={20} />}
+                                    
+                                    {isPoule ? (
+                                       <span className="flex items-center gap-2"><Trophy size={16} className="text-blue-500"/> Poule {number}</span>
+                                    ) : (
+                                        <span className="text-orange-800 flex items-center gap-2">
+                                            <GitMerge size={16}/> Knockout - {getRoundName(number, roundMatches.length)}
+                                        </span>
+                                    )}
+                                    
+                                    <span className={`text-xs px-2 py-0.5 rounded font-normal ${isPoule ? 'bg-gray-200 text-gray-600' : 'bg-orange-200 text-orange-800'}`}>
+                                        {roundMatches.length} wedstrijden
+                                    </span>
+                                </div>
                                 
-                                {/* KOLOM 1 & 2: WEDSTRIJDEN */}
-                                <div className="divide-y divide-gray-100 lg:col-span-2 lg:border-r lg:border-gray-100">
-                                    {roundMatches.map((match, index) => {
-                                        // LOGICA: Als match klaar is EN niet handmatig opengeklapt, toon compacte versie
-                                        const isCompact = match.is_completed && !expandedMatchIds.includes(match.id);
+                                {/* Best of X input voor Knockout */}
+                                {isOpen && !isPoule && (
+                                    <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
+                                        <span className="text-xs text-gray-500 font-bold">Zet Best of:</span>
+                                        <input type="number" min="1" className="w-12 text-center border rounded p-1 text-xs no-spinner" 
+                                            placeholder={roundMatches[0].best_of_legs?.toString() || "5"}
+                                            onKeyDown={(e) => e.key === 'Enter' && handleBatchUpdateRound(number, parseInt(e.currentTarget.value))}
+                                        />
+                                    </div>
+                                )}
+                            </div>
 
-                                        if (isCompact) {
-                                            return (
-                                                <div 
-                                                    key={match.id} 
-                                                    onClick={() => toggleMatchExpand(match.id)}
-                                                    className="p-3 bg-white hover:bg-gray-50 cursor-pointer flex justify-between items-center group transition-colors border-l-4 border-l-green-500"
-                                                >
-                                                    <div className="flex items-center gap-3 text-sm text-gray-600 flex-1">
-                                                        <div className="text-xs font-mono text-gray-300 mr-2">#{index + 1}</div>
-                                                        <div className="flex items-center gap-2">
-                                                            <span className={`font-medium ${match.score_p1 > match.score_p2 ? 'text-gray-900 font-bold' : ''}`}>
-                                                                {match.player1_name || 'Bye'}
-                                                            </span>
-                                                            <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded font-bold text-xs border border-green-200">
-                                                                {match.score_p1} - {match.score_p2}
-                                                            </span>
-                                                            <span className={`font-medium ${match.score_p2 > match.score_p1 ? 'text-gray-900 font-bold' : ''}`}>
-                                                                {match.player2_name || 'Bye'}
-                                                            </span>
+                            {isOpen && (
+                                <div className="p-0 flex flex-col-reverse lg:grid lg:grid-cols-3 lg:gap-0">
+                                    
+                                    {/* KOLOM 1 & 2: WEDSTRIJDEN */}
+                                    <div className="divide-y divide-gray-100 lg:col-span-2 lg:border-r lg:border-gray-100">
+                                        {roundMatches.map((match, index) => {
+                                            // LOGICA: Als match klaar is EN niet handmatig opengeklapt, toon compacte versie
+                                            const isCompact = match.is_completed && !expandedMatchIds.includes(match.id);
+
+                                            if (isCompact) {
+                                                return (
+                                                    <div 
+                                                        key={match.id} 
+                                                        onClick={() => toggleMatchExpand(match.id)}
+                                                        className="p-3 bg-white hover:bg-gray-50 cursor-pointer flex justify-between items-center group transition-colors border-l-4 border-l-green-500"
+                                                    >
+                                                        <div className="flex items-center gap-3 text-sm text-gray-600 flex-1">
+                                                            <div className="text-xs font-mono text-gray-300 mr-2">#{index + 1}</div>
+                                                            <div className="flex items-center gap-2">
+                                                                <span className={`font-medium ${match.score_p1 > match.score_p2 ? 'text-gray-900 font-bold' : ''}`}>
+                                                                    {match.player1_name || 'Bye'}
+                                                                </span>
+                                                                <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded font-bold text-xs border border-green-200">
+                                                                    {match.score_p1} - {match.score_p2}
+                                                                </span>
+                                                                <span className={`font-medium ${match.score_p2 > match.score_p1 ? 'text-gray-900 font-bold' : ''}`}>
+                                                                    {match.player2_name || 'Bye'}
+                                                                </span>
+                                                                <div className="ml-auto flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                                    <span className="text-[10px] text-gray-400 uppercase font-bold">Wijzigen</span>
+                                                                    <Edit2 size={14} className="text-blue-500" />
+                                                                </div>
+                                                            </div>
                                                         </div>
-                                                        <div className="ml-auto flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                            <span className="text-[10px] text-gray-400 uppercase font-bold">Wijzigen</span>
-                                                            <Edit2 size={14} className="text-blue-500" />
+                                                    </div>
+                                                );
+                                            }
+
+                                            // GROTE WEERGAVE (Actief of opengeklapt)
+                                            return (
+                                                <div key={match.id} className={`p-4 transition-colors ${match.save_success ? 'bg-green-50' : 'hover:bg-white'}`}>
+                                                    <div className="flex flex-col md:flex-row gap-4">
+
+                                                        {/* --- SEGMENT 1: INSTELLINGEN --- */}
+                                                        <div className="flex flex-col gap-3 md:w-56 md:border-r md:border-gray-100 md:pr-4 shrink-0">
+                                                            <div className="text-[10px] text-gray-400 font-mono uppercase tracking-wider mb-1 flex justify-between">
+                                                                <span>Match #{index + 1}</span>
+                                                                {match.is_completed && (
+                                                                    <button onClick={() => toggleMatchExpand(match.id)} className="text-blue-600 hover:underline">
+                                                                            Sluiten
+                                                                    </button>
+                                                                )}
+                                                            </div>
+
+                                                            {/* Bord Selectie */}
+                                                            <div className="flex flex-col">
+                                                                <label className="text-[10px] font-bold text-gray-500 uppercase flex items-center gap-1 mb-1">
+                                                                    <Target size={10} className="text-blue-500"/> Bord
+                                                                </label>
+                                                                <div className="relative">
+                                                                    <select 
+                                                                        className="w-full bg-gray-50 border border-gray-200 text-xs rounded px-2 py-1.5 outline-none focus:border-blue-500 font-medium appearance-none"
+                                                                        value={match.board_number || ''}
+                                                                        onChange={(e) => handleBoardChange(match.id, e.target.value)}
+                                                                    >
+                                                                        <option value="">-- Kies --</option>
+                                                                        {allBoards.map(board => (
+                                                                            <option key={board.id} value={board.number}>
+                                                                                Bord {board.number} {board.name ? `(${board.name})` : ''}
+                                                                            </option>
+                                                                        ))}
+                                                                    </select>
+                                                                    <ChevronDown size={12} className="absolute right-2 top-2 text-gray-400 pointer-events-none"/>
+                                                                </div>
+                                                            </div>
+
+                                                            {/* Schrijver Selectie */}
+                                                            <div className="flex flex-col">
+                                                                <label className="text-[10px] font-bold text-gray-500 uppercase flex items-center gap-1 mb-1">
+                                                                    <User size={10} className="text-purple-500"/> Schrijver
+                                                                </label>
+                                                                <div className="relative">
+                                                                    <select 
+                                                                        className={`w-full text-xs rounded px-2 py-1.5 outline-none border appearance-none ${
+                                                                            match.referee_id || match.custom_referee_name 
+                                                                            ? 'bg-blue-50 border-blue-200 text-blue-800 font-bold' 
+                                                                            : 'bg-white border-gray-200 text-gray-400'
+                                                                        }`}
+                                                                        value={match.referee_id || (match.custom_referee_name ? "CUSTOM_DISPLAY" : "")}
+                                                                        onChange={(e) => handleRefereeChange(match.id, e.target.value)}
+                                                                    >
+                                                                        <option value="">-- Kies --</option>
+                                                                        {match.custom_referee_name && <option value="CUSTOM_DISPLAY">✎ {match.custom_referee_name}</option>}
+                                                                        <optgroup label="Spelers">
+                                                                            {tournament?.players?.map(p => (
+                                                                                <option key={p.id} value={p.id}>{p.name}</option>
+                                                                            ))}
+                                                                        </optgroup>
+                                                                        <option value="CUSTOM_PROMPT" className="text-blue-600 font-bold">+ Handmatig</option>
+                                                                    </select>
+                                                                    <ChevronDown size={12} className="absolute right-2 top-2 text-gray-400 pointer-events-none"/>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+
+                                                        {/* --- SEGMENT 2: WEDSTRIJD & SCORES --- */}
+                                                        <div className="flex-1 flex flex-col justify-center">
+                                                            
+                                                            {/* A. MOBIELE WEERGAVE */}
+                                                            <div className="md:hidden flex flex-col gap-3">
+                                                                <div className={`flex items-center justify-between p-3 rounded-lg border ${match.score_p1 > match.score_p2 && match.is_completed ? 'bg-green-50 border-green-200 shadow-sm' : 'bg-white border-gray-200'}`}>
+                                                                    <span className="font-bold text-gray-800 text-sm truncate pr-2">{match.player1_name || 'Bye'}</span>
+                                                                    <input 
+                                                                        type="number" 
+                                                                        className={`w-14 h-10 text-center rounded border border-gray-300 outline-none font-bold text-xl ${match.save_success ? 'text-green-600 border-green-300' : 'text-gray-900'}`}
+                                                                        value={match.score_p1}
+                                                                        onChange={(e) => handleScoreChange(match.id, 'score_p1', e.target.value)}
+                                                                        onBlur={() => saveMatchScore(match)}
+                                                                        onKeyDown={(e) => handleKeyDown(e, match)}
+                                                                    />
+                                                                </div>
+                                                                <div className={`flex items-center justify-between p-3 rounded-lg border ${match.score_p2 > match.score_p1 && match.is_completed ? 'bg-green-50 border-green-200 shadow-sm' : 'bg-white border-gray-200'}`}>
+                                                                    <span className="font-bold text-gray-800 text-sm truncate pr-2">{match.player2_name || 'Bye'}</span>
+                                                                    <input 
+                                                                        type="number" 
+                                                                        className={`w-14 h-10 text-center rounded border border-gray-300 outline-none font-bold text-xl ${match.save_success ? 'text-green-600 border-green-300' : 'text-gray-900'}`}
+                                                                        value={match.score_p2}
+                                                                        onChange={(e) => handleScoreChange(match.id, 'score_p2', e.target.value)}
+                                                                        onBlur={() => saveMatchScore(match)}
+                                                                        onKeyDown={(e) => handleKeyDown(e, match)}
+                                                                    />
+                                                                </div>
+                                                                <div className="flex justify-end mt-1">
+                                                                    <button onClick={() => handleResetMatch(match.id)} className="text-xs text-gray-400 underline hover:text-red-500 flex items-center gap-1">
+                                                                        <RefreshCcw size={10} /> Reset Score
+                                                                    </button>
+                                                                </div>
+                                                            </div>
+
+                                                            {/* B. DESKTOP WEERGAVE */}
+                                                            <div className="hidden md:flex items-center justify-between gap-4 w-full">
+                                                                <div className="flex flex-col gap-2 flex-1 min-w-0">
+                                                                    <div className="flex items-center justify-between gap-4">
+                                                                        <div className={`truncate text-base font-medium flex-1 ${match.score_p1 > match.score_p2 && match.is_completed ? 'text-green-700 font-bold' : 'text-gray-700'}`}>
+                                                                                {match.player1_name || 'Bye'}
+                                                                        </div>
+                                                                        <input 
+                                                                            type="number" 
+                                                                            className={`w-12 h-9 text-center rounded border border-gray-300 outline-none font-bold no-spinner ${match.save_success ? 'text-green-600 border-green-300' : 'text-gray-800'}`}
+                                                                            value={match.score_p1} 
+                                                                            onChange={(e) => handleScoreChange(match.id, 'score_p1', e.target.value)} 
+                                                                            onBlur={() => saveMatchScore(match)} 
+                                                                            onKeyDown={(e) => handleKeyDown(e, match)} 
+                                                                        />
+                                                                    </div>
+                                                                    <div className="flex items-center justify-between gap-4">
+                                                                        <div className={`truncate text-base font-medium flex-1 ${match.score_p2 > match.score_p1 && match.is_completed ? 'text-green-700 font-bold' : 'text-gray-700'}`}>
+                                                                                {match.player2_name || 'Bye'}
+                                                                        </div>
+                                                                        <input 
+                                                                            type="number" 
+                                                                            className={`w-12 h-9 text-center rounded border border-gray-300 outline-none font-bold no-spinner ${match.save_success ? 'text-green-600 border-green-300' : 'text-gray-800'}`}
+                                                                            value={match.score_p2} 
+                                                                            onChange={(e) => handleScoreChange(match.id, 'score_p2', e.target.value)} 
+                                                                            onBlur={() => saveMatchScore(match)} 
+                                                                            onKeyDown={(e) => handleKeyDown(e, match)} 
+                                                                        />
+                                                                    </div>
+                                                                </div>
+                                                                <div className="w-8 flex justify-end shrink-0">
+                                                                    {match.is_saving ? (
+                                                                        <RefreshCcw size={16} className="animate-spin text-blue-500" />
+                                                                    ) : match.save_success ? (
+                                                                        <SaveAll size={16} className="text-green-500" />
+                                                                    ) : (
+                                                                        <button onClick={() => handleResetMatch(match.id)} className="p-2 text-gray-300 hover:text-red-500 transition-colors" title="Reset Match">
+                                                                            <RefreshCcw size={16} />
+                                                                        </button>
+                                                                    )}
+                                                                </div>
+                                                            </div>
+
                                                         </div>
                                                     </div>
                                                 </div>
                                             );
-                                        }
-
-                                        // GROTE WEERGAVE (Actief of opengeklapt)
-                                        return (
-                                            <div key={match.id} className={`p-4 transition-colors ${match.save_success ? 'bg-green-50' : 'hover:bg-white'}`}>
-                                                <div className="flex flex-col md:flex-row gap-4">
-
-                                                    {/* --- SEGMENT 1: INSTELLINGEN --- */}
-                                                    <div className="flex flex-col gap-3 md:w-56 md:border-r md:border-gray-100 md:pr-4 shrink-0">
-                                                        <div className="text-[10px] text-gray-400 font-mono uppercase tracking-wider mb-1 flex justify-between">
-                                                            <span>Match #{index + 1}</span>
-                                                            {match.is_completed && (
-                                                                <button onClick={() => toggleMatchExpand(match.id)} className="text-blue-600 hover:underline">
-                                                                    Sluiten
-                                                                </button>
-                                                            )}
-                                                        </div>
-
-                                                        {/* Bord Selectie */}
-                                                        <div className="flex flex-col">
-                                                            <label className="text-[10px] font-bold text-gray-500 uppercase flex items-center gap-1 mb-1">
-                                                                <Target size={10} className="text-blue-500"/> Bord
-                                                            </label>
-                                                            <div className="relative">
-                                                                <select 
-                                                                    className="w-full bg-gray-50 border border-gray-200 text-xs rounded px-2 py-1.5 outline-none focus:border-blue-500 font-medium appearance-none"
-                                                                    value={match.board_number || ''}
-                                                                    onChange={(e) => handleBoardChange(match.id, e.target.value)}
-                                                                >
-                                                                    <option value="">-- Kies --</option>
-                                                                    {allBoards.map(board => (
-                                                                        <option key={board.id} value={board.number}>
-                                                                            Bord {board.number} {board.name ? `(${board.name})` : ''}
-                                                                        </option>
-                                                                    ))}
-                                                                </select>
-                                                                <ChevronDown size={12} className="absolute right-2 top-2 text-gray-400 pointer-events-none"/>
-                                                            </div>
-                                                        </div>
-
-                                                        {/* Schrijver Selectie */}
-                                                        <div className="flex flex-col">
-                                                            <label className="text-[10px] font-bold text-gray-500 uppercase flex items-center gap-1 mb-1">
-                                                                <User size={10} className="text-purple-500"/> Schrijver
-                                                            </label>
-                                                            <div className="relative">
-                                                                <select 
-                                                                    className={`w-full text-xs rounded px-2 py-1.5 outline-none border appearance-none ${
-                                                                        match.referee_id || match.custom_referee_name 
-                                                                        ? 'bg-blue-50 border-blue-200 text-blue-800 font-bold' 
-                                                                        : 'bg-white border-gray-200 text-gray-400'
-                                                                    }`}
-                                                                    value={match.referee_id || (match.custom_referee_name ? "CUSTOM_DISPLAY" : "")}
-                                                                    onChange={(e) => handleRefereeChange(match.id, e.target.value)}
-                                                                >
-                                                                    <option value="">-- Kies --</option>
-                                                                    {match.custom_referee_name && <option value="CUSTOM_DISPLAY">✎ {match.custom_referee_name}</option>}
-                                                                    <optgroup label="Spelers">
-                                                                        {tournament?.players?.map(p => (
-                                                                            <option key={p.id} value={p.id}>{p.name}</option>
-                                                                        ))}
-                                                                    </optgroup>
-                                                                    <option value="CUSTOM_PROMPT" className="text-blue-600 font-bold">+ Handmatig</option>
-                                                                </select>
-                                                                <ChevronDown size={12} className="absolute right-2 top-2 text-gray-400 pointer-events-none"/>
-                                                            </div>
-                                                        </div>
-                                                    </div>
-
-                                                    {/* --- SEGMENT 2: WEDSTRIJD & SCORES --- */}
-                                                    <div className="flex-1 flex flex-col justify-center">
-                                                        
-                                                        {/* A. MOBIELE WEERGAVE */}
-                                                        <div className="md:hidden flex flex-col gap-3">
-                                                            <div className={`flex items-center justify-between p-3 rounded-lg border ${match.score_p1 > match.score_p2 && match.is_completed ? 'bg-green-50 border-green-200 shadow-sm' : 'bg-white border-gray-200'}`}>
-                                                                <span className="font-bold text-gray-800 text-sm truncate pr-2">{match.player1_name || 'Bye'}</span>
-                                                                <input 
-                                                                    type="number" 
-                                                                    className={`w-14 h-10 text-center rounded border border-gray-300 outline-none font-bold text-xl ${match.save_success ? 'text-green-600 border-green-300' : 'text-gray-900'}`}
-                                                                    value={match.score_p1}
-                                                                    onChange={(e) => handleScoreChange(match.id, 'score_p1', e.target.value)}
-                                                                    onBlur={() => saveMatchScore(match)}
-                                                                    onKeyDown={(e) => handleKeyDown(e, match)}
-                                                                />
-                                                            </div>
-                                                            <div className={`flex items-center justify-between p-3 rounded-lg border ${match.score_p2 > match.score_p1 && match.is_completed ? 'bg-green-50 border-green-200 shadow-sm' : 'bg-white border-gray-200'}`}>
-                                                                <span className="font-bold text-gray-800 text-sm truncate pr-2">{match.player2_name || 'Bye'}</span>
-                                                                <input 
-                                                                    type="number" 
-                                                                    className={`w-14 h-10 text-center rounded border border-gray-300 outline-none font-bold text-xl ${match.save_success ? 'text-green-600 border-green-300' : 'text-gray-900'}`}
-                                                                    value={match.score_p2}
-                                                                    onChange={(e) => handleScoreChange(match.id, 'score_p2', e.target.value)}
-                                                                    onBlur={() => saveMatchScore(match)}
-                                                                    onKeyDown={(e) => handleKeyDown(e, match)}
-                                                                />
-                                                            </div>
-                                                            <div className="flex justify-end mt-1">
-                                                                <button onClick={() => handleResetMatch(match.id)} className="text-xs text-gray-400 underline hover:text-red-500 flex items-center gap-1">
-                                                                    <RefreshCcw size={10} /> Reset Score
-                                                                </button>
-                                                            </div>
-                                                        </div>
-
-                                                        {/* B. DESKTOP WEERGAVE */}
-                                                        <div className="hidden md:flex items-center justify-between gap-4 w-full">
-                                                            <div className="flex flex-col gap-2 flex-1 min-w-0">
-                                                                <div className="flex items-center justify-between gap-4">
-                                                                    <div className={`truncate text-base font-medium flex-1 ${match.score_p1 > match.score_p2 && match.is_completed ? 'text-green-700 font-bold' : 'text-gray-700'}`}>
-                                                                        {match.player1_name || 'Bye'}
-                                                                    </div>
-                                                                    <input 
-                                                                        type="number" 
-                                                                        className={`w-12 h-9 text-center rounded border border-gray-300 outline-none font-bold no-spinner ${match.save_success ? 'text-green-600 border-green-300' : 'text-gray-800'}`}
-                                                                        value={match.score_p1} 
-                                                                        onChange={(e) => handleScoreChange(match.id, 'score_p1', e.target.value)} 
-                                                                        onBlur={() => saveMatchScore(match)} 
-                                                                        onKeyDown={(e) => handleKeyDown(e, match)} 
-                                                                    />
-                                                                </div>
-                                                                <div className="flex items-center justify-between gap-4">
-                                                                    <div className={`truncate text-base font-medium flex-1 ${match.score_p2 > match.score_p1 && match.is_completed ? 'text-green-700 font-bold' : 'text-gray-700'}`}>
-                                                                        {match.player2_name || 'Bye'}
-                                                                    </div>
-                                                                    <input 
-                                                                        type="number" 
-                                                                        className={`w-12 h-9 text-center rounded border border-gray-300 outline-none font-bold no-spinner ${match.save_success ? 'text-green-600 border-green-300' : 'text-gray-800'}`}
-                                                                        value={match.score_p2} 
-                                                                        onChange={(e) => handleScoreChange(match.id, 'score_p2', e.target.value)} 
-                                                                        onBlur={() => saveMatchScore(match)} 
-                                                                        onKeyDown={(e) => handleKeyDown(e, match)} 
-                                                                    />
-                                                                </div>
-                                                            </div>
-                                                            <div className="w-8 flex justify-end shrink-0">
-                                                                {match.is_saving ? (
-                                                                    <RefreshCcw size={16} className="animate-spin text-blue-500" />
-                                                                ) : match.save_success ? (
-                                                                    <SaveAll size={16} className="text-green-500" />
-                                                                ) : (
-                                                                    <button onClick={() => handleResetMatch(match.id)} className="p-2 text-gray-300 hover:text-red-500 transition-colors" title="Reset Match">
-                                                                        <RefreshCcw size={16} />
-                                                                    </button>
-                                                                )}
-                                                            </div>
-                                                        </div>
-
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-
-                                {/* KOLOM 3: STANDEN */}
-                                {isPoule && pouleStanding.length > 0 && (
-                                    <div className="bg-blue-50/30 p-4 border-t lg:border-t-0 lg:col-span-1">
-                                        <h5 className="font-bold text-xs uppercase text-blue-400 mb-2 flex items-center gap-2"><LayoutGrid size={14}/> Huidige Stand</h5>
-                                        <div className="overflow-x-auto">
-                                            <table className="w-full text-xs text-left">
-                                                <thead>
-                                                    <tr className="text-gray-400 border-b">
-                                                        <th className="pb-1">#</th>
-                                                        <th className="pb-1">Naam</th>
-                                                        <th className="pb-1 text-center">Pts</th>
-                                                        <th className="pb-1 text-center">+/-</th>
-                                                        <th className="pb-1">Status</th>
-                                                    </tr>
-                                                </thead>
-                                                <tbody>
-                                                    {pouleStanding.map((p, idx) => (
-                                                        <tr key={p.id} className="border-b border-gray-100 last:border-0">
-                                                            <td className="py-2 font-mono text-gray-500 w-8">{idx + 1}</td>
-                                                            <td className="py-2 font-bold text-gray-700 truncate max-w-[100px]" title={p.name}>{p.name}</td>
-                                                            <td className="py-2 text-center font-bold text-blue-600">{p.points}</td>
-                                                            <td className="py-2 text-center text-gray-500">{p.leg_diff}</td>
-                                                            <td className="py-2">
-                                                                {p.needs_shootout && (
-                                                                    <span className="flex items-center w-fit gap-1 text-[10px] bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-bold border border-red-200" title="Shootout vereist">
-                                                                        <AlertCircle size={10} /> SO
-                                                                    </span>
-                                                                )}
-                                                                {idx < (tournament?.qualifiers_per_poule || 2) && !p.needs_shootout && (
-                                                                    <span className="text-green-500"><Medal size={14}/></span>
-                                                                )}
-                                                            </td>
-                                                        </tr>
-                                                    ))}
-                                                </tbody>
-                                            </table>
-                                        </div>
+                                        })}
                                     </div>
-                                )}
-                            </div>
-                        )}
-                    </div>
-                );
-            })}
-        </div>
-      </div>
+
+                                    {/* KOLOM 3: STANDEN */}
+                                    {isPoule && pouleStanding.length > 0 && (
+                                        <div className="bg-blue-50/30 p-4 border-t lg:border-t-0 lg:col-span-1">
+                                            <h5 className="font-bold text-xs uppercase text-blue-400 mb-2 flex items-center gap-2"><LayoutGrid size={14}/> Huidige Stand</h5>
+                                            <div className="overflow-x-auto">
+                                                <table className="w-full text-xs text-left">
+                                                    <thead>
+                                                        <tr className="text-gray-400 border-b">
+                                                            <th className="pb-1">#</th>
+                                                            <th className="pb-1">Naam</th>
+                                                            <th className="pb-1 text-center">Pts</th>
+                                                            <th className="pb-1 text-center">+/-</th>
+                                                            <th className="pb-1">Status</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        {pouleStanding.map((p, idx) => (
+                                                            <tr key={p.id} className="border-b border-gray-100 last:border-0">
+                                                                <td className="py-2 font-mono text-gray-500 w-8">{idx + 1}</td>
+                                                                <td className="py-2 font-bold text-gray-700 truncate max-w-[100px]" title={p.name}>{p.name}</td>
+                                                                <td className="py-2 text-center font-bold text-blue-600">{p.points}</td>
+                                                                <td className="py-2 text-center text-gray-500">{p.leg_diff}</td>
+                                                                <td className="py-2">
+                                                                    {p.needs_shootout && (
+                                                                        <span className="flex items-center w-fit gap-1 text-[10px] bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-bold border border-red-200" title="Shootout vereist">
+                                                                            <AlertCircle size={10} /> SO
+                                                                        </span>
+                                                                    )}
+                                                                    {idx < (tournament?.qualifiers_per_poule || 2) && !p.needs_shootout && (
+                                                                        <span className="text-green-500"><Medal size={14}/></span>
+                                                                    )}
+                                                                </td>
+                                                            </tr>
+                                                        ))}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                    );
+                })}
+            </div>
+        )}
 
       {/* --- CODES MODAL --- */}
       {showCodesModal && (
@@ -788,10 +932,10 @@ const ManageTournament = () => {
                                 </div>
                                 <div className="flex flex-col gap-2">
                                     <a 
-                                        href={directUrl}
-                                        target="_blank"
-                                        rel="noreferrer"
-                                        className="flex items-center gap-2 px-3 py-2 bg-indigo-100 text-indigo-700 rounded-md hover:bg-indigo-200 transition text-sm font-bold"
+                                            href={directUrl}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            className="flex items-center gap-2 px-3 py-2 bg-indigo-100 text-indigo-700 rounded-md hover:bg-indigo-200 transition text-sm font-bold"
                                     >
                                         <Monitor size={16} /> Open Scorer
                                     </a>
@@ -816,7 +960,7 @@ const ManageTournament = () => {
             </div>
         </div>
       )}
-
+    </div>
     </AdminLayout>
   );
 };

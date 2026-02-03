@@ -72,3 +72,8 @@ class MatchReadSimple(BaseModel):
 
 class TournamentReadWithMatches(TournamentRead):
     matches: List[MatchReadSimple] = []
+
+class SwapRequest(BaseModel):
+    entity_id_1: int
+    entity_id_2: int
+    confirmed: bool = False

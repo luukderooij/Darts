@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select
 from sqlalchemy.orm import selectinload
 from pydantic import BaseModel, EmailStr
+from sqlalchemy import or_
 
 from app.db.session import get_session
 from app.models.tournament import Tournament
@@ -21,7 +22,8 @@ from app.schemas.tournament import (
     TournamentCreate, 
     TournamentRead, 
     TournamentUpdate, 
-    TournamentReadWithMatches
+    TournamentReadWithMatches,
+    SwapRequest
 )
 
 from app.services.tournament_gen import (
@@ -348,6 +350,106 @@ def update_round_format(
         
     session.commit()
     return {"message": f"{len(matches)} wedstrijden geüpdatet naar Best of {best_of_legs} legs."}
+
+
+@router.post("/{tournament_id}/swap-participants")
+def swap_poule_participants(
+    tournament_id: int,
+    swap_data: SwapRequest,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Wisselt twee spelers/teams van plek in het schema.
+    Past spelers aan in wedstrijden EN wisselt hun schrijfbeurten (referee taken).
+    """
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Toernooi niet gevonden")
+    
+    session.refresh(tournament, ["admins"])
+    verify_tournament_access(tournament, current_user)
+
+    matches = session.exec(
+        select(Match)
+        .where(Match.tournament_id == tournament_id)
+        .where(Match.poule_number != None)
+    ).all()
+
+    is_doubles = tournament.mode == "doubles"
+    
+    # We houden bij welke matches aangetast zijn om te checken op reeds gespeelde games
+    has_started = False
+    id1 = swap_data.entity_id_1
+    id2 = swap_data.entity_id_2
+
+    # Check vooraf of bevestiging nodig is
+    for m in matches:
+        p1 = m.team1_id if is_doubles else m.player1_id
+        p2 = m.team2_id if is_doubles else m.player2_id
+        ref = m.referee_id
+        
+        # Check of speler 1 of 2 betrokken is bij deze match (als speler OF schrijver)
+        # Let op: Bij doubles is id1 een Team ID, referee_id is een Player ID. 
+        # Schrijver wissel werkt dus alleen automatisch bij Singles (of als referee logic team-based is).
+        is_playing = (p1 in [id1, id2]) or (p2 in [id1, id2])
+        is_refereeing = (ref in [id1, id2]) and not is_doubles 
+
+        if (is_playing or is_refereeing):
+            # Check of er al gegooid is in een match waar deze personen bij betrokken zijn
+            if m.is_completed or m.score_p1 > 0 or m.score_p2 > 0:
+                has_started = True
+
+    if has_started and not swap_data.confirmed:
+        return {
+            "require_confirmation": True, 
+            "message": "Het toernooi is al begonnen en deze spelers hebben al gespeeld of geschreven. Scores worden gewist. Doorgaan?"
+        }
+
+    # Voer de wissel uit
+    for m in matches:
+        curr_p1 = m.team1_id if is_doubles else m.player1_id
+        curr_p2 = m.team2_id if is_doubles else m.player2_id
+        curr_ref = m.referee_id
+        
+        updated = False
+
+        # 1. Speler 1 Wissel
+        if curr_p1 == id1:
+            setattr(m, f"{'team' if is_doubles else 'player'}1_id", id2)
+            updated = True
+        elif curr_p1 == id2:
+            setattr(m, f"{'team' if is_doubles else 'player'}1_id", id1)
+            updated = True
+            
+        # 2. Speler 2 Wissel
+        if curr_p2 == id1:
+            setattr(m, f"{'team' if is_doubles else 'player'}2_id", id2)
+            updated = True
+        elif curr_p2 == id2:
+            setattr(m, f"{'team' if is_doubles else 'player'}2_id", id1)
+            updated = True
+
+        # 3. Schrijver (Referee) Wissel (Alleen zinvol bij Singles)
+        if not is_doubles:
+            if curr_ref == id1:
+                m.referee_id = id2
+                # Referee wissel reset de match score niet per se, maar we markeren hem wel als updated voor de save
+                # (Optioneel: je kunt 'updated = True' weghalen hier als je niet wilt dat referee-wissel scores wist)
+                session.add(m) 
+            elif curr_ref == id2:
+                m.referee_id = id1
+                session.add(m)
+
+        # 4. Reset Scores als de SPELERS gewisseld zijn
+        if updated:
+            m.score_p1 = 0
+            m.score_p2 = 0
+            m.is_completed = False
+            session.add(m)
+
+    session.commit()
+    return {"message": "Spelers en schrijftaken succesvol gewisseld.", "require_confirmation": False}
 
 @router.delete("/{tournament_id}")
 def delete_tournament(
