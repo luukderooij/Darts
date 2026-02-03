@@ -477,7 +477,7 @@ const ManageTournament = () => {
 
   return (
     <AdminLayout>
-      <style>{`
+<style>{`
         .no-spinner::-webkit-inner-spin-button, 
         .no-spinner::-webkit-outer-spin-button { 
           -webkit-appearance: none; 
@@ -486,11 +486,19 @@ const ManageTournament = () => {
         .no-spinner { 
           -moz-appearance: textfield; 
         }
-          /* --- NIEUW: Zorgt dat mobiel slepen soepel werkt --- */
+        
+        /* Zorgt dat mobiel slepen soepel werkt (geen scroll) */
         .draggable-item {
-            touch-action: none; /* Voorkomt scrollen van de pagina als je dit item vastpakt */
-            user-select: none;  /* Voorkomt dat tekst geselecteerd wordt */
+            touch-action: none;
+            user-select: none;
             -webkit-user-select: none;
+        }
+
+        /* --- NIEUW: DE FIX VOOR HET DROPPEN --- */
+        /* Zorgt dat het 'spook-plaatje' onder je vinger genegeerd wordt door de touch events, 
+           zodat de drop erdoorheen valt op het juiste doel. */
+        .dnd-poly-drag-image {
+            pointer-events: none !important;
         }
       `}</style>
 
