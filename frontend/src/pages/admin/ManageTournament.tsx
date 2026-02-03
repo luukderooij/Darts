@@ -5,7 +5,7 @@ import AdminLayout from '../../components/layout/AdminLayout';
 import { 
     Save, RefreshCcw, ShieldAlert, Settings, ChevronDown, ChevronRight, 
     SaveAll, GitMerge, Trophy, AlertCircle, LayoutGrid, Medal, 
-    UserPlus, Monitor, X, Link as LinkIcon, Target, User 
+    UserPlus, Monitor, X, Target, User, Edit2 
 } from 'lucide-react';
 import { Dartboard, Tournament, Match } from '../../types';
 
@@ -60,16 +60,16 @@ const ManageTournament = () => {
   const [settingsDirty, setSettingsDirty] = useState(false);
   const [newAdminEmail, setNewAdminEmail] = useState('');
 
-  // UI State: Welke rondes zijn opengeklapt?
+  // UI State
   const [openRounds, setOpenRounds] = useState<Record<string, boolean>>({});
+  const [expandedMatchIds, setExpandedMatchIds] = useState<number[]>([]);
+  
   const [allBoards, setAllBoards] = useState<Dartboard[]>([]);
-
   const [showCodesModal, setShowCodesModal] = useState(false);
   const [boardCodes, setBoardCodes] = useState<BoardCode[]>([]);
 
     const handleShowCodes = async () => {
         try {
-            // Roep de nieuwe endpoint aan die we in de backend hebben gemaakt
             const res = await api.post(`/scorer/generate-codes/${id}`);
             setBoardCodes(res.data);
             setShowCodesModal(true);
@@ -78,16 +78,14 @@ const ManageTournament = () => {
         }
     };
 
-
   useEffect(() => {
     loadData();
   }, [id]);
 
   // --- DATA LADEN ---
-const loadData = async (isBackground = false) => {
+  const loadData = async (isBackground = false) => {
     if (!isBackground) setLoading(true);
     try {
-      // 1. WIJZIGING: Haal Toernooi EN Borden tegelijk op met Promise.all
       const [tournRes, boardsRes] = await Promise.all([
           api.get(`/tournaments/${id}`),
           api.get('/dartboards/') 
@@ -95,18 +93,16 @@ const loadData = async (isBackground = false) => {
 
       const currentTourn = tournRes.data;
       
-      // 2. Sla de data op in de state
       setTournament(currentTourn);
-      setAllBoards(boardsRes.data); // Nu is boardsRes wel bekend!
+      setAllBoards(boardsRes.data);
       setAllowByes(currentTourn.allow_byes);
 
-      // 3. Als het toernooi publiek is, haal dan de wedstrijden op
       if (currentTourn.public_uuid) {
           const matchesRes = await api.get(`/matches/by-tournament/${currentTourn.public_uuid}`);
+          const allMatches = matchesRes.data;
           
           setMatches(prevMatches => {
-              const newMatches = matchesRes.data;
-              return newMatches.map((nm: MatchWithUI) => {
+              return allMatches.map((nm: MatchWithUI) => {
                   const existing = prevMatches.find(pm => pm.id === nm.id);
                   return existing ? { 
                       ...nm, 
@@ -119,16 +115,19 @@ const loadData = async (isBackground = false) => {
           const standRes = await api.get(`/tournaments/${currentTourn.id}/standings`);
           setStandings(standRes.data);
 
-          // Eerste keer laden: klap de hoogste actieve ronde open
-          if (!isBackground && matchesRes.data.length > 0) {
-              const maxRoundMatch = matchesRes.data.reduce((prev: any, current: any) => {
-                  return (prev.id > current.id) ? prev : current;
+          if (!isBackground && allMatches.length > 0) {
+              const newOpenRounds: Record<string, boolean> = {};
+              allMatches.forEach((m: any) => {
+                  const type = m.poule_number !== null ? 'P' : 'K';
+                  const num = m.poule_number !== null ? m.poule_number : m.round_number;
+                  const key = `${type}-${num}`;
+                  if (!m.is_completed) {
+                      newOpenRounds[key] = true;
+                  } else if (newOpenRounds[key] !== true) {
+                      newOpenRounds[key] = false;
+                  }
               });
-              const type = maxRoundMatch.poule_number !== null ? 'P' : 'K';
-              const num = maxRoundMatch.poule_number !== null ? maxRoundMatch.poule_number : maxRoundMatch.round_number;
-              const key = `${type}-${num}`;
-              
-              setOpenRounds((prev) => ({ ...prev, [key]: true }));
+              setOpenRounds(newOpenRounds);
           }
       }
     } catch (error) {
@@ -140,7 +139,6 @@ const loadData = async (isBackground = false) => {
 
   // --- ACTIES ---
 
-  // 1. Instellingen Opslaan
   const handleUpdateSettings = async () => {
     if (!tournament) return;
     try {
@@ -152,7 +150,6 @@ const loadData = async (isBackground = false) => {
     }
   };
 
-  // 2. Wedstrijd Resetten
   const handleResetMatch = async (matchId: number) => {
     if (!confirm("Resetten naar 0-0 en open zetten?")) return;
     try {
@@ -167,7 +164,6 @@ const loadData = async (isBackground = false) => {
     }
   };
 
-  // 3. Batch Update (Best of X)
   const handleBatchUpdateRound = async (roundNum: number, legs: number) => {
     if (!tournament) return;
     if (!confirm(`Zet alle ONGESPEELDE wedstrijden in ronde ${roundNum} naar Best of ${legs}?`)) return;
@@ -179,7 +175,6 @@ const loadData = async (isBackground = false) => {
     }
   };
 
-  // 4. Score Updaten (Lokaal + Save Trigger)
   const handleScoreChange = (id: number, field: 'score_p1' | 'score_p2', value: string) => {
       const numVal = value === '' ? 0 : parseInt(value);
       setMatches(prev => prev.map(m => 
@@ -198,7 +193,8 @@ const loadData = async (isBackground = false) => {
               custom_referee_name: match.custom_referee_name 
           });
           setMatches(prev => prev.map(m => m.id === match.id ? { ...m, is_saving: false, save_success: true, is_completed: true } : m));
-          loadData(true); // Background refresh voor standen
+          setExpandedMatchIds(prev => prev.filter(id => id !== match.id));
+          loadData(true); 
           setTimeout(() => {
             setMatches(prev => prev.map(m => m.id === match.id ? { ...m, save_success: false } : m));
           }, 2000);
@@ -210,26 +206,21 @@ const loadData = async (isBackground = false) => {
       }
   };
 
-  // 5. Bord Wijzigen (NIEUW)
   const handleBoardChange = async (matchId: number, newBoardVal: string) => {
-    // Als input leeg is, doen we niks (of stuur null als je bord wilt clearen, hieronder assumptie valid int)
     const boardNum = parseInt(newBoardVal);
     if (isNaN(boardNum)) return;
 
-    // Optimistische update in UI
     setMatches(prev => prev.map(m => m.id === matchId ? { ...m, board_number: boardNum } : m));
 
     try {
         await api.patch(`/matches/${matchId}/assign-board`, { board_number: boardNum });
-        // Geen volledige reload nodig, bord staat al goed
     } catch (err) {
         console.error(err);
         alert("Kon bord niet wijzigen.");
-        loadData(true); // Revert bij fout
+        loadData(true);
     }
   };
 
-  // 6. Knockout Genereren
   const canStartKnockout = () => {
     if (!tournament || !matches.length) return false;
     if (tournament.format !== 'hybrid') return false; 
@@ -242,7 +233,6 @@ const loadData = async (isBackground = false) => {
     const allPoulesFinished = pouleMatches.every(m => m.is_completed);
     const koNotStarted = koMatches.length === 0;
     
-    // Check shootouts
     const hasUnresolvedTies = Object.values(standings).some(pouleList => 
         pouleList.some(player => player.needs_shootout)
     );
@@ -261,7 +251,6 @@ const loadData = async (isBackground = false) => {
       }
   };
 
-  // 7. Admin Toevoegen
   const handleAddAdmin = async (e: React.FormEvent) => {
       e.preventDefault();
       if (!newAdminEmail) return;
@@ -269,10 +258,9 @@ const loadData = async (isBackground = false) => {
       try {
           await api.post(`/tournaments/${id}/admins`, { email: newAdminEmail });
           alert(`Gebruiker ${newAdminEmail} is succesvol toegevoegd als admin!`);
-          setNewAdminEmail(''); // Veld leegmaken
+          setNewAdminEmail(''); 
       } catch (err: any) {
           console.error(err);
-          // Toon de specifieke foutmelding van de backend (bijv. "Gebruiker niet gevonden")
           alert(err.response?.data?.detail || "Kon admin niet toevoegen.");
       }
   };
@@ -288,6 +276,14 @@ const loadData = async (isBackground = false) => {
 
   const toggleRound = (key: string) => setOpenRounds(prev => ({...prev, [key]: !prev[key]}));
 
+  const toggleMatchExpand = (matchId: number) => {
+    setExpandedMatchIds(prev => 
+        prev.includes(matchId) 
+        ? prev.filter(id => id !== matchId) 
+        : [...prev, matchId]
+    );
+  };
+
   const getRoundName = (roundNum: number, matchCount: number) => {
     if (matchCount === 1) return "Finale";
     if (matchCount === 2) return "Halve Finale";
@@ -295,7 +291,6 @@ const loadData = async (isBackground = false) => {
     return `Ronde ${roundNum}`;
   };
 
-  // Group Matches Logic
   const groupedMatches = matches.reduce((acc, match) => {
     let key = '';
     if (match.poule_number !== null) {
@@ -319,7 +314,6 @@ const loadData = async (isBackground = false) => {
 
   const handleRefereeChange = async (matchId: number, value: string) => {
     let payload: any = { 
-        // We sturen de huidige scores mee omdat de backend-validator dit vereist
         score_p1: matches.find(m => m.id === matchId)?.score_p1 || 0,
         score_p2: matches.find(m => m.id === matchId)?.score_p2 || 0
     };
@@ -339,11 +333,11 @@ const loadData = async (isBackground = false) => {
 
     try {
         await api.put(`/matches/${matchId}/score`, payload);
-        loadData(false); // Ververs de lijst
+        loadData(false); 
     } catch (err) {
         console.error("Update failed", err);
     }
-};
+  };
 
   if (loading) {
     return (
@@ -381,21 +375,25 @@ const loadData = async (isBackground = false) => {
 
       <div className="max-w-5xl mx-auto pb-20">
         
-        {/* HEADER */}
-        <div className="flex justify-between items-center mb-6">
-            <h2 className="text-3xl font-bold text-gray-800 flex items-center gap-3">
-                <Settings className="text-gray-600" />
-                Beheer: <span className="text-blue-600">{tournament.name}</span>
+        {/* HEADER - RESPONSIVE AANPASSING */}
+        <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-4 mb-6">
+            <h2 className="text-2xl md:text-3xl font-bold text-gray-800 flex items-center gap-2 md:gap-3">
+                <Settings className="text-gray-600 w-6 h-6 md:w-8 md:h-8" />
+                <span className="truncate flex-1">Beheer: <span className="text-blue-600">{tournament.name}</span></span>
             </h2>
-            <button 
-            onClick={handleShowCodes} 
-            className="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 transition flex items-center gap-2 font-bold shadow-sm"
-        >
-            <Monitor size={18} /> Bord Codes
-        </button>
-            <button onClick={() => loadData()} className="p-2 bg-gray-200 rounded hover:bg-gray-300 transition">
-                <RefreshCcw size={20} />
-            </button>
+            
+            {/* Knoppen Groep: Op mobiel volledige breedte, op desktop normaal */}
+            <div className="flex gap-2 w-full md:w-auto">
+                <button 
+                    onClick={handleShowCodes} 
+                    className="flex-1 md:flex-none justify-center px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 transition flex items-center gap-2 font-bold shadow-sm"
+                >
+                    <Monitor size={18} /> Bord Codes
+                </button>
+                <button onClick={() => loadData()} className="p-2 bg-gray-200 rounded hover:bg-gray-300 transition shrink-0">
+                    <RefreshCcw size={20} />
+                </button>
+            </div>
         </div>
 
         {/* KNOCKOUT BLOCKER / STARTER */}
@@ -490,9 +488,7 @@ const loadData = async (isBackground = false) => {
                 const [type, numStr] = groupKey.split('-');
                 const number = Number(numStr);
                 const roundMatches = groupedMatches[groupKey].sort((a,b) => {
-                    // Eerst op ronde
                     if (a.round_number !== b.round_number) return a.round_number - b.round_number;
-                    // Daarna gewoon op volgorde van aanmaken (ID)
                     return a.id - b.id;
                 });
                 
@@ -539,170 +535,193 @@ const loadData = async (isBackground = false) => {
                         {isOpen && (
                             <div className="p-0 flex flex-col-reverse lg:grid lg:grid-cols-3 lg:gap-0">
                                 
+                                {/* KOLOM 1 & 2: WEDSTRIJDEN */}
+                                <div className="divide-y divide-gray-100 lg:col-span-2 lg:border-r lg:border-gray-100">
+                                    {roundMatches.map((match, index) => {
+                                        // LOGICA: Als match klaar is EN niet handmatig opengeklapt, toon compacte versie
+                                        const isCompact = match.is_completed && !expandedMatchIds.includes(match.id);
 
-{/* KOLOM 1 & 2: WEDSTRIJDEN */}
-<div className="divide-y divide-gray-100 lg:col-span-2 lg:border-r lg:border-gray-100">
-    {roundMatches.map((match, index) => (
-        <div key={match.id} className={`p-4 transition-colors ${match.save_success ? 'bg-green-50' : 'hover:bg-white'}`}>
-            
-            {/* CONTAINER: Flex op desktop (naast elkaar), Block op mobiel (onder elkaar) */}
-            <div className="flex flex-col md:flex-row gap-4">
+                                        if (isCompact) {
+                                            return (
+                                                <div 
+                                                    key={match.id} 
+                                                    onClick={() => toggleMatchExpand(match.id)}
+                                                    className="p-3 bg-white hover:bg-gray-50 cursor-pointer flex justify-between items-center group transition-colors border-l-4 border-l-green-500"
+                                                >
+                                                    <div className="flex items-center gap-3 text-sm text-gray-600 flex-1">
+                                                        <div className="text-xs font-mono text-gray-300 mr-2">#{index + 1}</div>
+                                                        <div className="flex items-center gap-2">
+                                                            <span className={`font-medium ${match.score_p1 > match.score_p2 ? 'text-gray-900 font-bold' : ''}`}>
+                                                                {match.player1_name || 'Bye'}
+                                                            </span>
+                                                            <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded font-bold text-xs border border-green-200">
+                                                                {match.score_p1} - {match.score_p2}
+                                                            </span>
+                                                            <span className={`font-medium ${match.score_p2 > match.score_p1 ? 'text-gray-900 font-bold' : ''}`}>
+                                                                {match.player2_name || 'Bye'}
+                                                            </span>
+                                                        </div>
+                                                        <div className="ml-auto flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                            <span className="text-[10px] text-gray-400 uppercase font-bold">Wijzigen</span>
+                                                            <Edit2 size={14} className="text-blue-500" />
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            );
+                                        }
 
-                {/* --- SEGMENT 1: INSTELLINGEN (Bord & Schrijver) --- */}
-                {/* Desktop: Vaste breedte links met scheidingslijn. Mobiel: Volle breedte boven. */}
-                <div className="flex flex-col gap-3 md:w-56 md:border-r md:border-gray-100 md:pr-4 shrink-0">
-                    
-                    {/* Match ID Aanduiding (Klein) */}
-                    <div className="text-[10px] text-gray-400 font-mono uppercase tracking-wider mb-1">
-                        Match #{index + 1}
-                    </div>
+                                        // GROTE WEERGAVE (Actief of opengeklapt)
+                                        return (
+                                            <div key={match.id} className={`p-4 transition-colors ${match.save_success ? 'bg-green-50' : 'hover:bg-white'}`}>
+                                                <div className="flex flex-col md:flex-row gap-4">
 
-                    {/* Bord Selectie */}
-                    <div className="flex flex-col">
-                        <label className="text-[10px] font-bold text-gray-500 uppercase flex items-center gap-1 mb-1">
-                            <Target size={10} className="text-blue-500"/> Bord
-                        </label>
-                        <div className="relative">
-                            <select 
-                                className="w-full bg-gray-50 border border-gray-200 text-xs rounded px-2 py-1.5 outline-none focus:border-blue-500 font-medium appearance-none"
-                                value={match.board_number || ''}
-                                onChange={(e) => handleBoardChange(match.id, e.target.value)}
-                            >
-                                <option value="">-- Kies --</option>
-                                {allBoards.map(board => (
-                                    <option key={board.id} value={board.number}>
-                                        Bord {board.number} {board.name ? `(${board.name})` : ''}
-                                    </option>
-                                ))}
-                            </select>
-                            <ChevronDown size={12} className="absolute right-2 top-2 text-gray-400 pointer-events-none"/>
-                        </div>
-                    </div>
+                                                    {/* --- SEGMENT 1: INSTELLINGEN --- */}
+                                                    <div className="flex flex-col gap-3 md:w-56 md:border-r md:border-gray-100 md:pr-4 shrink-0">
+                                                        <div className="text-[10px] text-gray-400 font-mono uppercase tracking-wider mb-1 flex justify-between">
+                                                            <span>Match #{index + 1}</span>
+                                                            {match.is_completed && (
+                                                                <button onClick={() => toggleMatchExpand(match.id)} className="text-blue-600 hover:underline">
+                                                                    Sluiten
+                                                                </button>
+                                                            )}
+                                                        </div>
 
-                    {/* Schrijver Selectie */}
-                    <div className="flex flex-col">
-                        <label className="text-[10px] font-bold text-gray-500 uppercase flex items-center gap-1 mb-1">
-                            <User size={10} className="text-purple-500"/> Schrijver
-                        </label>
-                        <div className="relative">
-                            <select 
-                                className={`w-full text-xs rounded px-2 py-1.5 outline-none border appearance-none ${
-                                    match.referee_id || match.custom_referee_name 
-                                    ? 'bg-blue-50 border-blue-200 text-blue-800 font-bold' 
-                                    : 'bg-white border-gray-200 text-gray-400'
-                                }`}
-                                value={match.referee_id || (match.custom_referee_name ? "CUSTOM_DISPLAY" : "")}
-                                onChange={(e) => handleRefereeChange(match.id, e.target.value)}
-                            >
-                                <option value="">-- Kies --</option>
-                                {match.custom_referee_name && <option value="CUSTOM_DISPLAY">✎ {match.custom_referee_name}</option>}
-                                <optgroup label="Spelers">
-                                    {tournament?.players?.map(p => (
-                                        <option key={p.id} value={p.id}>{p.name}</option>
-                                    ))}
-                                </optgroup>
-                                <option value="CUSTOM_PROMPT" className="text-blue-600 font-bold">+ Handmatig</option>
-                            </select>
-                            <ChevronDown size={12} className="absolute right-2 top-2 text-gray-400 pointer-events-none"/>
-                        </div>
-                    </div>
-                </div>
+                                                        {/* Bord Selectie */}
+                                                        <div className="flex flex-col">
+                                                            <label className="text-[10px] font-bold text-gray-500 uppercase flex items-center gap-1 mb-1">
+                                                                <Target size={10} className="text-blue-500"/> Bord
+                                                            </label>
+                                                            <div className="relative">
+                                                                <select 
+                                                                    className="w-full bg-gray-50 border border-gray-200 text-xs rounded px-2 py-1.5 outline-none focus:border-blue-500 font-medium appearance-none"
+                                                                    value={match.board_number || ''}
+                                                                    onChange={(e) => handleBoardChange(match.id, e.target.value)}
+                                                                >
+                                                                    <option value="">-- Kies --</option>
+                                                                    {allBoards.map(board => (
+                                                                        <option key={board.id} value={board.number}>
+                                                                            Bord {board.number} {board.name ? `(${board.name})` : ''}
+                                                                        </option>
+                                                                    ))}
+                                                                </select>
+                                                                <ChevronDown size={12} className="absolute right-2 top-2 text-gray-400 pointer-events-none"/>
+                                                            </div>
+                                                        </div>
 
-                {/* --- SEGMENT 2: WEDSTRIJD & SCORES --- */}
-                <div className="flex-1 flex flex-col justify-center">
-                    
-                    {/* A. MOBIELE WEERGAVE (Onder elkaar) */}
-                    <div className="md:hidden flex flex-col gap-3">
-                        {/* Speler 1 Rij */}
-                        <div className={`flex items-center justify-between p-3 rounded-lg border ${match.score_p1 > match.score_p2 && match.is_completed ? 'bg-green-50 border-green-200 shadow-sm' : 'bg-white border-gray-200'}`}>
-                            <span className="font-bold text-gray-800 text-sm truncate pr-2">{match.player1_name || 'Bye'}</span>
-                            <input 
-                                type="number" 
-                                className={`w-14 h-10 text-center rounded border border-gray-300 outline-none font-bold text-xl ${match.save_success ? 'text-green-600 border-green-300' : 'text-gray-900'}`}
-                                value={match.score_p1}
-                                onChange={(e) => handleScoreChange(match.id, 'score_p1', e.target.value)}
-                                onBlur={() => saveMatchScore(match)}
-                                onKeyDown={(e) => handleKeyDown(e, match)}
-                            />
-                        </div>
+                                                        {/* Schrijver Selectie */}
+                                                        <div className="flex flex-col">
+                                                            <label className="text-[10px] font-bold text-gray-500 uppercase flex items-center gap-1 mb-1">
+                                                                <User size={10} className="text-purple-500"/> Schrijver
+                                                            </label>
+                                                            <div className="relative">
+                                                                <select 
+                                                                    className={`w-full text-xs rounded px-2 py-1.5 outline-none border appearance-none ${
+                                                                        match.referee_id || match.custom_referee_name 
+                                                                        ? 'bg-blue-50 border-blue-200 text-blue-800 font-bold' 
+                                                                        : 'bg-white border-gray-200 text-gray-400'
+                                                                    }`}
+                                                                    value={match.referee_id || (match.custom_referee_name ? "CUSTOM_DISPLAY" : "")}
+                                                                    onChange={(e) => handleRefereeChange(match.id, e.target.value)}
+                                                                >
+                                                                    <option value="">-- Kies --</option>
+                                                                    {match.custom_referee_name && <option value="CUSTOM_DISPLAY">✎ {match.custom_referee_name}</option>}
+                                                                    <optgroup label="Spelers">
+                                                                        {tournament?.players?.map(p => (
+                                                                            <option key={p.id} value={p.id}>{p.name}</option>
+                                                                        ))}
+                                                                    </optgroup>
+                                                                    <option value="CUSTOM_PROMPT" className="text-blue-600 font-bold">+ Handmatig</option>
+                                                                </select>
+                                                                <ChevronDown size={12} className="absolute right-2 top-2 text-gray-400 pointer-events-none"/>
+                                                            </div>
+                                                        </div>
+                                                    </div>
 
-                        {/* Speler 2 Rij */}
-                        <div className={`flex items-center justify-between p-3 rounded-lg border ${match.score_p2 > match.score_p1 && match.is_completed ? 'bg-green-50 border-green-200 shadow-sm' : 'bg-white border-gray-200'}`}>
-                            <span className="font-bold text-gray-800 text-sm truncate pr-2">{match.player2_name || 'Bye'}</span>
-                            <input 
-                                type="number" 
-                                className={`w-14 h-10 text-center rounded border border-gray-300 outline-none font-bold text-xl ${match.save_success ? 'text-green-600 border-green-300' : 'text-gray-900'}`}
-                                value={match.score_p2}
-                                onChange={(e) => handleScoreChange(match.id, 'score_p2', e.target.value)}
-                                onBlur={() => saveMatchScore(match)}
-                                onKeyDown={(e) => handleKeyDown(e, match)}
-                            />
-                        </div>
+                                                    {/* --- SEGMENT 2: WEDSTRIJD & SCORES --- */}
+                                                    <div className="flex-1 flex flex-col justify-center">
+                                                        
+                                                        {/* A. MOBIELE WEERGAVE */}
+                                                        <div className="md:hidden flex flex-col gap-3">
+                                                            <div className={`flex items-center justify-between p-3 rounded-lg border ${match.score_p1 > match.score_p2 && match.is_completed ? 'bg-green-50 border-green-200 shadow-sm' : 'bg-white border-gray-200'}`}>
+                                                                <span className="font-bold text-gray-800 text-sm truncate pr-2">{match.player1_name || 'Bye'}</span>
+                                                                <input 
+                                                                    type="number" 
+                                                                    className={`w-14 h-10 text-center rounded border border-gray-300 outline-none font-bold text-xl ${match.save_success ? 'text-green-600 border-green-300' : 'text-gray-900'}`}
+                                                                    value={match.score_p1}
+                                                                    onChange={(e) => handleScoreChange(match.id, 'score_p1', e.target.value)}
+                                                                    onBlur={() => saveMatchScore(match)}
+                                                                    onKeyDown={(e) => handleKeyDown(e, match)}
+                                                                />
+                                                            </div>
+                                                            <div className={`flex items-center justify-between p-3 rounded-lg border ${match.score_p2 > match.score_p1 && match.is_completed ? 'bg-green-50 border-green-200 shadow-sm' : 'bg-white border-gray-200'}`}>
+                                                                <span className="font-bold text-gray-800 text-sm truncate pr-2">{match.player2_name || 'Bye'}</span>
+                                                                <input 
+                                                                    type="number" 
+                                                                    className={`w-14 h-10 text-center rounded border border-gray-300 outline-none font-bold text-xl ${match.save_success ? 'text-green-600 border-green-300' : 'text-gray-900'}`}
+                                                                    value={match.score_p2}
+                                                                    onChange={(e) => handleScoreChange(match.id, 'score_p2', e.target.value)}
+                                                                    onBlur={() => saveMatchScore(match)}
+                                                                    onKeyDown={(e) => handleKeyDown(e, match)}
+                                                                />
+                                                            </div>
+                                                            <div className="flex justify-end mt-1">
+                                                                <button onClick={() => handleResetMatch(match.id)} className="text-xs text-gray-400 underline hover:text-red-500 flex items-center gap-1">
+                                                                    <RefreshCcw size={10} /> Reset Score
+                                                                </button>
+                                                            </div>
+                                                        </div>
 
-                        {/* Reset Knop Mobiel (Klein onderaan) */}
-                        <div className="flex justify-end mt-1">
-                            <button 
-                                onClick={() => handleResetMatch(match.id)} 
-                                className="text-xs text-gray-400 underline hover:text-red-500 flex items-center gap-1"
-                            >
-                                <RefreshCcw size={10} /> Reset Score
-                            </button>
-                        </div>
-                    </div>
+                                                        {/* B. DESKTOP WEERGAVE */}
+                                                        <div className="hidden md:flex items-center justify-between gap-4 w-full">
+                                                            <div className="flex flex-col gap-2 flex-1 min-w-0">
+                                                                <div className="flex items-center justify-between gap-4">
+                                                                    <div className={`truncate text-base font-medium flex-1 ${match.score_p1 > match.score_p2 && match.is_completed ? 'text-green-700 font-bold' : 'text-gray-700'}`}>
+                                                                        {match.player1_name || 'Bye'}
+                                                                    </div>
+                                                                    <input 
+                                                                        type="number" 
+                                                                        className={`w-12 h-9 text-center rounded border border-gray-300 outline-none font-bold no-spinner ${match.save_success ? 'text-green-600 border-green-300' : 'text-gray-800'}`}
+                                                                        value={match.score_p1} 
+                                                                        onChange={(e) => handleScoreChange(match.id, 'score_p1', e.target.value)} 
+                                                                        onBlur={() => saveMatchScore(match)} 
+                                                                        onKeyDown={(e) => handleKeyDown(e, match)} 
+                                                                    />
+                                                                </div>
+                                                                <div className="flex items-center justify-between gap-4">
+                                                                    <div className={`truncate text-base font-medium flex-1 ${match.score_p2 > match.score_p1 && match.is_completed ? 'text-green-700 font-bold' : 'text-gray-700'}`}>
+                                                                        {match.player2_name || 'Bye'}
+                                                                    </div>
+                                                                    <input 
+                                                                        type="number" 
+                                                                        className={`w-12 h-9 text-center rounded border border-gray-300 outline-none font-bold no-spinner ${match.save_success ? 'text-green-600 border-green-300' : 'text-gray-800'}`}
+                                                                        value={match.score_p2} 
+                                                                        onChange={(e) => handleScoreChange(match.id, 'score_p2', e.target.value)} 
+                                                                        onBlur={() => saveMatchScore(match)} 
+                                                                        onKeyDown={(e) => handleKeyDown(e, match)} 
+                                                                    />
+                                                                </div>
+                                                            </div>
+                                                            <div className="w-8 flex justify-end shrink-0">
+                                                                {match.is_saving ? (
+                                                                    <RefreshCcw size={16} className="animate-spin text-blue-500" />
+                                                                ) : match.save_success ? (
+                                                                    <SaveAll size={16} className="text-green-500" />
+                                                                ) : (
+                                                                    <button onClick={() => handleResetMatch(match.id)} className="p-2 text-gray-300 hover:text-red-500 transition-colors" title="Reset Match">
+                                                                        <RefreshCcw size={16} />
+                                                                    </button>
+                                                                )}
+                                                            </div>
+                                                        </div>
 
-                    {/* B. DESKTOP WEERGAVE (Naast elkaar, netjes uitgelijnd) */}
-                    <div className="hidden md:flex items-center gap-4">
-                        {/* Speler 1 (Rechts uitgelijnd) */}
-                        <div className={`flex-1 text-right text-base font-medium truncate ${match.score_p1 > match.score_p2 && match.is_completed ? 'text-green-700 font-bold' : 'text-gray-700'}`}>
-                            {match.player1_name || 'Bye'}
-                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
 
-                        {/* Score Inputs (Centraal) */}
-                        <div className="flex items-center bg-white border border-gray-300 rounded shadow-sm overflow-hidden focus-within:ring-2 focus-within:ring-blue-100 focus-within:border-blue-400 transition-all shrink-0 h-10">
-                            <input 
-                                type="number" 
-                                className={`w-12 h-full text-center outline-none font-bold no-spinner text-lg border-r border-gray-100 ${match.save_success ? 'text-green-600' : 'text-gray-800'}`}
-                                value={match.score_p1}
-                                onChange={(e) => handleScoreChange(match.id, 'score_p1', e.target.value)}
-                                onBlur={() => saveMatchScore(match)}
-                                onKeyDown={(e) => handleKeyDown(e, match)}
-                            />
-                            <input 
-                                type="number" 
-                                className={`w-12 h-full text-center outline-none font-bold no-spinner text-lg ${match.save_success ? 'text-green-600' : 'text-gray-800'}`}
-                                value={match.score_p2}
-                                onChange={(e) => handleScoreChange(match.id, 'score_p2', e.target.value)}
-                                onBlur={() => saveMatchScore(match)}
-                                onKeyDown={(e) => handleKeyDown(e, match)}
-                            />
-                        </div>
-
-                        {/* Speler 2 (Links uitgelijnd) */}
-                        <div className={`flex-1 text-left text-base font-medium truncate ${match.score_p2 > match.score_p1 && match.is_completed ? 'text-green-700 font-bold' : 'text-gray-700'}`}>
-                            {match.player2_name || 'Bye'}
-                        </div>
-
-                        {/* Reset Knop Desktop */}
-                        <div className="w-8 flex justify-end">
-                            {match.is_saving ? (
-                                <RefreshCcw size={16} className="animate-spin text-blue-500" />
-                            ) : match.save_success ? (
-                                <SaveAll size={16} className="text-green-500" />
-                            ) : (
-                                <button onClick={() => handleResetMatch(match.id)} className="p-2 text-gray-300 hover:text-red-500 transition-colors" title="Reset Match">
-                                    <RefreshCcw size={16} />
-                                </button>
-                            )}
-                        </div>
-                    </div>
-
-                </div>
-            </div>
-        </div>
-    ))}
-</div>
-
-                                {/* KOLOM 3: STANDEN (Alleen zichtbaar bij Poules) */}
+                                {/* KOLOM 3: STANDEN */}
                                 {isPoule && pouleStanding.length > 0 && (
                                     <div className="bg-blue-50/30 p-4 border-t lg:border-t-0 lg:col-span-1">
                                         <h5 className="font-bold text-xs uppercase text-blue-400 mb-2 flex items-center gap-2"><LayoutGrid size={14}/> Huidige Stand</h5>
@@ -738,9 +757,6 @@ const loadData = async (isBackground = false) => {
                                                     ))}
                                                 </tbody>
                                             </table>
-                                            <div className="mt-2 text-[10px] text-gray-400 italic">
-                                                * Live Stand
-                                            </div>
                                         </div>
                                     </div>
                                 )}
@@ -752,58 +768,54 @@ const loadData = async (isBackground = false) => {
         </div>
       </div>
 
-
-{/* --- CODES MODAL --- */}
-{showCodesModal && (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setShowCodesModal(false)}>
-        <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full overflow-hidden" onClick={e => e.stopPropagation()}>
-            <div className="bg-indigo-600 p-4 text-white flex justify-between items-center">
-                <h3 className="font-bold text-lg flex items-center gap-2"><Monitor /> Koppelcodes voor Tablets</h3>
-                <button onClick={() => setShowCodesModal(false)}><X /></button>
-            </div>
-            
-            <div className="p-6 grid grid-cols-1 gap-4">
-                {boardCodes.map((b) => {
-                    // Gebruik de scorer_uuid van het toernooi voor de link
-                    const directUrl = `${window.location.origin}/board/${tournament?.scorer_uuid}`;
-                    
-                    return (
-                        <div key={b.board_number} className="bg-gray-50 border-2 border-dashed border-gray-300 rounded-lg p-4 flex items-center justify-between">
-                            <div className="text-left">
-                                <div className="text-xs font-bold text-gray-400 uppercase mb-1">Bord {b.board_number}</div>
-                                <div className="text-4xl font-mono font-bold text-indigo-600 tracking-widest">{b.code}</div>
+      {/* --- CODES MODAL --- */}
+      {showCodesModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setShowCodesModal(false)}>
+            <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full overflow-hidden" onClick={e => e.stopPropagation()}>
+                <div className="bg-indigo-600 p-4 text-white flex justify-between items-center">
+                    <h3 className="font-bold text-lg flex items-center gap-2"><Monitor /> Koppelcodes voor Tablets</h3>
+                    <button onClick={() => setShowCodesModal(false)}><X /></button>
+                </div>
+                
+                <div className="p-6 grid grid-cols-1 gap-4">
+                    {boardCodes.map((b) => {
+                        const directUrl = `${window.location.origin}/board/${tournament?.scorer_uuid}`;
+                        return (
+                            <div key={b.board_number} className="bg-gray-50 border-2 border-dashed border-gray-300 rounded-lg p-4 flex items-center justify-between">
+                                <div className="text-left">
+                                    <div className="text-xs font-bold text-gray-400 uppercase mb-1">Bord {b.board_number}</div>
+                                    <div className="text-4xl font-mono font-bold text-indigo-600 tracking-widest">{b.code}</div>
+                                </div>
+                                <div className="flex flex-col gap-2">
+                                    <a 
+                                        href={directUrl}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="flex items-center gap-2 px-3 py-2 bg-indigo-100 text-indigo-700 rounded-md hover:bg-indigo-200 transition text-sm font-bold"
+                                    >
+                                        <Monitor size={16} /> Open Scorer
+                                    </a>
+                                    <button 
+                                        onClick={() => {
+                                            navigator.clipboard.writeText(directUrl);
+                                            alert(`Link voor bord ${b.board_number} gekopieerd!`);
+                                        }}
+                                        className="text-[10px] text-gray-400 hover:text-indigo-600 underline text-center"
+                                    >
+                                        Kopieer Link
+                                    </button>
+                                </div>
                             </div>
-                            
-                            <div className="flex flex-col gap-2">
-                                <a 
-                                    href={directUrl}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    className="flex items-center gap-2 px-3 py-2 bg-indigo-100 text-indigo-700 rounded-md hover:bg-indigo-200 transition text-sm font-bold"
-                                >
-                                    <Monitor size={16} /> Open Scorer
-                                </a>
-                                <button 
-                                    onClick={() => {
-                                        navigator.clipboard.writeText(directUrl);
-                                        alert(`Link voor bord ${b.board_number} gekopieerd!`);
-                                    }}
-                                    className="text-[10px] text-gray-400 hover:text-indigo-600 underline text-center"
-                                >
-                                    Kopieer Link
-                                </button>
-                            </div>
-                        </div>
-                    );
-                })}
-            </div>
-            
-            <div className="p-4 bg-gray-50 text-center text-sm text-gray-500 border-t">
-                Scan de code op de tablet of gebruik de directe links hierboven.
+                        );
+                    })}
+                </div>
+                
+                <div className="p-4 bg-gray-50 text-center text-sm text-gray-500 border-t">
+                    Scan de code op de tablet of gebruik de directe links hierboven.
+                </div>
             </div>
         </div>
-    </div>
-)}
+      )}
 
     </AdminLayout>
   );

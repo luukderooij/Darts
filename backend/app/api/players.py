@@ -4,7 +4,7 @@ from sqlmodel import Session, select
 
 from app.db.session import get_session
 from app.models.player import Player
-from app.schemas.player import PlayerCreate, PlayerRead
+from app.schemas.player import PlayerCreate, PlayerRead, PlayerUpdate
 from app.services import csv_service
 
 from app.api.users import get_current_user 
@@ -74,3 +74,31 @@ async def import_players_csv(
     # Geef current_user.id mee aan de functie
     count = csv_service.process_player_import(content, session, current_user.id) 
     return {"message": f"{count} spelers succesvol geïmporteerd.", "count": count}
+
+@router.patch("/{player_id}", response_model=PlayerRead)
+def update_player(
+    player_id: int,
+    player_update: PlayerUpdate,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user)
+):
+    # 1. Zoek de speler
+    player = session.get(Player, player_id)
+    if not player:
+        raise HTTPException(status_code=404, detail="Player not found")
+    
+    # 2. Check eigenaarschap (optioneel, maar netjes)
+    if player.user_id != current_user.id:
+         raise HTTPException(status_code=403, detail="Not authorized to update this player")
+
+    # 3. Update de data
+    # exclude_unset=True zorgt ervoor dat velden die je NIET meestuurt, ook niet leeggemaakt worden
+    update_data = player_update.model_dump(exclude_unset=True)
+    
+    for key, value in update_data.items():
+        setattr(player, key, value)
+
+    session.add(player)
+    session.commit()
+    session.refresh(player)
+    return player
