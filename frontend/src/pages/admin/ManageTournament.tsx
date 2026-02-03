@@ -429,8 +429,10 @@ const ManageTournament = () => {
         e.dataTransfer.effectAllowed = "move";
     };
 
-    const onDragOver = (e: React.DragEvent) => {
-        e.preventDefault(); // Nodig om te kunnen droppen
+const onDragOver = (e: React.DragEvent) => {
+        e.preventDefault(); 
+        // Expliciet aangeven dat we hier iets mogen verplaatsen (helpt voor mobiel)
+        e.dataTransfer.dropEffect = "move"; 
     };
 
     // Drop handler
@@ -660,6 +662,7 @@ const ManageTournament = () => {
                                                 draggable
                                                 onDragStart={(e) => onDragStart(e, 'player', p.id)}
                                                 onDragOver={onDragOver}
+                                                onDragEnter={onDragOver}
                                                 onDrop={(e) => onDropAny(e, 'player', p.id)}
                                                 className="draggable-item p-3 border border-gray-200 rounded bg-white hover:border-purple-400 hover:shadow-md cursor-grab active:cursor-grabbing transition-all flex items-center gap-3 group"                                            >
                                                 <div className="bg-gray-100 p-1.5 rounded text-gray-400 group-hover:text-purple-500">
@@ -691,6 +694,7 @@ const ManageTournament = () => {
                                         draggable
                                         onDragStart={(e) => onDragStart(e, 'match', match.id)}
                                         onDragOver={onDragOver}
+                                        onDragEnter={onDragOver}
                                         onDrop={(e) => onDropAny(e, 'match', match.id)}
                                         className="draggable-item bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden cursor-move hover:shadow-md transition-shadow group"
                                     >
@@ -706,6 +710,7 @@ const ManageTournament = () => {
                                                     draggable
                                                     onDragStart={(e) => onDragStart(e, 'player', match.player1_id!)}
                                                     onDragOver={onDragOver}
+                                                    onDragEnter={onDragOver}
                                                     onDrop={(e) => onDropAny(e, 'player', match.player1_id!)}
                                                     className="draggable-item p-2 border border-gray-100 rounded bg-gray-50 hover:bg-white hover:border-blue-400 cursor-grab flex items-center gap-2 text-sm"                                                >
                                                     <span className="font-bold text-gray-700 truncate">{match.player1_name}</span>
