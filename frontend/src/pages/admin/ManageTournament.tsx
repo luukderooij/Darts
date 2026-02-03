@@ -395,7 +395,7 @@ const ManageTournament = () => {
                     }
                 } else {
                     // Succes! Herlaad data
-                    loadData(false);
+                    loadData(true);
                 }
             } catch (err: any) {
                 alert("Er ging iets mis bij het wisselen: " + (err.response?.data?.detail || err.message));
@@ -406,16 +406,25 @@ const ManageTournament = () => {
     };
 
     // --- MATCH SWAP LOGIC ---
-    const handleMatchDrop = async (sourceMatchId: number, targetMatchId: number) => {
+const handleMatchDrop = async (sourceMatchId: number, targetMatchId: number) => {
         if (sourceMatchId === targetMatchId) return;
+        
+        // 1. Onthoud positie
+        const currentScroll = window.scrollY; 
+        
         try {
             await api.post(`/tournaments/${id}/swap-matches`, {
                 match_id_1: sourceMatchId,
                 match_id_2: targetMatchId
             });
-            loadData(false);
+            
+            await loadData(true);
+            
+            // 2. Herstel positie (voor de zekerheid)
+            window.scrollTo(0, currentScroll);
+            
         } catch (err: any) {
-            alert("Fout bij wisselen wedstrijden: " + (err.response?.data?.detail || err.message));
+            // ... error handling
         }
     };
 
