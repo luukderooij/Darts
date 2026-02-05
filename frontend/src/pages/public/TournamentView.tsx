@@ -1,7 +1,7 @@
 import { useEffect, useState, useMemo, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import api from '../../services/api';
-import { Trophy, LayoutGrid, GitMerge, RefreshCw, Play, Pause, Medal, AlertCircle } from 'lucide-react';
+import { Trophy, LayoutGrid, GitMerge, RefreshCw, Play, Pause, Medal, AlertCircle, BarChart3 } from 'lucide-react';
 
 // --- Types ---
 interface Match {
@@ -29,7 +29,6 @@ interface Tournament {
   matches: Match[];
 }
 
-// Nieuw Type voor de data die uit de backend /standings endpoint komt
 interface StandingsItem {
   id: number;
   name: string;
@@ -55,88 +54,45 @@ const BracketView = ({ matches }: { matches: Match[] }) => {
 
     const roundNumbers = Object.keys(rounds).map(Number).sort((a, b) => a - b);
     
-    const getRoundName = (matchCount: number, roundIndex: number) => {
-        if (matchCount === 1) return "FINALE";
-        if (matchCount === 2) return "HALVE FINALE";
-        if (matchCount === 4) return "KWARTFINALE";
-        if (matchCount === 8) return "LAATSTE 16";
-        return `RONDE ${roundIndex + 1}`;
-    };
-
     if (matches.length === 0) {
         return (
-            <div className="bg-white p-12 rounded-lg border-2 border-dashed border-gray-300 text-center text-gray-500">
-                <GitMerge className="mx-auto mb-2 opacity-20" size={40} />
-                <p className="text-xl">Knockout Phase Pending...</p>
+            <div className="bg-white p-8 rounded-lg border-2 border-dashed border-gray-300 text-center text-gray-500">
+                <GitMerge className="mx-auto mb-2 opacity-20" size={32} />
+                <p className="text-sm">Knockout Phase Pending...</p>
             </div>
         );
     }
 
-    const BASE_HEIGHT = 160;
+    const BASE_HEIGHT = 120;
     
     return (
-        <div className="overflow-x-auto pb-8 pt-4 flex justify-center">
-            <div className="flex px-4">
+        <div className="overflow-x-auto pb-4 pt-2 flex justify-start md:justify-center">
+            <div className="flex px-2">
                 {roundNumbers.map((roundNum, colIndex) => {
                     const currentRoundMatches = rounds[roundNum];
-                    const roundName = getRoundName(currentRoundMatches.length, colIndex);
-                    const isLastColumn = colIndex === roundNumbers.length - 1;
-                    const slotHeight = BASE_HEIGHT * Math.pow(2, colIndex);
-
                     return (
-                        <div key={roundNum} className="flex flex-col w-64 md:w-80 transition-all duration-500">
-                            <div className="text-center font-bold text-gray-500 uppercase text-xs mb-6 tracking-wider border-b border-gray-200 pb-2 mx-4">
-                                {roundName}
-                            </div>
-                            <div className="flex flex-col justify-center flex-1">
-                                {currentRoundMatches.map((match, matchIndex) => {
-                                    const isTop = matchIndex % 2 === 0;
-                                    const isBottom = matchIndex % 2 !== 0;
-
-                                    return (
-                                        <div 
-                                            key={match.id} 
-                                            className="relative flex items-center justify-center"
-                                            style={{ height: `${slotHeight}px` }} 
-                                        >
-                                            {colIndex > 0 && (
-                                                <div className="absolute -left-6 w-6 h-0.5 bg-gray-300"></div>
-                                            )}
-                                            {!isLastColumn && (
-                                                <>
-                                                    {isTop && (
-                                                        <div className="absolute -right-6 top-1/2 w-6 border-t-2 border-r-2 border-gray-300 rounded-tr-md" style={{ height: '50%' }}></div>
-                                                    )}
-                                                    {isBottom && (
-                                                        <div className="absolute -right-6 top-0 w-6 border-b-2 border-r-2 border-gray-300 rounded-br-md" style={{ height: '50%' }}></div>
-                                                    )}
-                                                </>
-                                            )}
-
-                                            <div className={`w-full mx-2 bg-white border-2 rounded-lg shadow-sm overflow-hidden text-sm relative z-10 transform transition-transform hover:scale-105
-                                                ${match.is_completed ? 'border-gray-200' : 'border-blue-400 ring-2 ring-blue-100'}
-                                            `}>
-                                                <div className={`px-3 py-3 flex justify-between items-center border-b border-gray-100 ${match.score_p1 > match.score_p2 && match.is_completed ? 'bg-green-100 font-bold text-gray-900' : ''}`}>
-                                                    <span className="truncate font-medium text-base">{match.player1_name || 'TBD'}</span>
-                                                    <span className="font-mono font-bold ml-2 bg-gray-100 px-2 py-1 rounded text-gray-800 text-lg">
-                                                        {match.is_completed ? match.score_p1 : '-'}
-                                                    </span>
-                                                </div>
-                                                <div className={`px-3 py-3 flex justify-between items-center ${match.score_p2 > match.score_p1 && match.is_completed ? 'bg-green-100 font-bold text-gray-900' : ''}`}>
-                                                    <span className={`truncate font-medium text-base ${!match.player2_name ? 'text-gray-400 italic' : ''}`}>
-                                                        {match.player2_name ? match.player2_name : (match.is_completed ? 'BYE' : 'TBD')}
-                                                    </span>
-                                                    <span className="font-mono font-bold ml-2 bg-gray-100 px-2 py-1 rounded text-gray-800 text-lg">
-                                                        {match.is_completed ? match.score_p2 : '-'}
-                                                    </span>
-                                                </div>
+                        <div key={roundNum} className="flex flex-col w-64 md:w-72">
+                             <div className="text-center font-bold text-gray-500 text-[10px] md:text-xs mb-4 tracking-wider border-b border-gray-200 pb-2 mx-2">
+                                {`RONDE ${roundNum}`}
+                             </div>
+                             <div className="flex flex-col justify-center flex-1">
+                                {currentRoundMatches.map((match, i) => (
+                                    <div key={match.id} style={{ height: BASE_HEIGHT * Math.pow(2, colIndex) }} className="flex items-center justify-center relative">
+                                        <div className={`w-full mx-1 bg-white border rounded shadow-sm p-2 text-xs relative z-10 ${match.is_completed ? 'border-gray-200' : 'border-blue-400 ring-1 ring-blue-50'}`}>
+                                            <div className={`flex justify-between border-b pb-1 mb-1 ${match.score_p1 > match.score_p2 && match.is_completed ? 'font-bold text-gray-900 bg-green-50' : ''}`}>
+                                                <span className="truncate">{match.player1_name}</span>
+                                                <span className="font-mono">{match.score_p1}</span>
+                                            </div>
+                                            <div className={`flex justify-between ${match.score_p2 > match.score_p1 && match.is_completed ? 'font-bold text-gray-900 bg-green-50' : ''}`}>
+                                                <span className="truncate">{match.player2_name}</span>
+                                                <span className="font-mono">{match.score_p2}</span>
                                             </div>
                                         </div>
-                                    );
-                                })}
-                            </div>
+                                    </div>
+                                ))}
+                             </div>
                         </div>
-                    );
+                    )
                 })}
             </div>
         </div>
@@ -148,32 +104,23 @@ const TournamentView = () => {
   const { public_uuid } = useParams();
   
   const [tournament, setTournament] = useState<Tournament | null>(null);
-  
-  // Nieuwe state voor de officiële standen uit de backend
   const [allStandings, setAllStandings] = useState<Record<number, StandingsItem[]>>({});
-  
   const [loading, setLoading] = useState(true);
   
   const [activeTab, setActiveTab] = useState<number | 'ko'>(1);
   const [hasInitialized, setHasInitialized] = useState(false);
-  
   const [isAutoPlay, setIsAutoPlay] = useState(false);
   const autoPlayRef = useRef<NodeJS.Timeout | null>(null);
 
   const loadData = async () => {
     try {
-      // 1. Haal toernooi details op (inclusief matches voor de lijst)
       const res = await api.get(`/tournaments/public/${public_uuid}`);
       const tData = res.data;
       setTournament(tData);
-
-      // 2. Haal de berekende standen op van de backend (Source of Truth)
-      // We gebruiken tData.id omdat de public user dat nu heeft
       if (tData.id) {
           const standRes = await api.get(`/tournaments/${tData.id}/standings`);
           setAllStandings(standRes.data);
       }
-
     } catch (err) {
       console.error("Error loading tournament data", err);
     } finally {
@@ -205,11 +152,8 @@ const TournamentView = () => {
         if (!hasInitialized) {
             if (hasKnockout) {
                 setActiveTab('ko');
-                setIsAutoPlay(false);
-            } else {
-                if (availablePoules.length > 0) {
-                    setActiveTab(availablePoules[0]);
-                }
+            } else if (availablePoules.length > 0) {
+                setActiveTab(availablePoules[0]);
             }
             setHasInitialized(true);
         }
@@ -240,10 +184,8 @@ const TournamentView = () => {
     return tournament.matches.filter(m => m.poule_number === activeTab);
   }, [tournament, activeTab]);
 
-  // Haal de juiste stand op uit de backend data
   const standings = useMemo(() => {
     if (activeTab === 'ko') return [];
-    // We geven de lijst terug die de backend heeft berekend
     return allStandings[activeTab as number] || [];
   }, [allStandings, activeTab]);
 
@@ -251,196 +193,200 @@ const TournamentView = () => {
     setActiveTab(tab);
   };
 
-  if (loading || !tournament || !hasInitialized) {
-      return (
-        <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center text-white gap-4">
-            <RefreshCw className="animate-spin text-blue-500" size={40} />
-            <span className="text-xl font-medium tracking-wide">Loading Tournament...</span>
-        </div>
-      );
-  }
+  if (loading || !tournament || !hasInitialized) return <div className="p-10 text-center text-white">Loading...</div>;
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col">
-      <header className="bg-slate-900 text-white p-4 lg:p-6 shadow-xl sticky top-0 z-50">
+    <div className="min-h-screen bg-gray-50 flex flex-col w-full overflow-x-hidden">
+      
+      {/* Header */}
+      <header className="bg-slate-900 text-white p-3 shadow-xl sticky top-0 z-50 w-full">
         <div className="max-w-7xl mx-auto flex justify-between items-center">
-            <div>
-               <h1 className="text-2xl md:text-4xl font-extrabold flex items-center gap-3 tracking-tight">
-                  <Trophy className="text-yellow-400" size={32} />
-                  {tournament.name}
-              </h1>
-              <div className="flex items-center gap-3 mt-2 opacity-80">
-                <span className="text-sm font-medium bg-slate-800 px-3 py-1 rounded-full border border-slate-700">
-                    {tournament.format === 'hybrid' ? 'Hybride' : tournament.format}
-                </span>
-                <span className={`text-sm px-3 py-1 rounded-full font-bold border ${tournament.status === 'active' ? 'bg-green-500/20 border-green-500 text-green-400' : 'bg-gray-500/20 border-gray-500'}`}>
-                    {tournament.status}
-                </span>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-4">
-                {(availablePoules.length > 1 && !hasKnockout) && (
-                    <button 
-                        onClick={() => setIsAutoPlay(!isAutoPlay)}
-                        className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold transition-all border ${
-                            isAutoPlay 
-                            ? 'bg-blue-600 text-white border-blue-500 shadow-[0_0_15px_rgba(37,99,235,0.5)]' 
-                            : 'bg-slate-800 text-slate-400 border-slate-700 hover:bg-slate-700'
-                        }`}
-                    >
-                        {isAutoPlay ? <Pause size={20} /> : <Play size={20} />}
-                        <span className="hidden md:inline">{isAutoPlay ? 'AUTO ON' : 'TV MODE'}</span>
-                    </button>
-                )}
+            <h1 className="text-lg md:text-3xl font-extrabold flex items-center gap-2">
+                <Trophy className="text-yellow-400 shrink-0" size={20} />
+                <span className="truncate max-w-[200px] md:max-w-none">{tournament.name}</span>
+            </h1>
+            <div className="flex gap-2">
+                {/* AutoPlay alleen tonen op grotere schermen */}
                 <button 
-                    onClick={loadData} 
-                    className="p-2 bg-slate-800 rounded-lg hover:bg-slate-700 text-slate-400 hover:text-white transition"
-                >
-                    <RefreshCw size={24} />
-                </button>
+                     onClick={() => setIsAutoPlay(!isAutoPlay)}
+                     className={`hidden md:flex items-center gap-2 px-3 py-1 rounded-lg font-bold border text-sm ${isAutoPlay ? 'bg-blue-600 border-blue-500' : 'bg-slate-800 border-slate-700'}`}
+                 >
+                     {isAutoPlay ? <Pause size={16} /> : <Play size={16} />}
+                     TV MODE
+                 </button>
+                <button onClick={loadData} className="p-2 bg-slate-800 rounded text-slate-400"><RefreshCw size={18} /></button>
             </div>
         </div>
       </header>
 
-      <main className="flex-1 max-w-7xl w-full mx-auto p-4 lg:p-8">
-        <div className="flex border-b border-gray-200 mb-8 overflow-x-auto no-scrollbar gap-1">
+      <main className="flex-1 w-full max-w-7xl mx-auto p-2 md:p-6">
+        {/* Tabs Scroller */}
+        <div className="flex border-b border-gray-200 mb-4 overflow-x-auto gap-1 pb-1">
             {availablePoules.map(num => (
                 <button
                     key={num}
                     onClick={() => handleTabClick(num)}
-                    className={`flex items-center gap-2 px-6 py-4 font-bold text-lg transition-all rounded-t-lg whitespace-nowrap ${
-                        activeTab === num 
-                        ? 'bg-white border-x border-t border-gray-200 text-blue-600 shadow-sm relative top-[1px]' 
-                        : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
+                    className={`px-4 py-2 font-bold text-sm md:text-lg rounded-t-lg whitespace-nowrap ${
+                        activeTab === num ? 'bg-white border text-blue-600' : 'text-gray-400'
                     }`}
                 >
-                    <LayoutGrid size={20} />
                     POULE {num}
                 </button>
             ))}
-            
             {hasKnockout && (
                 <button
                     onClick={() => handleTabClick('ko')}
-                    className={`flex items-center gap-2 px-6 py-4 font-bold text-lg transition-all rounded-t-lg whitespace-nowrap ${
-                        activeTab === 'ko'
-                        ? 'bg-white border-x border-t border-gray-200 text-orange-600 shadow-sm relative top-[1px]' 
-                        : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
+                    className={`px-4 py-2 font-bold text-sm md:text-lg rounded-t-lg whitespace-nowrap ${
+                        activeTab === 'ko' ? 'bg-white border text-orange-600' : 'text-gray-400'
                     }`}
                 >
-                    <GitMerge size={20} />
-                    KNOCKOUT
+                    KO
                 </button>
             )}
         </div>
 
-        <div className="animate-fade-in">
-            {activeTab !== 'ko' ? (
-                <div className="grid gap-8 xl:grid-cols-3">
-                    <div className="xl:col-span-2 flex flex-col">
-                        <div className="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden flex-1">
-                            <div className="bg-gradient-to-r from-blue-600 to-blue-700 p-4 text-white">
-                                <h3 className="font-bold text-xl flex items-center gap-2">
-                                    <LayoutGrid size={24} /> 
-                                    STANDINGS - POULE {activeTab}
-                                </h3>
-                            </div>
-                            <div className="overflow-x-auto">
-                                <table className="w-full text-left border-collapse">
-                                    <thead>
-                                        <tr className="bg-gray-50 text-gray-500 text-sm uppercase tracking-wider border-b border-gray-200">
-                                            <th className="p-4 w-12 text-center">#</th>
-                                            <th className="p-4">Player</th>
-                                            <th className="p-4 text-center">W</th>
-                                            <th className="p-4 text-center">L</th>
-                                            <th className="p-4 text-center">+/-</th>
-                                            <th className="p-4 text-center font-bold text-gray-800">PTS</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="text-gray-700">
-                                        {standings.map((row, index) => {
-                                            const isQualified = index < (tournament.qualifiers_per_poule || 2);
-                                            // Bereken Winst/Verlies voor display (Backend geeft alleen punten)
-                                            // Aanname: 2 punten per winst.
-                                            const wins = Math.floor(row.points / 2);
-                                            const losses = row.played - wins;
-
-                                            return (
-                                                <tr key={row.name} className={`border-b border-gray-50 hover:bg-blue-50/50 transition-colors ${isQualified ? 'bg-green-50/30' : ''}`}>
-                                                    <td className="p-4 text-center font-mono text-gray-400">{index + 1}</td>
-                                                    
-                                                    <td className="p-4 font-bold text-lg flex items-center gap-3">
-                                                        <span className="truncate">{row.name}</span>
-                                                        {isQualified && (
-                                                            <span title="Gekwalificeerd">
-                                                                <Medal size={16} className="text-green-500" />
-                                                            </span>
-                                                        )}
-                                                        {/* De Backend bepaalt nu of er een shootout nodig is */}
-                                                        {row.needs_shootout && (
-                                                            <span 
-                                                                className="flex items-center gap-1 text-[10px] bg-red-100 text-red-600 px-2 py-0.5 rounded-full animate-pulse font-bold border border-red-200"
-                                                                title="9-Dart Shoot-out vereist: Spelers staan exact gelijk"
-                                                            >
-                                                                <AlertCircle size={10} /> 9-DART SO
-                                                            </span>
-                                                        )}
-                                                    </td>
-
-                                                    <td className="p-4 text-center font-medium text-green-600">{wins}</td>
-                                                    <td className="p-4 text-center text-red-400">{losses}</td>
-                                                    <td className="p-4 text-center text-gray-500 font-mono">
-                                                        {row.leg_diff > 0 ? `+${row.leg_diff}` : row.leg_diff}
-                                                    </td>
-                                                    <td className="p-4 text-center font-bold text-2xl text-blue-700">{row.points}</td>
-                                                </tr>
-                                            );
-                                        })}
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
+        {activeTab !== 'ko' ? (
+            <div className="grid gap-4 xl:grid-cols-3">
+                
+                {/* === STANDINGS BLOCK === */}
+                <div className="xl:col-span-2 bg-white rounded-xl shadow border border-gray-100 overflow-hidden">
+                    <div className="bg-blue-600 p-3 text-white font-bold flex items-center gap-2">
+                        <LayoutGrid size={18} /> STANDINGS
                     </div>
-
-                    <div className="flex flex-col">
-                        <div className="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden flex-1 max-h-[600px] flex flex-col">
-                            <div className="bg-gray-100 p-4 border-b border-gray-200">
-                                <h3 className="font-bold text-gray-700 text-lg">MATCHES</h3>
-                            </div>
-                            <div className="divide-y divide-gray-100 overflow-y-auto p-0 flex-1">
-                                {filteredMatches.map((match) => (
-                                    <div key={match.id} className="p-4 hover:bg-gray-50 transition-colors">
-                                        <div className="flex justify-between text-xs font-bold text-gray-400 uppercase tracking-wide mb-2">
-                                            <span>Ronde {match.round_number}</span>
-                                            <span className="flex items-center gap-1 text-gray-500">
-                                                Ref: <span className="text-gray-700">{match.referee_name || "-"}</span>
-                                            </span>
-                                            {match.is_completed && <span className="text-green-600 font-bold">Finished</span>}
+                    
+                    {/* A. MOBILE CARD VIEW (Alleen zichtbaar op mobile) */}
+                    <div className="block md:hidden bg-gray-50 p-2 space-y-2">
+                        {standings.map((row, index) => {
+                            const isQualified = index < (tournament.qualifiers_per_poule || 2);
+                            return (
+                                <div key={row.name} className="bg-white p-3 rounded shadow-sm border border-gray-200 relative">
+                                    <div className="flex justify-between items-center mb-2">
+                                        <div className="flex items-center gap-2 overflow-hidden">
+                                            <span className="text-gray-400 font-mono font-bold w-5 text-sm">#{index + 1}</span>
+                                            <span className="font-bold text-gray-800 text-base truncate">{row.name}</span>
+                                            {isQualified && <Medal size={14} className="text-green-500 shrink-0" />}
                                         </div>
-                                        <div className="flex items-center justify-between gap-2">
-                                            <span className={`flex-1 truncate text-right font-medium text-lg ${match.score_p1 > match.score_p2 && match.is_completed ? 'text-gray-900 font-bold' : 'text-gray-500'}`}>
-                                                {match.player1_name || 'Bye'}
-                                            </span>
-                                            <div className={`px-3 py-1 rounded-lg font-mono font-bold text-lg min-w-[3.5rem] text-center ${match.is_completed ? 'bg-slate-800 text-white' : 'bg-gray-100 text-gray-400'}`}>
-                                                {match.is_completed ? `${match.score_p1}-${match.score_p2}` : 'VS'}
-                                            </div>
-                                            <span className={`flex-1 truncate text-left font-medium text-lg ${match.score_p2 > match.score_p1 && match.is_completed ? 'text-gray-900 font-bold' : 'text-gray-500'}`}>
-                                                {match.player2_name || 'Bye'}
-                                            </span>
+                                        <div className="bg-blue-100 text-blue-800 font-bold px-2 py-0.5 rounded text-sm shrink-0">
+                                            {row.points} P
                                         </div>
                                     </div>
-                                ))}
-                            </div>
-                        </div>
+                                    
+                                    <div className="grid grid-cols-3 gap-1 text-center text-xs text-gray-500 bg-gray-50 rounded p-1.5">
+                                         <div className="flex flex-col border-r border-gray-200">
+                                            <span className="text-[10px] uppercase">Gewonnen</span>
+                                            <span className="text-green-600 font-bold text-sm">{Math.floor(row.points/2)}</span>
+                                         </div>
+                                         <div className="flex flex-col border-r border-gray-200">
+                                            <span className="text-[10px] uppercase">Verloren</span>
+                                            <span className="text-red-400 font-bold text-sm">{row.played - Math.floor(row.points/2)}</span>
+                                         </div>
+                                         <div className="flex flex-col">
+                                            <span className="text-[10px] uppercase">Saldo</span>
+                                            <span className="text-gray-700 font-bold text-sm">{row.leg_diff > 0 ? `+${row.leg_diff}` : row.leg_diff}</span>
+                                         </div>
+                                    </div>
+                                    
+                                    {row.needs_shootout && (
+                                        <div className="mt-1 text-center bg-red-50 text-red-600 text-[10px] font-bold py-1 rounded border border-red-100">
+                                            ⚠️ Shoot-out nodig
+                                        </div>
+                                    )}
+                                </div>
+                            );
+                        })}
+                    </div>
+
+                    {/* B. DESKTOP TABLE VIEW (Alleen zichtbaar op desktop) */}
+                    <div className="hidden md:block overflow-x-auto">
+                        <table className="w-full text-left">
+                            <thead className="bg-gray-50 text-gray-500 text-sm border-b">
+                                <tr>
+                                    <th className="p-4 text-center w-12">#</th>
+                                    <th className="p-4">Player</th>
+                                    <th className="p-4 text-center w-16">W</th>
+                                    <th className="p-4 text-center w-16">L</th>
+                                    <th className="p-4 text-center w-16">+/-</th>
+                                    <th className="p-4 text-center w-20 font-bold">PTS</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {standings.map((row, index) => {
+                                    const isQualified = index < (tournament.qualifiers_per_poule || 2);
+                                    const wins = Math.floor(row.points / 2);
+                                    const losses = row.played - wins;
+
+                                    return (
+                                        <tr key={row.name} className={`border-b hover:bg-gray-50 ${isQualified ? 'bg-green-50/20' : ''}`}>
+                                            <td className="p-4 text-center text-gray-400 font-mono">{index + 1}</td>
+                                            <td className="p-4 font-bold flex items-center gap-2">
+                                                {row.name}
+                                                {isQualified && <Medal size={16} className="text-green-500" />}
+                                                {row.needs_shootout && (
+                                                    <span className="text-[10px] bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-bold">SO</span>
+                                                )}
+                                            </td>
+                                            <td className="p-4 text-center text-green-600">{wins}</td>
+                                            <td className="p-4 text-center text-red-400">{losses}</td>
+                                            <td className="p-4 text-center text-gray-500">{row.leg_diff > 0 ? `+${row.leg_diff}` : row.leg_diff}</td>
+                                            <td className="p-4 text-center font-bold text-blue-700 text-xl">{row.points}</td>
+                                        </tr>
+                                    );
+                                })}
+                            </tbody>
+                        </table>
                     </div>
                 </div>
-            ) : (
-                <div className="bg-white p-4 md:p-8 rounded-xl shadow-lg border border-gray-200 overflow-x-auto min-h-[500px]">
-                    <BracketView matches={filteredMatches} />
+
+{/* === MATCHES BLOCK === */}
+<div className="bg-white rounded-xl shadow border border-gray-100 overflow-hidden flex flex-col max-h-[600px]">
+    <div className="bg-gray-100 p-3 font-bold text-gray-700 border-b flex items-center gap-2">
+            <BarChart3 size={18} /> MATCHES
+    </div>
+    <div className="overflow-y-auto p-0">
+        {filteredMatches.map((match) => (
+            <div key={match.id} className="p-3 border-b hover:bg-gray-50 transition-colors">
+                {/* Header: Ronde info */}
+                <div className="text-[10px] font-bold text-gray-400 mb-2 flex justify-between">
+                    <span>RND {match.round_number}</span>
+                    {match.is_completed && <span className="text-green-600">FIN</span>}
                 </div>
-            )}
-        </div>
+                
+                {/* De Flex Container: Kolom op mobiel (onder elkaar), Rij op desktop (naast elkaar) */}
+                <div className="flex flex-col md:flex-row items-center justify-between gap-1 md:gap-4">
+                    
+                    {/* SPELER 1 */}
+                    <span className={`w-full md:flex-1 truncate text-center md:text-right text-base md:text-sm order-1 md:order-1 ${
+                        match.score_p1 > match.score_p2 && match.is_completed ? 'font-bold text-gray-900' : 'text-gray-600'
+                    }`}>
+                        {match.player1_name || 'Bye'}
+                    </span>
+                    
+                    {/* SCORE BADGE */}
+                    <span className={`order-2 md:order-2 shrink-0 min-w-[3rem] text-center px-3 py-1 rounded-full font-mono font-bold text-xs my-1 md:my-0 ${
+                        match.is_completed ? 'bg-slate-800 text-white' : 'bg-gray-100 text-gray-400'
+                    }`}>
+                        {match.is_completed ? `${match.score_p1}-${match.score_p2}` : 'VS'}
+                    </span>
+                    
+                    {/* SPELER 2 */}
+                    <span className={`w-full md:flex-1 truncate text-center md:text-left text-base md:text-sm order-3 md:order-3 ${
+                        match.score_p2 > match.score_p1 && match.is_completed ? 'font-bold text-gray-900' : 'text-gray-600'
+                    }`}>
+                        {match.player2_name || 'Bye'}
+                    </span>
+
+                </div>
+            </div>
+        ))}
+    </div>
+</div>
+
+            </div>
+        ) : (
+            <div className="bg-white p-2 md:p-8 rounded-xl shadow-lg border border-gray-200 overflow-x-auto min-h-[500px]">
+                <BracketView matches={filteredMatches} />
+            </div>
+        )}
       </main>
     </div>
   );
