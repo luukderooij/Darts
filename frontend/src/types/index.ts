@@ -20,6 +20,35 @@ export interface Dartboard {
   number: number;
 }
 
+// Update Match interface met alle velden die we in de TV mode gebruiken
+export interface Match {
+    id: number;
+    round_number: number;
+    poule_number: number | null;
+    
+    // UI velden voor namen (komt uit backend 'player1_name' etc)
+    player1_name?: string;
+    player2_name?: string;
+    
+    score_p1: number;
+    score_p2: number;
+    is_completed: boolean;
+    
+    // Relaties (optioneel, afhankelijk van endpoint)
+    player1_id?: number | null;
+    player2_id?: number | null;
+    team1_id?: number | null;
+    team2_id?: number | null;
+
+    player1?: Player | null;
+    player2?: Player | null;
+    
+    board_id?: number | null;
+    board_name?: string; 
+    referee_name?: string; 
+
+}
+
 export interface Tournament {
   id: number;
   name: string;
@@ -36,24 +65,9 @@ export interface Tournament {
 
   qualifiers_per_poule?: number;
   players: Player[];
-}
 
-// We voegen Match en Leg later toe
-export interface Match {
-    id: number;
-    player1_id?: number | null;
-    player2_id?: number | null;
-
-    team1_id?: number | null;
-    team2_id?: number | null;
-    team1?: { id: number; name: string } | null;
-    team2?: { id: number; name: string } | null;
-
-
-    player1?: Player | null;
-    player2?: Player | null;
-
-    referee_name?: string;
+  boards: Dartboard[]; 
+  matches: Match[]
 }
 
 export interface Team {

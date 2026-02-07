@@ -1,3 +1,4 @@
+# FILE: backend/app/models/tournament.py
 import uuid
 from typing import Optional, List
 from sqlmodel import SQLModel, Field, Relationship

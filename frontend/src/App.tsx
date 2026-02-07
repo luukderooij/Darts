@@ -15,32 +15,39 @@ import Changelog from './pages/admin/Changelog';
 import ManageTeams from './pages/admin/ManageTeams';
 
 // Public Pages
-import TournamentView from './pages/public/TournamentView';
 import Home from './pages/Home'; 
-// Scorer Pages
+import TournamentTV from './pages/public/TournamentTV'; 
+import TournamentView from './pages/public/TournamentView';
 
+// Scorer Pages
 import ScorerMatchList from './pages/scorer/MatchList';
 import Scoreboard from './pages/scorer/Scoreboard';
 import ScorerLogin from './pages/scorer/ScorerLogin';
 import ScorerStandby from './pages/scorer/ScorerStandby';
-
 
 function App() {
   return (
     <AuthProvider>
       <BrowserRouter>
         <Routes>
-          {/* Default Route: Show Home instead of redirecting */}
+          {/* =========================================
+             1. PUBLIEKE ROUTES (GEEN LOGIN)
+             =========================================
+          */}
           <Route path="/" element={<Home />} /> 
-
-          {/* Auth Routes */}
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
           
-          {/* Public Routes (No Login Required) */}
+          {/* DE TV ROUTE: Deze moet hier staan! */}
+          <Route path="/tv/:public_uuid" element={<TournamentTV />} />
           <Route path="/t/:public_uuid" element={<TournamentView />} />
 
-          {/* Admin Routes */}
+          {/* =========================================
+             2. ADMIN ROUTES (MET LOGIN CHECK)
+             =========================================
+             Deze pagina's gebruiken intern de AdminLayout component.
+             Die component checkt of je ingelogd bent.
+          */}
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/dashboard/tournament/:id" element={<ManageTournament />} />
           <Route path="/dashboard/players" element={<ManagePlayers />} />
@@ -49,14 +56,21 @@ function App() {
           <Route path="/dashboard/boards" element={<ManageBoards />} />
           <Route path="/dashboard/changelog" element={<Changelog />} />
 
-          {/* Scorer Routes (Tablet View) */}
+          {/* =========================================
+             3. SCORER ROUTES
+             =========================================
+          */}
           <Route path="/board/:scorer_uuid" element={<ScorerMatchList />} />
           <Route path="/board/:scorer_uuid/match/:match_id" element={<Scoreboard />} />
           <Route path="/scorer" element={<ScorerLogin />} />
           <Route path="/scorer/standby" element={<ScorerStandby />} />
 
-          {/* Default Redirect */}
-          <Route path="/" element={<Navigate to="/dashboard" replace />} />
+          {/* =========================================
+             4. FALLBACK
+             =========================================
+          */}
+          {/* Alles wat niet bestaat -> Home */}
+          <Route path="*" element={<Navigate to="/" replace />} />
 
         </Routes>
       </BrowserRouter>

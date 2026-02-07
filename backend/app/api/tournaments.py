@@ -70,6 +70,35 @@ def nuke_future_knockout_rounds(session: Session, tournament_id: int, current_ro
             session.delete(fm)
         print(f"DEBUG: {len(future_matches)} toekomstige wedstrijden verwijderd omdat de bracket is gewijzigd.")
 
+
+@router.get("/public/list", response_model=List[TournamentRead])
+def read_public_tournaments_list(
+    limit: int = 5,
+    session: Session = Depends(get_session)
+):
+    """
+    Public endpoint to get the last 5 created tournaments.
+    No authentication required.
+    """
+    tournaments = session.exec(
+        select(Tournament)
+        .order_by(Tournament.created_at.desc())
+        .limit(limit)
+    ).all()
+    
+    # We populate counts manually for the list view
+    results = []
+    for t in tournaments:
+        # Ensure relationships are loaded if needed, or use counts
+        # This is a lightweight version of the logic in read_tournaments
+        t_data = t.model_dump()
+        t_data['player_count'] = len(t.players)
+        t_data['board_count'] = len(t.boards)
+        results.append(t_data)
+        
+    return results
+
+
 @router.post("/", response_model=TournamentRead)
 def create_tournament(
     tourn_in: TournamentCreate,
@@ -182,20 +211,15 @@ def read_tournament_by_id(
 @router.get("/{tournament_id}/standings")
 def get_tournament_standings(
     tournament_id: int,
-    session: Session = Depends(get_session),
-    # Deze endpoint wordt gebruikt in het dashboard, dus beveiligen we hem ook
-    current_user: User = Depends(get_current_user) 
+    session: Session = Depends(get_session)
+    # Geen user check meer nodig, want de TV pagina moet dit ook kunnen zien
 ):
     tournament = session.get(Tournament, tournament_id)
     if not tournament:
         raise HTTPException(status_code=404, detail="Tournament not found")
     
-    # --- SECURITY CHECK ---
-    # We laden admins even handmatig bij omdat session.get dat niet altijd doet
-    session.refresh(tournament, ["admins"])
-    verify_tournament_access(tournament, current_user)
-    # ----------------------
-
+    # We verwijderen verify_tournament_access omdat publiek dit ook mag zien
+    
     return calculate_poule_standings(session, tournament)
 
 @router.get("/", response_model=List[TournamentRead])
@@ -237,7 +261,8 @@ def read_public_tournament(public_uuid: str, session: Session = Depends(get_sess
                 selectinload(Match.referee),
                 selectinload(Match.referee_team)
             ), 
-            selectinload(Tournament.players)
+            selectinload(Tournament.players),
+            selectinload(Tournament.boards)  # <--- 1. DEZE REGEL TOEGEVOEGD [cite: 2250]
         )
     ).first()
     
@@ -252,6 +277,9 @@ def read_public_tournament(public_uuid: str, session: Session = Depends(get_sess
         .where(TournamentTeamLink.tournament_id == t.id)
     ).all()
     team_map = {team.id: team.name for team in teams}
+
+    # Maak een map van Bord Nummer -> Bord ID zodat we de matches kunnen koppelen
+    board_map = {b.number: b.id for b in t.boards}
 
     matches_data = []
     sorted_matches = sorted(t.matches, key=lambda m: m.id)
@@ -280,12 +308,21 @@ def read_public_tournament(public_uuid: str, session: Session = Depends(get_sess
         else:
             m_dict['referee_name'] = "-" 
 
+        # 2. BORD KOPPELEN: Zoek het ID bij het nummer
+        if m.board_number:
+            m_dict['board_id'] = board_map.get(m.board_number)
+        else:
+            m_dict['board_id'] = None
+
         matches_data.append(m_dict)
 
     response = t.model_dump()
     response['matches'] = matches_data
     response['player_count'] = len(t.players)
     response['board_count'] = len(t.boards)
+    
+    # 3. BORDEN MEEGEVEN IN RESPONSE
+    response['boards'] = t.boards 
 
     return response
 

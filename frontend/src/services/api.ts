@@ -1,3 +1,4 @@
+// file: frontend/src/services/api.ts
 import axios from 'axios';
 
 // 1. Create the instance (like requests.Session())

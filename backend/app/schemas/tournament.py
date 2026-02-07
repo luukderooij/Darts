@@ -4,6 +4,12 @@ from pydantic import BaseModel
 from datetime import datetime
 from app.schemas.player import PlayerRead
 
+# --- HULP SCHEMA VOOR BORDEN ---
+class DartboardRead(BaseModel):
+    id: int
+    name: str
+    number: int
+
 # --- Input Schema (Create) ---
 class TournamentCreate(BaseModel):
     name: str
@@ -69,9 +75,11 @@ class MatchReadSimple(BaseModel):
     score_p2: int
     is_completed: bool
     referee_name: Optional[str] = None
+    board_id: Optional[int] = None 
 
 class TournamentReadWithMatches(TournamentRead):
     matches: List[MatchReadSimple] = []
+    boards: List[DartboardRead] = []
 
 class SwapRequest(BaseModel):
     entity_id_1: int
