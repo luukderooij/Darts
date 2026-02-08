@@ -45,7 +45,7 @@ const getBoardName = (tournament: Tournament | null, boardId?: number | null, sh
     if (!boardId || !tournament?.boards) return '-';
     const board = tournament.boards.find(b => b.id === boardId);
     if (board) {
-        if (short) return `Bord ${board.number}`;
+        if (short) return `B${board.number}`;
         return board.name ? `Bord ${board.number}: ${board.name}` : `Bord ${board.number}`;
     }
     return '-';
@@ -53,52 +53,102 @@ const getBoardName = (tournament: Tournament | null, boardId?: number | null, sh
 
 // --- Components ---
 
-// 1. MATCH CARD (TV STYLE - DARK)
-const MatchCard = ({ m, tournament }: { m: Match, tournament: Tournament | null }) => (
-    <div className={`
-        flex flex-col p-3 rounded-xl border shadow-lg transition-all mb-3 relative overflow-hidden
-        ${m.is_completed 
-            ? 'bg-slate-900/40 border-slate-800 opacity-70 hover:opacity-100' 
-            : 'bg-gradient-to-br from-slate-800 to-slate-700 border-slate-600'}
-    `}>
-        {/* Header: Board & Referee */}
-        <div className="flex justify-between items-center mb-2 pb-2 border-b border-white/10 text-xs font-bold uppercase tracking-wider text-slate-400 gap-3">
-            <div className="flex items-center gap-2 text-blue-300 shrink-0">
-                <Target size={14} />
-                <span className="whitespace-nowrap">{getBoardName(tournament, m.board_id)}</span>
-            </div>
-            
-            {/* Rechts: Ronde nummer of Schrijver */}
-            <div className="flex items-center justify-end gap-2 text-slate-500 min-w-0 overflow-hidden">
-                {m.referee_name ? (
-                     <div className="flex items-center gap-1 text-orange-300/80">
-                        <PenTool size={12} />
-                        <span className="truncate max-w-[80px]">{m.referee_name}</span>
-                     </div>
-                ) : (
+// 1. MATCH CARD 
+const MatchCard = ({ m, tournament }: { m: Match, tournament: Tournament | null }) => {
+    const isP1Winner = m.score_p1 > m.score_p2 && m.is_completed;
+    const isP2Winner = m.score_p2 > m.score_p1 && m.is_completed;
+
+    return (
+        <div className={`
+            flex flex-col p-3 rounded-xl border shadow-lg transition-all mb-3 relative overflow-hidden
+            ${m.is_completed 
+                ? 'bg-slate-900/40 border-slate-800 opacity-80 hover:opacity-100' 
+                : 'bg-gradient-to-br from-slate-800 to-slate-700 border-slate-600'}
+        `}>
+            {/* HEADER AANGEPAST:
+                - Mobiel: Flex-col (Onder elkaar)
+                - Desktop: Flex-row (Naast elkaar)
+            */}
+            <div className="flex justify-between items-start md:items-center mb-2 pb-2 border-b border-white/10 text-[10px] md:text-xs font-bold uppercase tracking-wider text-slate-400">
+                
+                {/* Linker blok: Bord & Schrijver */}
+                <div className="flex flex-col md:flex-row gap-1 md:gap-3 flex-1 min-w-0">
+                    {/* Bord */}
+                    <div className="flex items-center gap-2 text-blue-300 shrink-0">
+                        <Target size={12} className="md:w-[14px] md:h-[14px]" />
+                        <span className="whitespace-nowrap truncate">
+                            {getBoardName(tournament, m.board_id)}
+                        </span>
+                    </div>
+
+                    {/* Schrijver (nu eronder op mobiel, ernaast op desktop) */}
+                    {m.referee_name && (
+                        <div className="flex items-center gap-2 text-orange-300/80 min-w-0">
+                            <PenTool size={10} className="md:w-[12px] md:h-[12px] shrink-0" />
+                            <span className="truncate">{m.referee_name}</span>
+                        </div>
+                    )}
+                </div>
+                
+                {/* Rechter blok: Ronde nummer (altijd zichtbaar nu voor duidelijkheid) */}
+                <div className="flex items-center justify-end text-slate-500 shrink-0 pl-2">
                     <span>RND {m.round_number}</span>
-                )}
-            </div>
-        </div>
-
-        {/* Players & Score */}
-        <div className="flex items-center justify-between gap-2">
-            <div className={`text-lg font-bold flex-1 text-right truncate ${m.score_p1 > m.score_p2 && m.is_completed ? 'text-green-400' : 'text-white'}`}>
-                {m.player1_name || 'Bye'}
-            </div>
-            
-            <div className={`px-3 py-1 rounded-lg font-mono text-xl font-bold border min-w-[70px] text-center shadow-inner mx-1 shrink-0
-                ${m.is_completed ? 'bg-slate-900 text-yellow-500 border-slate-700' : 'bg-slate-600 text-slate-400 border-slate-500'}
-            `}>
-                {m.is_completed ? `${m.score_p1} - ${m.score_p2}` : 'VS'}
+                </div>
             </div>
 
-            <div className={`text-lg font-bold flex-1 text-left truncate ${m.score_p2 > m.score_p1 && m.is_completed ? 'text-green-400' : 'text-white'}`}>
-                {m.player2_name || 'Bye'}
+            {/* === MOBILE VIEW: VERTICAL STACK (Players) === */}
+            <div className="flex flex-col gap-2 md:hidden">
+                {/* Speler 1 Rij */}
+                <div className="flex justify-between items-center">
+                    <span className={`font-bold text-sm truncate pr-2 ${isP1Winner ? 'text-green-400' : 'text-white'}`}>
+                        {m.player1_name || 'Bye'}
+                    </span>
+                    <span className={`
+                        w-6 h-6 flex items-center justify-center rounded font-mono font-bold text-sm border
+                        ${m.is_completed 
+                            ? (isP1Winner ? 'bg-green-900/40 border-green-700 text-white' : 'bg-slate-700 border-slate-600 text-slate-400') 
+                            : 'bg-slate-700/30 border-slate-600 text-transparent'}
+                    `}>
+                        {m.is_completed ? m.score_p1 : '-'}
+                    </span>
+                </div>
+
+                {/* Speler 2 Rij */}
+                <div className="flex justify-between items-center">
+                    <span className={`font-bold text-sm truncate pr-2 ${isP2Winner ? 'text-green-400' : 'text-white'}`}>
+                        {m.player2_name || 'Bye'}
+                    </span>
+                    <span className={`
+                        w-6 h-6 flex items-center justify-center rounded font-mono font-bold text-sm border
+                        ${m.is_completed 
+                            ? (isP2Winner ? 'bg-green-900/40 border-green-700 text-white' : 'bg-slate-700 border-slate-600 text-slate-400') 
+                            : 'bg-slate-700/30 border-slate-600 text-transparent'}
+                    `}>
+                        {m.is_completed ? m.score_p2 : '-'}
+                    </span>
+                </div>
+            </div>
+
+            {/* === DESKTOP VIEW: HORIZONTAL (Players) === */}
+            <div className="hidden md:flex items-center justify-between gap-2">
+                <div className={`text-lg font-bold flex-1 text-right truncate ${isP1Winner ? 'text-green-400' : 'text-white'}`}>
+                    {m.player1_name || 'Bye'}
+                </div>
+                
+                <div className={`
+                    px-3 py-1 rounded-lg font-mono text-xl font-bold border min-w-[70px] text-center shadow-inner mx-1 shrink-0
+                    ${m.is_completed ? 'bg-slate-900 text-yellow-500 border-slate-700' : 'bg-slate-600 text-slate-400 border-slate-500'}
+                `}>
+                    {m.is_completed ? `${m.score_p1} - ${m.score_p2}` : 'VS'}
+                </div>
+
+                <div className={`text-lg font-bold flex-1 text-left truncate ${isP2Winner ? 'text-green-400' : 'text-white'}`}>
+                    {m.player2_name || 'Bye'}
+                </div>
             </div>
         </div>
-    </div>
-);
+    );
+};
 
 // 2. BRACKET VIEW (TV STYLE - DARK)
 const BracketView = ({ matches, tournament }: { matches: Match[], tournament: Tournament | null }) => {
@@ -123,8 +173,8 @@ const BracketView = ({ matches, tournament }: { matches: Match[], tournament: To
     }
 
     return (
-        <div className="overflow-x-auto pb-4 pt-2 flex justify-start lg:justify-center">
-            <div className="flex px-2 gap-4">
+        <div className="overflow-x-auto pb-4 pt-2 flex justify-start lg:justify-center w-full">
+            <div className="flex px-2 gap-3 md:gap-4">
                 {roundNumbers.map((roundNum) => {
                     const currentRoundMatches = rounds[roundNum];
                     let roundName = `Ronde ${roundNum}`;
@@ -133,7 +183,7 @@ const BracketView = ({ matches, tournament }: { matches: Match[], tournament: To
                     else if (currentRoundMatches.length === 4) roundName = "KWARTFINALE";
 
                     return (
-                        <div key={roundNum} className="flex flex-col w-72 shrink-0">
+                        <div key={roundNum} className="flex flex-col w-48 md:w-72 shrink-0">
                              <div className="text-center font-bold text-blue-400 text-xs mb-4 tracking-wider border-b border-slate-700 pb-2 mx-2 uppercase">
                                 {roundName}
                              </div>
@@ -199,7 +249,7 @@ const TournamentView = () => {
   useEffect(() => {
     if (tournament && !loading && !hasInitialized) {
         if (hasKnockout) {
-            setActiveTab('ko'); // Standaard naar KO als die er is
+            setActiveTab('ko'); 
         } else if (availablePoules.length > 0) {
             setActiveTab(availablePoules[0]);
         }
@@ -225,14 +275,14 @@ const TournamentView = () => {
       
       {/* 1. HEADER */}
       <header className="bg-slate-800 p-3 shadow-xl sticky top-0 z-50 w-full border-b border-slate-700">
-        <div className="max-w-7xl mx-auto flex justify-between items-center">
-            <h1 className="text-lg md:text-2xl font-black flex items-center gap-3 uppercase tracking-wider">
-                <Trophy className="text-yellow-500 shrink-0" size={24} />
-                <span className="truncate max-w-[200px] md:max-w-none text-white">{tournament.name}</span>
+        <div className="max-w-7xl mx-auto flex justify-between items-center gap-2">
+            <h1 className="text-lg md:text-2xl font-black flex items-center gap-2 md:gap-3 uppercase tracking-wider min-w-0">
+                <Trophy className="text-yellow-500 shrink-0" size={20} />
+                <span className="truncate text-white">{tournament.name}</span>
             </h1>
             <button 
                 onClick={loadData} 
-                className="p-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-slate-300 hover:text-white transition-colors border border-slate-600"
+                className="p-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-slate-300 hover:text-white transition-colors border border-slate-600 shrink-0"
                 title="Verversen"
             >
                 <RefreshCw size={18} />
@@ -243,12 +293,12 @@ const TournamentView = () => {
       <main className="flex-1 w-full max-w-7xl mx-auto p-3 md:p-6">
         
         {/* 2. TABBLADEN NAVIGATIE */}
-        <div className="flex border-b border-slate-700 mb-6 overflow-x-auto gap-1 pb-0 scrollbar-hide">
+        <div className="flex border-b border-slate-700 mb-4 md:mb-6 overflow-x-auto gap-1 pb-0 scrollbar-hide -mx-3 px-3 md:mx-0 md:px-0">
             {availablePoules.map(num => (
                 <button
                     key={num}
                     onClick={() => setActiveTab(num)}
-                    className={`px-5 py-3 font-bold text-sm md:text-base rounded-t-xl whitespace-nowrap transition-all border-t border-l border-r ${
+                    className={`px-3 py-2 md:px-5 md:py-3 font-bold text-xs md:text-base rounded-t-xl whitespace-nowrap transition-all border-t border-l border-r ${
                         activeTab === num 
                         ? 'bg-slate-800 border-slate-700 text-blue-400 translate-y-[1px]' 
                         : 'bg-slate-900 border-transparent text-slate-500 hover:text-slate-300 hover:bg-slate-800/50'
@@ -260,7 +310,7 @@ const TournamentView = () => {
             {hasKnockout && (
                 <button
                     onClick={() => setActiveTab('ko')}
-                    className={`px-5 py-3 font-bold text-sm md:text-base rounded-t-xl whitespace-nowrap transition-all border-t border-l border-r ${
+                    className={`px-3 py-2 md:px-5 md:py-3 font-bold text-xs md:text-base rounded-t-xl whitespace-nowrap transition-all border-t border-l border-r ${
                         activeTab === 'ko' 
                         ? 'bg-slate-800 border-slate-700 text-orange-500 translate-y-[1px]' 
                         : 'bg-slate-900 border-transparent text-slate-500 hover:text-slate-300 hover:bg-slate-800/50'
@@ -273,43 +323,49 @@ const TournamentView = () => {
 
         {/* 3. INHOUD */}
         {activeTab !== 'ko' ? (
-            <div className="grid gap-6 xl:grid-cols-12">
+            <div className="grid gap-4 md:gap-6 xl:grid-cols-12">
                 
+                {/* AANGEPAST: VOLGORDE
+                   Hieronder staat de code voor Tussenstand (Standings) eerst, daarna Wedstrijden (Matches).
+                   Doordat we geen 'order' classes gebruiken, is dit de volgorde op Mobiel (onder elkaar).
+                   Op Desktop regelt de grid-cols dat het naast elkaar staat (7 kolommen vs 5 kolommen).
+                */}
+
                 {/* === LEFT: STANDINGS (TV Style) === */}
                 <div className="xl:col-span-7 bg-slate-800 rounded-2xl shadow-xl border border-slate-700 overflow-hidden flex flex-col">
-                    <div className="bg-blue-900/40 p-4 border-b border-slate-600 font-bold text-lg text-blue-200 flex items-center gap-3">
+                    <div className="bg-blue-900/40 p-3 md:p-4 border-b border-slate-600 font-bold text-base md:text-lg text-blue-200 flex items-center gap-3">
                         <LayoutGrid size={20} /> TUSSENSTAND
                     </div>
                     
                     {/* A. MOBILE CARD VIEW */}
-                    <div className="block md:hidden bg-slate-800 p-3 space-y-3">
+                    <div className="block md:hidden bg-slate-800 p-2 space-y-2">
                         {standings.map((row, index) => {
                             const isQualified = index < (tournament.qualifiers_per_poule || 2);
                             return (
-                                <div key={row.name} className="bg-slate-700/50 p-4 rounded-xl border border-slate-600 relative">
-                                    <div className="flex justify-between items-center mb-3">
-                                        <div className="flex items-center gap-3 overflow-hidden">
-                                            <span className="text-slate-500 font-mono font-bold w-6 text-sm">#{index + 1}</span>
-                                            <span className="font-bold text-white text-lg truncate">{row.name}</span>
-                                            {isQualified && <Medal size={16} className="text-green-500 shrink-0" />}
+                                <div key={row.name} className="bg-slate-700/50 p-3 rounded-xl border border-slate-600 relative">
+                                    <div className="flex justify-between items-center mb-2">
+                                        <div className="flex items-center gap-2 overflow-hidden">
+                                            <span className="text-slate-500 font-mono font-bold w-5 text-xs">#{index + 1}</span>
+                                            <span className="font-bold text-white text-base truncate">{row.name}</span>
+                                            {isQualified && <Medal size={14} className="text-green-500 shrink-0" />}
                                         </div>
-                                        <div className="bg-slate-900 text-yellow-500 font-bold px-3 py-1 rounded-lg text-sm shrink-0 border border-slate-700">
+                                        <div className="bg-slate-900 text-yellow-500 font-bold px-2 py-0.5 rounded-lg text-xs shrink-0 border border-slate-700">
                                             {row.points} P
                                         </div>
                                     </div>
                                     
-                                    <div className="grid grid-cols-3 gap-1 text-center text-xs text-slate-400 bg-slate-800/50 rounded-lg p-2">
+                                    <div className="grid grid-cols-3 gap-1 text-center text-xs text-slate-400 bg-slate-800/50 rounded-lg p-1.5">
                                          <div className="flex flex-col border-r border-slate-600">
-                                            <span className="text-[10px] uppercase tracking-wider mb-1">Gewonnen</span>
-                                            <span className="text-green-400 font-bold text-sm">{Math.floor(row.points/2)}</span>
+                                            <span className="text-[9px] uppercase tracking-wider mb-0.5">Winst</span>
+                                            <span className="text-green-400 font-bold">{Math.floor(row.points/2)}</span>
                                          </div>
                                          <div className="flex flex-col border-r border-slate-600">
-                                            <span className="text-[10px] uppercase tracking-wider mb-1">Verloren</span>
-                                            <span className="text-red-400 font-bold text-sm">{row.played - Math.floor(row.points/2)}</span>
+                                            <span className="text-[9px] uppercase tracking-wider mb-0.5">Verlies</span>
+                                            <span className="text-red-400 font-bold">{row.played - Math.floor(row.points/2)}</span>
                                          </div>
                                          <div className="flex flex-col">
-                                            <span className="text-[10px] uppercase tracking-wider mb-1">Saldo</span>
-                                            <span className="text-slate-200 font-bold text-sm">{row.leg_diff > 0 ? `+${row.leg_diff}` : row.leg_diff}</span>
+                                            <span className="text-[9px] uppercase tracking-wider mb-0.5">Saldo</span>
+                                            <span className="text-slate-200 font-bold">{row.leg_diff > 0 ? `+${row.leg_diff}` : row.leg_diff}</span>
                                          </div>
                                     </div>
                                     
@@ -372,11 +428,11 @@ const TournamentView = () => {
 
                 {/* === RIGHT: MATCHES LIST (TV Style) === */}
                 <div className="xl:col-span-5 flex flex-col gap-4">
-                    <div className="bg-slate-800 rounded-2xl shadow-xl border border-slate-700 overflow-hidden flex flex-col h-full max-h-[800px]">
-                        <div className="bg-slate-700/50 p-4 font-bold text-slate-300 border-b border-slate-600 flex items-center gap-3">
+                    <div className="bg-slate-800 rounded-2xl shadow-xl border border-slate-700 overflow-hidden flex flex-col h-full max-h-[500px] md:max-h-[800px]">
+                        <div className="bg-slate-700/50 p-3 md:p-4 font-bold text-slate-300 border-b border-slate-600 flex items-center gap-3">
                             <ListFilter size={20} /> WEDSTRIJDEN
                         </div>
-                        <div className="overflow-y-auto p-4 custom-scrollbar space-y-1">
+                        <div className="overflow-y-auto p-2 md:p-4 custom-scrollbar space-y-1">
                             {filteredMatches.map((match) => (
                                 <MatchCard key={match.id} m={match} tournament={tournament} />
                             ))}
@@ -390,7 +446,7 @@ const TournamentView = () => {
             </div>
         ) : (
             // === KNOCKOUT VIEW ===
-            <div className="bg-slate-800 p-4 md:p-8 rounded-2xl shadow-xl border border-slate-700 overflow-x-auto min-h-[500px]">
+            <div className="bg-slate-800 p-0 md:p-8 rounded-2xl shadow-xl border-y md:border border-slate-700 overflow-hidden min-h-[500px] -mx-3 md:mx-0">
                 <BracketView matches={filteredMatches} tournament={tournament} />
             </div>
         )}
