@@ -1,3 +1,4 @@
+// FILE: frontend/src/pages/admin/ManageTournament.tsx
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../../services/api';
@@ -47,6 +48,7 @@ interface StandingsItem {
 interface BoardCode {
     board_number: number;
     code: string;
+    is_expired?: boolean;
 }
 
 const ManageTournament = () => {
@@ -82,6 +84,16 @@ const ManageTournament = () => {
             setShowCodesModal(true);
         } catch (err) {
             alert("Kon codes niet ophalen.");
+        }
+    };
+
+    const handleRefreshCodes = async () => {
+        if (!confirm("Weet je het zeker? Dit maakt alle huidige codes ongeldig. Tablets moeten opnieuw inloggen.")) return;
+        try {
+            const res = await api.post(`/scorer/refresh-codes/${id}`);
+            setBoardCodes(res.data);
+        } catch (err) {
+            alert("Kon codes niet vernieuwen.");
         }
     };
 
@@ -1034,49 +1046,66 @@ const onDragOver = (e: React.DragEvent) => {
         )}
 
       {/* --- CODES MODAL --- */}
-      {showCodesModal && (
+{showCodesModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setShowCodesModal(false)}>
-            <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full overflow-hidden" onClick={e => e.stopPropagation()}>
-                <div className="bg-indigo-600 p-4 text-white flex justify-between items-center">
-                    <h3 className="font-bold text-lg flex items-center gap-2"><Monitor /> Koppelcodes voor Tablets</h3>
+            <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full overflow-hidden flex flex-col max-h-[90vh]" onClick={e => e.stopPropagation()}>
+                
+                {/* Header */}
+                <div className="bg-indigo-600 p-4 text-white flex justify-between items-center shrink-0">
+                    <h3 className="font-bold text-lg flex items-center gap-2"><Monitor /> Koppelcodes</h3>
                     <button onClick={() => setShowCodesModal(false)}><X /></button>
                 </div>
                 
-                <div className="p-6 grid grid-cols-1 gap-4">
-                    {boardCodes.map((b) => {
-                        const directUrl = `${window.location.origin}/board/${tournament?.scorer_uuid}`;
-                        return (
-                            <div key={b.board_number} className="bg-gray-50 border-2 border-dashed border-gray-300 rounded-lg p-4 flex items-center justify-between">
-                                <div className="text-left">
-                                    <div className="text-xs font-bold text-gray-400 uppercase mb-1">Bord {b.board_number}</div>
-                                    <div className="text-4xl font-mono font-bold text-indigo-600 tracking-widest">{b.code}</div>
-                                </div>
-                                <div className="flex flex-col gap-2">
-                                    <a 
-                                            href={directUrl}
-                                            target="_blank"
-                                            rel="noreferrer"
-                                            className="flex items-center gap-2 px-3 py-2 bg-indigo-100 text-indigo-700 rounded-md hover:bg-indigo-200 transition text-sm font-bold"
-                                    >
-                                        <Monitor size={16} /> Open Scorer
-                                    </a>
-                                    <button 
-                                        onClick={() => {
-                                            navigator.clipboard.writeText(directUrl);
-                                            alert(`Link voor bord ${b.board_number} gekopieerd!`);
-                                        }}
-                                        className="text-[10px] text-gray-400 hover:text-indigo-600 underline text-center"
-                                    >
-                                        Kopieer Link
-                                    </button>
-                                </div>
-                            </div>
-                        );
-                    })}
+                {/* Scrollable Content */}
+<div className="p-6 overflow-y-auto">
+    <div className="grid grid-cols-1 gap-4">
+        {boardCodes.map((b) => {
+            // VERANDERING: We linken nu naar /scorer en geven de code mee in de URL
+            const directUrl = `${window.location.origin}/scorer?code=${b.code}`;
+            
+            return (
+                <div key={b.board_number} className={`border-2 border-dashed rounded-lg p-4 flex items-center justify-between ${b.is_expired ? 'bg-red-50 border-red-300' : 'bg-gray-50 border-gray-300'}`}>
+                    <div className="text-left">
+                        <div className="text-xs font-bold text-gray-400 uppercase mb-1">
+                            Bord {b.board_number} {b.is_expired && <span className="text-red-500">(Verlopen)</span>}
+                        </div>
+                        <div className={`text-4xl font-mono font-bold tracking-widest ${b.is_expired ? 'text-red-400 decoration-line-through' : 'text-indigo-600'}`}>
+                            {b.code}
+                        </div>
+                    </div>
+                    <div className="flex flex-col gap-2">
+                        <a 
+                            href={directUrl} 
+                            target="_blank" 
+                            rel="noreferrer"
+                            className="flex items-center gap-2 px-3 py-2 bg-indigo-100 text-indigo-700 rounded-md hover:bg-indigo-200 transition text-sm font-bold"
+                        >
+                            <Monitor size={16} /> Open
+                        </a>
+                        <button 
+                            onClick={() => {
+                                navigator.clipboard.writeText(directUrl);
+                                alert(`Link voor bord ${b.board_number} gekopieerd!`);
+                            }}
+                            className="text-[10px] text-gray-400 hover:text-indigo-600 underline text-center"
+                        >
+                            Kopieer Link
+                        </button>
+                    </div>
                 </div>
-                
-                <div className="p-4 bg-gray-50 text-center text-sm text-gray-500 border-t">
-                    Scan de code op de tablet of gebruik de directe links hierboven.
+            );
+        })}
+    </div>
+</div>
+                {/* Footer met Actieknop */}
+                <div className="p-4 bg-gray-100 border-t border-gray-200 text-center shrink-0">
+                    <p className="text-xs text-gray-500 mb-3">Codes zijn 7 dagen geldig.</p>
+                    <button 
+                        onClick={handleRefreshCodes}
+                        className="w-full py-3 bg-white border border-red-200 text-red-600 hover:bg-red-50 font-bold rounded-lg shadow-sm flex items-center justify-center gap-2 transition-colors"
+                    >
+                        <RefreshCcw size={16}/> Genereer Nieuwe Codes (Reset 7 Dagen)
+                    </button>
                 </div>
             </div>
         </div>

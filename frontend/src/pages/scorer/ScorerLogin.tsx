@@ -1,28 +1,29 @@
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+// FILE: frontend/src/pages/scorer/ScorerLogin.tsx
+import { useEffect, useState, useCallback } from 'react'; // Voeg useCallback toe
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../../services/api';
 import { Tablet, ArrowRight, Loader2 } from 'lucide-react';
 
 const ScorerLogin = () => {
     const navigate = useNavigate();
+    const [searchParams] = useSearchParams();
     const [code, setCode] = useState('');
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
 
-    const handleLogin = async (e: React.FormEvent) => {
-        e.preventDefault();
+    // We maken van handleLogin een herbruikbare functie
+    const handleLogin = useCallback(async (manualCode?: string) => {
+        const codeToUse = manualCode || code;
+        if (!codeToUse || codeToUse.length < 4) return;
+
         setLoading(true);
         setError('');
 
         try {
-            // 1. Stuur code naar backend
-            const res = await api.post('/scorer/auth', { code });
+            const res = await api.post('/scorer/auth', { code: codeToUse });
             const { tournament_id, board_number } = res.data;
 
-            // 2. Sla sessie op in localStorage zodat we na refresh nog weten wie we zijn
             localStorage.setItem('scorer_session', JSON.stringify({ tournament_id, board_number }));
-
-            // 3. Ga naar de standby pagina
             navigate('/scorer/standby');
 
         } catch (err: any) {
@@ -30,6 +31,21 @@ const ScorerLogin = () => {
         } finally {
             setLoading(false);
         }
+    }, [code, navigate]);
+
+    // Luister naar de URL parameter ?code=...
+    useEffect(() => {
+        const codeFromUrl = searchParams.get('code');
+        if (codeFromUrl && codeFromUrl.length === 4) {
+            setCode(codeFromUrl);
+            // Voer direct de login uit met de code uit de URL
+            handleLogin(codeFromUrl);
+        }
+    }, [searchParams, handleLogin]);
+
+    const handleSubmit = (e: React.FormEvent) => {
+        e.preventDefault();
+        handleLogin();
     };
 
     return (
@@ -42,7 +58,7 @@ const ScorerLogin = () => {
                 </div>
                 
                 <div className="p-8">
-                    <form onSubmit={handleLogin} className="space-y-6">
+                    <form onSubmit={handleSubmit} className="space-y-6">
                         <div>
                             <label className="block text-center text-gray-500 font-bold mb-2 uppercase text-xs tracking-wide">
                                 Voer de 4-cijferige bordcode in

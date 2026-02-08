@@ -1,3 +1,4 @@
+//  FILE: frontend/src/pages/scorer/ScorerStandby.tsx
 import { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../services/api';

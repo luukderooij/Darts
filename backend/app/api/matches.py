@@ -1,3 +1,4 @@
+# FILE: backend/app/api/matches.py
 import logging
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -33,8 +34,9 @@ def get_match_or_404(match_id: int, session: Session) -> Match:
 def update_match_score(
     match_id: int,
     match_in: MatchScoreUpdate,
-    session: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user)
+    session: Session = Depends(get_session)
+    # VERWIJDERD: current_user: User = Depends(get_current_user) 
+    # Dit zorgt ervoor dat tablets scores kunnen opslaan zonder admin login.
 ):
     match = session.get(Match, match_id)
     if not match:
@@ -66,13 +68,10 @@ def update_match_score(
             match.is_completed = False
 
     # Apply updates
-    # We updaten de scores altijd
     match.score_p1 = match_in.score_p1
     match.score_p2 = match_in.score_p2
     
-    # --- FIX: Gebruik model_dump(exclude_unset=True) ---
-    # Dit zorgt ervoor dat we alleen velden updaten die expliciet zijn meegestuurd.
-    # Als de tablet géén referee_id stuurt, wordt deze dus ook NIET overschreven met None.
+    # Gebruik model_dump(exclude_unset=True) om alleen meegestuurde velden te updaten
     update_data = match_in.model_dump(exclude_unset=True)
 
     if "referee_id" in update_data:
@@ -102,7 +101,7 @@ def get_matches_public(
     public_uuid: str,
     session: Session = Depends(get_session)
 ):
-    # 1. Resolve Tournament [cite: 58]
+    # 1. Resolve Tournament
     statement = select(Tournament).where(Tournament.public_uuid == public_uuid)
     tournament = session.exec(statement).first()
     
@@ -113,7 +112,7 @@ def get_matches_public(
     if not tournament:
         raise HTTPException(status_code=404, detail="Tournament not found")
         
-    # 2. Get Matches met relaties [cite: 59]
+    # 2. Get Matches met relaties
     statement_matches = (
         select(Match)
         .where(Match.tournament_id == tournament.id)
@@ -129,12 +128,12 @@ def get_matches_public(
     )
     matches = session.exec(statement_matches).all()
     
-    # 3. Construct Response met de juiste namen [cite: 60]
+    # 3. Construct Response met de juiste namen
     results = []
     for m in matches:
         m_data = m.model_dump()
         
-        # Naam 1 [cite: 61, 62]
+        # Naam 1
         if m.player1:
             m_data['player1_name'] = m.player1.name
         elif m.team1:
@@ -142,7 +141,7 @@ def get_matches_public(
         else:
              m_data['player1_name'] = "Bye"
 
-        # Naam 2 [cite: 63]
+        # Naam 2
         if m.player2:
              m_data['player2_name'] = m.player2.name
         elif m.team2:
@@ -150,7 +149,7 @@ def get_matches_public(
         else:
              m_data['player2_name'] = "Bye"
 
-        # Referee Naam Logica (Uitgebreid voor handmatige namen) [cite: 64]
+        # Referee Naam Logica
         if m.referee:
             m_data['referee_name'] = m.referee.name
         elif m.referee_team:
@@ -175,7 +174,7 @@ def assign_board(
     current_user: User = Depends(get_current_user)
 ):
     """
-    Handmatige override: Verplaats een wedstrijd naar een specifiek bord. [cite: 64]
+    Handmatige override: Verplaats een wedstrijd naar een specifiek bord.
     """
     match = session.get(Match, match_id)
     if not match:
@@ -194,7 +193,6 @@ def get_single_match(
     session: Session = Depends(get_session)
 ):
     """Haal details van één specifieke wedstrijd op."""
-    # We moeten relaties laden om de namen te kunnen tonen
     statement = (
         select(Match)
         .where(Match.id == match_id)
@@ -212,20 +210,17 @@ def get_single_match(
     if not match:
         raise HTTPException(status_code=404, detail="Match not found")
 
-    # Construct Response (Namen resolven, zelfde logica als get_matches_public)
+    # Construct Response
     m_data = match.model_dump()
     
-    # Player 1 Naam
     if match.player1: m_data['player1_name'] = match.player1.name
     elif match.team1: m_data['player1_name'] = match.team1.name 
     else: m_data['player1_name'] = "Bye"
 
-    # Player 2 Naam
     if match.player2: m_data['player2_name'] = match.player2.name
     elif match.team2: m_data['player2_name'] = match.team2.name
     else: m_data['player2_name'] = "Bye"
 
-    # Referee Naam
     if match.referee: m_data['referee_name'] = match.referee.name
     elif match.referee_team: m_data['referee_name'] = match.referee_team.name
     elif getattr(match, 'custom_referee_name', None): m_data['referee_name'] = match.custom_referee_name
