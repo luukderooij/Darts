@@ -1,3 +1,4 @@
+# file: app/api/teams.py
 import random
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
@@ -212,10 +213,16 @@ def export_team_template():
 @router.post("/import-csv")
 async def import_teams_csv(
     file: UploadFile = File(...),
-    tournament_id: int = None, # Optioneel: direct linken aan een toernooi
+    tournament_id: Optional[int] = Query(None),
     session: Session = Depends(get_session),
     current_user = Depends(get_current_user)
 ):
     content = await file.read()
-    count = csv_service.process_team_import(content, session, tournament_id)
-    return {"message": f"{count} teams verwerkt.", "count": count}
+    # Let op de 'destructuring' van de return waarde
+    count, errors = csv_service.process_team_import(content, session, tournament_id, current_user.id)
+    
+    return {
+        "message": f"{count} teams succesvol verwerkt.",
+        "count": count,
+        "errors": errors  # Dit is nu een lijst met strings
+    }

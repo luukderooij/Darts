@@ -100,101 +100,117 @@ def generate_team_template():
         headers={"Content-Disposition": "attachment; filename=team_template.csv"}
     )
 
-def process_team_import(content: bytes, session: Session, tournament_id: int = None) -> int:
-    """Importeert teams op basis van Naam of Email van spelers."""
-    # 1. Decodeer content
+def process_team_import(content: bytes, session: Session, tournament_id: int, user_id: int):
+    # 1. Decodeer de content (met fallback voor Excel/Windows encoding)
     try:
-        decoded_content = content.decode('utf-8')
+        file_content = content.decode('utf-8-sig')
     except UnicodeDecodeError:
-        decoded_content = content.decode('latin-1')
-
-    lines = decoded_content.splitlines()
-    if lines and lines[0].startswith("sep="):
-        decoded_content = "\n".join(lines[1:])
-
-    # 2. DELIMITER DETECTIE (FIX voor de NameError)
-    # We definiëren een standaardwaarde voor het geval de sniffer faalt
-    detected_delimiter = ',' 
+        file_content = content.decode('latin-1')
+    
+    # 2. Automatisch scheidingsteken detecteren
     try:
-        if decoded_content.strip():
-            dialect = csv.Sniffer().sniff(decoded_content[:2048], delimiters=',;')
-            detected_delimiter = dialect.delimiter
-    except Exception:
-        # Als sniffing faalt (bijv. bij 1 kolom), check handmatig op puntkomma
-        if ';' in decoded_content.splitlines()[0]:
-            detected_delimiter = ';'
+        dialect = csv.Sniffer().sniff(file_content[:1024])
+        delimiter = dialect.delimiter
+    except:
+        delimiter = ';' # Default voor Nederlandse Excel
 
-    reader = csv.DictReader(io.StringIO(decoded_content), delimiter=detected_delimiter)
+    reader = csv.DictReader(io.StringIO(file_content), delimiter=delimiter)
     
-    # 3. Cache alle spelers voor snelle lookup op Naam en Email
-    all_players = session.exec(select(Player)).all()
-    added_count = 0
+    # --- NIEUW: Bestaande teams ophalen voor duplicate check ---
+    # We laden de spelers direct mee (selectinload) om snelle vergelijkingen te maken
+    existing_teams = session.exec(
+        select(Team)
+        .where(Team.user_id == user_id)
+        .options(selectinload(Team.players))
+    ).all()
 
-    for row in reader:
-        # Schoon de headers en data op
-        clean_row = {k.strip().lower(): v.strip() if v else None for k, v in row.items()}
+    import_count = 0
+    errors = [] 
+
+    for index, row in enumerate(reader, start=2):
+        team_name = row.get('team_name')
+        player_refs = [row.get('player1_identifier'), row.get('player2_identifier')]
         
-        # Gebruik flexibele identifiers (Naam of Email)
-        id1 = clean_row.get('player1_identifier') or clean_row.get('player1_email')
-        id2 = clean_row.get('player2_identifier') or clean_row.get('player2_email')
-        team_name_input = clean_row.get('team_name')
+        matched_players = []
+        row_issues = []
 
-        if not id1 or not id2:
-            continue
+        # Spelers zoeken (jouw bestaande logica)
+        for i, ref in enumerate(player_refs, start=1):
+            if not ref:
+                row_issues.append(f"Speler {i} is leeg.")
+                continue
+            
+            ref = ref.strip()
+            player = None
 
-        # Helper functie om speler te vinden op Email, Naam of Nickname
-        def find_player(identifier: str):
-            if not identifier: return None
-            search_term = identifier.lower()
-            for p in all_players:
-                # Check Email [cite: 1004]
-                if p.email and p.email.lower() == search_term:
-                    return p
-                # Check Volledige Naam (Property in model) 
-                if p.name.lower() == search_term:
-                    return p
-                # Check Nickname [cite: 150]
-                if p.nickname and p.nickname.lower() == search_term:
-                    return p
-            return None
+            # Zoekstrategie 1: Email
+            player = session.exec(
+                select(Player).where(Player.email == ref, Player.user_id == user_id)
+            ).first()
 
-        p1 = find_player(id1)
-        p2 = find_player(id2)
+            # Zoekstrategie 2: Volledige naam of Nickname
+            if not player:
+                player = session.exec(
+                    select(Player).where(
+                        ((Player.first_name + " " + Player.last_name) == ref) | 
+                        (Player.nickname == ref),
+                        Player.user_id == user_id
+                    )
+                ).first()
 
-        if not p1 or not p2:
-            # Sla over als een van de spelers niet gevonden kan worden
-            continue
+            # Zoekstrategie 3: Voornaam
+            if not player:
+                results = session.exec(
+                    select(Player).where(Player.first_name == ref, Player.user_id == user_id)
+                ).all()
+                if len(results) == 1:
+                    player = results[0]
+                elif len(results) > 1:
+                    row_issues.append(f"Voornaam '{ref}' is niet uniek.")
+                else:
+                    row_issues.append(f"Speler '{ref}' niet gevonden.")
 
-        # 4. Check op bestaand team (Duplicate check op speler-IDs)
-        new_team_ids = {p1.id, p2.id}
-        
-        # Haal teams op met hun spelers geladen [cite: 81]
-        existing_teams = session.exec(select(Team).options(selectinload(Team.players))).all()
-        
-        target_team = None
-        for et in existing_teams:
-            et_ids = {p.id for p in et.players}
-            if et_ids == new_team_ids:
-                target_team = et
-                break
+            if player:
+                matched_players.append(player)
 
-        # 5. Maak Team aan indien nodig
-        if not target_team:
-            final_name = team_name_input if team_name_input else f"{p1.nickname or p1.first_name} & {p2.nickname or p2.first_name}"
-            target_team = Team(name=final_name)
-            target_team.players = [p1, p2]
-            session.add(target_team)
-            session.commit()
-            session.refresh(target_team)
-            added_count += 1
+        # 3. Team aanmaken of overslaan bij dubbelen
+        if len(matched_players) == 2:
+            # --- NIEUW: DUPLICATE CHECK LOGICA ---
+            new_player_ids = {p.id for p in matched_players}
+            is_duplicate = False
+            
+            for et in existing_teams:
+                existing_player_ids = {p.id for p in et.players}
+                if existing_player_ids == new_player_ids:
+                    is_duplicate = True
+                    errors.append(f"Regel {index} overgeslagen: Dit duo vormt al team '{et.name}'.")
+                    break
+            
+            if is_duplicate:
+                continue
 
-        # 6. Link aan Toernooi [cite: 85]
-        if tournament_id:
-            # Check of link al bestaat in TournamentTeamLink [cite: 86, 144]
-            existing_link = session.get(TournamentTeamLink, (tournament_id, target_team.id))
-            if not existing_link:
-                link = TournamentTeamLink(tournament_id=tournament_id, team_id=target_team.id)
+            # Geen duplicaat? Maak het team aan
+            final_name = team_name if team_name and team_name.strip() != "" else f"{matched_players[0].first_name} & {matched_players[1].first_name}"
+            
+            new_team = Team(
+                name=final_name,
+                user_id=user_id,
+                players=matched_players
+            )
+            session.add(new_team)
+            session.flush()
+
+            # Voeg toe aan lokale lijst om ook dubbelen BINNEN de CSV te vangen
+            existing_teams.append(new_team)
+
+            if tournament_id:
+                link = TournamentTeamLink(tournament_id=tournament_id, team_id=new_team.id)
                 session.add(link)
-    
+            
+            import_count += 1
+        else:
+            error_msg = f"Regel {index} overgeslagen: {' '.join(row_issues)}"
+            errors.append(error_msg)
+
     session.commit()
-    return added_count
+    return import_count, errors

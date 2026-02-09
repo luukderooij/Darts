@@ -2,13 +2,14 @@ import { useEffect, useState } from 'react';
 import api from '../../services/api';
 import AdminLayout from '../../components/layout/AdminLayout';
 import { Player, Team } from '../../types';
-import { Users, UserPlus, Trash2, Shield } from 'lucide-react';
+import { Users, UserPlus, Trash2, Shield, AlertCircle } from 'lucide-react';
 import ImportExportActions from '../../components/admin/ImportExportActions';
 
 const ManageTeams = () => {
     const [teams, setTeams] = useState<Team[]>([]);
     const [players, setPlayers] = useState<Player[]>([]);
     const [loading, setLoading] = useState(true);
+    const [importErrors, setImportErrors] = useState<string[]>([]);
 
     // Form State
     const [selectedPlayerIds, setSelectedPlayerIds] = useState<number[]>([]);
@@ -91,8 +92,32 @@ const ManageTeams = () => {
                         <h3 className="font-bold text-gray-700 mb-4 flex items-center gap-2">
                             <UserPlus size={20} className="text-green-600"/> Nieuw Team Maken
                         </h3>
-                        <ImportExportActions targetPath="teams" onSuccess={loadData} />
-                        <form onSubmit={handleCreate}>
+                        <ImportExportActions 
+                            targetPath="teams" 
+                            onSuccess={loadData} 
+                            onResult={(res) => {
+                                if (res.errors && res.errors.length > 0) {
+                                    setImportErrors(res.errors);
+                                } else {
+                                    setImportErrors([]);
+                                }
+                            }}
+                        />
+
+                        {importErrors.length > 0 && (
+                            <div className="mt-4 p-3 bg-amber-50 border border-amber-200 rounded-md">
+                                <div className="flex items-center gap-2 text-amber-700 font-bold text-sm mb-2">
+                                    <AlertCircle size={16} /> Overgeslagen regels:
+                                </div>
+                                <ul className="text-xs text-amber-600 list-disc list-inside space-y-1">
+                                    {importErrors.map((err, i) => (
+                                        <li key={i}>{err}</li>
+                                    ))}
+                                </ul>
+                            </div>
+                        )}
+
+                        <form onSubmit={handleCreate} className="mt-6">
                             <div className="mb-4">
                                 <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Naam (Optioneel)</label>
                                 <input 

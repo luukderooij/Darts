@@ -1,26 +1,35 @@
 import React, { useRef } from 'react';
-import { Upload, Download } from 'lucide-react';
+import { Upload, Download, FileSpreadsheet } from 'lucide-react';
 import api from '../../services/api';
 
 interface Props {
+  targetPath: string;
   onSuccess: () => void;
-  targetPath: string; // bijv. 'players'
+  onResult?: (data: any) => void; // Optionele callback voor gedetailleerde resultaten
 }
 
-const ImportExportActions = ({ onSuccess, targetPath }: Props) => {
+const ImportExportActions = ({ targetPath, onSuccess, onResult }: Props) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleDownloadTemplate = () => {
-    // We bouwen de URL op basis van de Axios configuratie.
-    // Als de baseURL relatief is ('/api'), voegen we de origin toe voor window.location.
-    const baseUrl = api.defaults.baseURL === '/api' 
-      ? `${window.location.origin}/api` 
-      : api.defaults.baseURL;
-
-    window.location.href = `${baseUrl}/${targetPath}/export-template`;
+  const handleExportTemplate = async () => {
+    try {
+      const response = await api.get(`/${targetPath}/export-template`, {
+        responseType: 'blob',
+      });
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `${targetPath}_template.csv`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    } catch (err) {
+      console.error(err);
+      alert("Kon template niet downloaden.");
+    }
   };
 
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -28,57 +37,73 @@ const ImportExportActions = ({ onSuccess, targetPath }: Props) => {
     formData.append('file', file);
 
     try {
-      // Verstuur het bestand naar de import endpoint[cite: 38].
-      const response = await api.post(`/${targetPath}/import-csv`, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
+      // We versturen het bestand naar de backend
+      const res = await api.post(`/${targetPath}/import-csv`, formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
       });
 
-      // De backend stuurt nu een 'count' terug om aan te geven hoeveel records er zijn toegevoegd.
-      const count = response.data.count;
-
-      if (count === 0) {
-        alert("Import voltooid, maar er zijn 0 records toegevoegd. Controleer of de kolomnamen in je CSV (zoals first_name) overeenkomen met de template.");
-      } else {
-        alert(`Succesvol ${count} items geïmporteerd!`);
-        onSuccess(); // Ververs de lijst in de parent component[cite: 520, 560].
+      // Als er een onResult callback is, stuur de data (met eventuele errors) terug
+      if (onResult) {
+        onResult(res.data);
       }
-    } catch (err: any) {
-      const errorMsg = err.response?.data?.detail || "Fout bij importeren. Controleer het CSV formaat.";
-      alert(errorMsg);
-    } finally {
-      // Reset de file input zodat hetzelfde bestand opnieuw gekozen kan worden indien nodig.
+
+      alert(res.data.message || "Import voltooid");
+      
+      // Ververs de lijst op de pagina
+      onSuccess();
+      
+      // Reset de file input zodat hetzelfde bestand opnieuw gekozen kan worden indien nodig
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
       }
+    } catch (err: any) {
+      console.error(err);
+      const errorMsg = err.response?.data?.detail || "Er is een fout opgetreden tijdens de import.";
+      alert("Fout: " + errorMsg);
     }
   };
 
   return (
-    <div className="flex flex-wrap gap-3 mb-6 bg-white p-4 rounded-lg shadow-sm border border-gray-100">
-      {/* Knop om de CSV template te downloaden */}
-      <button 
-        onClick={handleDownloadTemplate}
-        className="flex items-center gap-2 px-4 py-2 bg-gray-50 text-gray-600 rounded-md hover:bg-gray-100 transition text-sm font-bold"
-      >
-        <Download size={16} /> Template Downloaden
-      </button>
+    <div className="flex flex-wrap gap-2 mb-6 p-4 bg-gray-50 rounded-lg border border-dashed border-gray-300">
+      <div className="w-full mb-2">
+        <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">Bulk Acties</span>
+      </div>
       
-      {/* Knop om de verborgen file input te triggeren */}
-      <button 
+      {/* Import Knop */}
+      <button
         onClick={() => fileInputRef.current?.click()}
-        className="flex items-center gap-2 px-4 py-2 bg-green-50 text-green-700 border border-green-100 rounded-md hover:bg-green-100 transition text-sm font-bold"
+        className="flex items-center gap-2 px-3 py-2 bg-white border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-100 transition shadow-sm"
       >
-        <Upload size={16} /> Importeer CSV
+        <Upload size={16} className="text-blue-600" />
+        CSV Importeren
       </button>
 
-      {/* Verborgen input voor het selecteren van bestanden */}
-      <input 
-        type="file" 
-        ref={fileInputRef} 
-        onChange={handleFileChange} 
-        accept=".csv" 
-        className="hidden" 
+      {/* Export Template Knop */}
+      <button
+        onClick={handleExportTemplate}
+        className="flex items-center gap-2 px-3 py-2 bg-white border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-100 transition shadow-sm"
+      >
+        <Download size={16} className="text-green-600" />
+        Template Downloaden
+      </button>
+
+      {/* Verborgen File Input */}
+      <input
+        type="file"
+        ref={fileInputRef}
+        onChange={handleImport}
+        accept=".csv"
+        className="hidden"
       />
+      
+      <div className="w-full mt-2">
+        <p className="text-[10px] text-gray-500 flex items-center gap-1">
+          <FileSpreadsheet size={12} />
+          Gebruik de template voor de juiste kolomnamen om fouten te voorkomen.
+        </p>
+      </div>
     </div>
   );
 };
