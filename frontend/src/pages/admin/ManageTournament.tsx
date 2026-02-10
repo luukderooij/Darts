@@ -1041,11 +1041,15 @@ const onDragOver = (e: React.DragEvent) => {
                                     </div>
 
                                     {/* KOLOM 3: STANDEN */}
-                                    {isPoule && pouleStanding.length > 0 && (
+                                    {isPoule && (
                                         <div className="bg-blue-50/30 p-4 border-t lg:border-t-0 lg:col-span-1">
-                                            <h5 className="font-bold text-xs uppercase text-blue-400 mb-2 flex items-center gap-2"><LayoutGrid size={14}/> Huidige Stand</h5>
-                                            <div className="overflow-x-auto">
-                                                <table className="w-full text-xs text-left">
+                                            <h5 className="font-bold text-xs uppercase text-blue-400 mb-2 flex items-center gap-2">
+                                                <LayoutGrid size={14}/> Huidige Stand
+                                            </h5>
+                                            
+                                            {pouleStanding.length > 0 ? (
+                                                <div className="overflow-x-auto">
+                                                    <table className="w-full text-xs text-left">
                                                     <thead>
                                                         <tr className="text-gray-400 border-b">
                                                             <th className="pb-1">#</th>
@@ -1077,8 +1081,18 @@ const onDragOver = (e: React.DragEvent) => {
                                                     </tbody>
                                                 </table>
                                             </div>
-                                        </div>
-                                    )}
+                                        ) : (
+                                            <div className="text-center py-8">
+                                                <div className="text-gray-400 text-sm mb-1">📊</div>
+                                                <p className="text-xs text-gray-500">Nog geen wedstrijden gespeeld</p>
+                                                <p className="text-[10px] text-gray-400 mt-1">Stand verschijnt na eerste resultaten</p>
+                                            </div>
+                                                )}
+                                            </div>
+                                        )}
+                                       
+
+                                   
                                 </div>
                             )}
                         </div>
