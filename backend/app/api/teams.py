@@ -92,6 +92,15 @@ def create_manual_team(
     final_name = team_in.name
     if not final_name or final_name.strip() == "":
         final_name = generate_team_name(players)
+    else:
+        # Check of naam al bestaat (alleen bij handmatige invoer)
+        existing_name_team = session.exec(
+            select(Team)
+            .where(Team.name == final_name)
+            .where(Team.user_id == current_user.id)
+        ).first()
+        if existing_name_team:
+            raise HTTPException(status_code=400, detail=f"Teamnaam '{final_name}' bestaat al.")
 
     # 3. Maak het Team object (ZONDER tournament_id)
     team = Team(name=final_name)
@@ -111,6 +120,47 @@ def create_manual_team(
         session.add(link)
         session.commit()
     
+    return team
+
+# --- ENDPOINT 3b: Team Bewerken (PATCH) ---
+@router.patch("/{team_id}", response_model=TeamRead)
+def update_team(
+    team_id: int,
+    team_in: TeamCreateManual,
+    session: Session = Depends(get_session),
+    current_user = Depends(get_current_user)
+):
+    team = session.get(Team, team_id)
+    if not team:
+        raise HTTPException(status_code=404, detail="Team niet gevonden")
+    
+    if team.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Niet gemachtigd.")
+
+    # 1. Update Players
+    players = session.exec(select(Player).where(Player.id.in_(team_in.player_ids))).all()
+    if len(players) < 2:
+        raise HTTPException(status_code=400, detail="Minimaal 2 spelers.")
+    
+    team.players = players
+
+    # 2. Update Name
+    if team_in.name:
+        if team_in.name != team.name:
+            existing_name_team = session.exec(
+                select(Team)
+                .where(Team.name == team_in.name)
+                .where(Team.user_id == current_user.id)
+            ).first()
+            if existing_name_team:
+                raise HTTPException(status_code=400, detail=f"Teamnaam '{team_in.name}' bestaat al.")
+        team.name = team_in.name
+    else:
+        team.name = generate_team_name(players)
+
+    session.add(team)
+    session.commit()
+    session.refresh(team)
     return team
 
 # --- ENDPOINT 4: Bestaande Teams Linken aan Toernooi ---
