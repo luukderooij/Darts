@@ -20,6 +20,7 @@ import 'mobile-drag-drop/default.css';
 interface TournamentExtended extends Omit<Tournament, 'players'> {
     mode: 'singles' | 'doubles';
     players: { id: number; name: string }[]; // Nu mag dit wel!
+    teams: { id: number; name: string }[];
     qualifiers_per_poule?: number;
     allow_byes: boolean;
     shuffle_boards: boolean;
@@ -378,8 +379,13 @@ const ManageTournament = () => {
       };
 
       // Voeg beide spelers van de match toe aan de lijst
-      addPlayer(match.player1_id, match.player1_name);
-      addPlayer(match.player2_id, match.player2_name);
+      if (tournament?.mode === 'doubles') {
+          addPlayer(match.team1_id, match.player1_name);
+          addPlayer(match.team2_id, match.player2_name);
+      } else {
+          addPlayer(match.player1_id, match.player1_name);
+          addPlayer(match.player2_id, match.player2_name);
+      }
 
       return acc;
   }, {} as Record<number, { id: number, name: string }[]>);
@@ -395,11 +401,20 @@ const ManageTournament = () => {
         if (!customName) return;
         payload.custom_referee_name = customName;
         payload.referee_id = null;
+        payload.referee_team_id = null;
     } else if (value === "") {
         payload.referee_id = null;
+        payload.referee_team_id = null;
         payload.custom_referee_name = null;
     } else {
-        payload.referee_id = parseInt(value);
+        const idVal = parseInt(value);
+        if (tournament?.mode === 'doubles') {
+            payload.referee_team_id = idVal;
+            payload.referee_id = null;
+        } else {
+            payload.referee_id = idVal;
+            payload.referee_team_id = null;
+        }
         payload.custom_referee_name = null;
     }
 
@@ -918,29 +933,25 @@ const onDragOver = (e: React.DragEvent) => {
                                                                     <User size={10} className="text-blue-500"/> Schrijver
                                                                 </label>
 
-                                                                {/* LOGICA: Is het Singles? Toon Dropdown. Is het Teams? Toon Label. */}
-                                                                {tournament.mode === 'singles' ? (
-                                                                    <div className="relative">
-                                                                        <select 
-                                                                            className="w-full bg-gray-50 border border-gray-200 text-xs rounded px-2 py-1.5 outline-none focus:border-blue-500 font-medium appearance-none" 
-                                                                            value={match.referee_id || ''} 
-                                                                            onChange={(e) => handleRefereeChange(match.id, e.target.value)}
-                                                                        >
-                                                                            <option value="">-- Kies --</option>
-                                                                            {tournament.players.map(p => (
-                                                                            <option key={p.id} value={p.id}>{p.name}</option>
-                                                                            ))}
-                                                                            <option value="CUSTOM_PROMPT">Handmatig...</option>
-                                                                        </select>
-                                                                        <ChevronDown size={12} className="absolute right-2 top-2 text-gray-400 pointer-events-none"/>
-                                                                    </div>
-                                                                ) : (
-                                                                    /* WEERGAVE VOOR TEAMS / DOUBLES */
-                                                                    <div className="h-[28px] flex items-center bg-gray-100 border border-gray-200 text-xs rounded px-2 text-gray-700 font-bold truncate">
-                                                                        {/* We gebruiken hier de referee_name die we in Stap 2 hebben meegestuurd */}
-                                                                        {match.referee_name || "Nog geen schrijver"}
-                                                                    </div>
-                                                                )}
+                                                                <div className="relative">
+                                                                    <select 
+                                                                        className="w-full bg-gray-50 border border-gray-200 text-xs rounded px-2 py-1.5 outline-none focus:border-blue-500 font-medium appearance-none" 
+                                                                        value={match.referee_id || match.referee_team_id || ''} 
+                                                                        onChange={(e) => handleRefereeChange(match.id, e.target.value)}
+                                                                    >
+                                                                        <option value="">{match.referee_name ? match.referee_name : '-- Kies --'}</option>
+                                                                        
+                                                                        {(match.poule_number && pouleLayout[match.poule_number] 
+                                                                            ? pouleLayout[match.poule_number] 
+                                                                            : (tournament.mode === 'doubles' ? tournament.teams : tournament.players)
+                                                                        )?.map(entity => (
+                                                                            <option key={entity.id} value={entity.id}>{entity.name}</option>
+                                                                        ))}
+                                                                        
+                                                                        <option value="CUSTOM_PROMPT">Handmatig...</option>
+                                                                    </select>
+                                                                    <ChevronDown size={12} className="absolute right-2 top-2 text-gray-400 pointer-events-none"/>
+                                                                </div>
                                                             </div>
 
                                                         </div>

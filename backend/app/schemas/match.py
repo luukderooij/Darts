@@ -21,6 +21,8 @@ class MatchRead(BaseModel):
 
     player1_id: Optional[int]
     player2_id: Optional[int]
+    team1_id: Optional[int] = None
+    team2_id: Optional[int] = None
     player1_name: Optional[str] = "Bye"
     player2_name: Optional[str] = "Bye"
 

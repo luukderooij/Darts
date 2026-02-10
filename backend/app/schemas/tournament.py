@@ -10,6 +10,10 @@ class DartboardRead(BaseModel):
     name: str
     number: int
 
+class TeamSimple(BaseModel):
+    id: int
+    name: str
+
 # --- Input Schema (Create) ---
 class TournamentCreate(BaseModel):
     name: str
@@ -46,6 +50,7 @@ class TournamentRead(BaseModel):
     name: str
     date: str 
     status: str
+    mode: str
     format: str
     allow_byes: bool = True
     shuffle_boards: bool = False
@@ -64,6 +69,7 @@ class TournamentRead(BaseModel):
     board_count: int = 0
 
     players: List[PlayerRead] = []
+    teams: List[TeamSimple] = []
     
     class Config:
         from_attributes = True

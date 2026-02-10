@@ -679,6 +679,7 @@ def read_tournament_by_id(
         .where(Tournament.id == tournament_id)
         .options(
             selectinload(Tournament.players), 
+            selectinload(Tournament.teams),
             selectinload(Tournament.admins),
             selectinload(Tournament.matches).options(
                 selectinload(Match.referee_team), # Laad Team
