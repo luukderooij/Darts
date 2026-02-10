@@ -462,7 +462,7 @@ const CreateTournament = () => {
                                     {allBoards.map(board => (
                                         <label key={board.id} className="flex items-center p-2 hover:bg-white rounded cursor-pointer">
                                             <input type="checkbox" className="mr-3" checked={selectedBoardIds.includes(board.id)} onChange={() => toggleBoard(board.id)} />
-                                            <span className="text-sm">Bord {board.number}</span>
+                                            <span className="text-sm">Bord {board.number} {board.name ? `(${board.name})` : ''}</span>
                                         </label>
                                     ))}
                                 </div>
