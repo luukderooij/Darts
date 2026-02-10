@@ -86,6 +86,8 @@ class MatchReadSimple(BaseModel):
     is_completed: bool
     referee_name: Optional[str] = None
     board_id: Optional[int] = None 
+    best_of_legs: Optional[int] = None
+    best_of_sets: Optional[int] = None
 
 class TournamentReadWithMatches(TournamentRead):
     matches: List[MatchReadSimple] = []

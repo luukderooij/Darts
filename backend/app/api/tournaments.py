@@ -181,60 +181,6 @@ def create_tournament(
         
     return tournament
 
-@router.get("/{tournament_id}", response_model=TournamentRead)
-def read_tournament_by_id(
-    tournament_id: int,
-    session: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user)
-):
-    statement = (
-        select(Tournament)
-        .where(Tournament.id == tournament_id)
-        .options(
-            selectinload(Tournament.players), 
-            selectinload(Tournament.admins),
-            selectinload(Tournament.matches).options(
-                selectinload(Match.referee_team),
-                selectinload(Match.referee)
-            )
-        )
-    )
-    tournament = session.exec(statement).first()
-
-    if not tournament:
-        raise HTTPException(status_code=404, detail="Tournament not found")
-    
-    # --- SECURITY CHECK ---
-    verify_tournament_access(tournament, current_user)
-    
-    # --- DATA VERRIJKEN ---
-    # We zetten het Pydantic model om naar een dict zodat we velden kunnen aanpassen
-    t_dict = tournament.model_dump()
-    
-    # We moeten de matches handmatig verwerken om referee_name toe te voegen
-    if tournament.matches:
-        enriched_matches = []
-        # Sorteer matches op ID voor consistente weergave
-        sorted_matches = sorted(tournament.matches, key=lambda m: m.id)
-        
-        for m in sorted_matches:
-            m_data = m.model_dump()
-            
-            # Voeg referee_name toe (De property wordt normaal niet geserialiseerd)
-            ref_name = "-"
-            if m.referee_team:
-                ref_name = m.referee_team.name
-            elif m.referee:
-                ref_name = m.referee.name
-            elif m.custom_referee_name:
-                ref_name = m.custom_referee_name
-                
-            m_data['referee_name'] = ref_name
-            enriched_matches.append(m_data)
-        
-        t_dict['matches'] = enriched_matches
-
-    return t_dict
 
 @router.get("/", response_model=List[TournamentRead])
 def read_tournaments(
@@ -263,6 +209,20 @@ def read_tournaments(
         results.append(t_data)
         
     return results
+
+@router.get("/{tournament_id}/standings")
+def get_tournament_standings(
+    tournament_id: int,
+    session: Session = Depends(get_session)
+):
+    """
+    Geeft de stand in de poules terug.
+    """
+    tournament = session.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+        
+    return calculate_poule_standings(session, tournament)
 
 @router.get("/public/{public_uuid}", response_model=TournamentReadWithMatches)
 def read_public_tournament(public_uuid: str, session: Session = Depends(get_session)):
