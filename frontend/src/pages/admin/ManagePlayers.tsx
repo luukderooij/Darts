@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import api from '../../services/api';
-import { Trash2, UserPlus, Edit, X } from 'lucide-react';
+import { Trash2, UserPlus, Edit, X, Search } from 'lucide-react';
 import AdminLayout from '../../components/layout/AdminLayout';
 import { Player } from '../../types';
 import ImportExportActions from '../../components/admin/ImportExportActions';
@@ -8,6 +8,7 @@ import ImportExportActions from '../../components/admin/ImportExportActions';
 const ManagePlayers = () => {
   const [players, setPlayers] = useState<Player[]>([]);
   const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState("");
 
   const [editingId, setEditingId] = useState<number | null>(null); // Houdt bij wie we bewerken
   
@@ -96,6 +97,11 @@ const ManagePlayers = () => {
         alert("Fout bij opslaan. Controleer de invoer.");
     }
   };
+
+  const filteredPlayers = players.filter(player => 
+    player.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    (player.email && player.email.toLowerCase().includes(searchQuery.toLowerCase()))
+  );
 
   const handleDelete = async (id: number) => {
     if (!confirm("Are you sure you want to delete this player?")) return;
@@ -199,17 +205,27 @@ const ManagePlayers = () => {
 
         {/* --- Players List --- */}
         <div className="bg-white rounded-lg shadow-sm overflow-hidden">
-          <div className="p-4 border-b bg-gray-50 font-medium text-gray-500 flex justify-between items-center">
-            <span>Total Players: {players.length}</span>
+          <div className="p-4 border-b bg-gray-50 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
+            <span className="font-medium text-gray-500">Total Players: {players.length}</span>
+            <div className="relative w-full sm:w-64">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={16} />
+                <input 
+                    type="text" 
+                    placeholder="Search by name or email..." 
+                    className="w-full pl-9 pr-4 py-1.5 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                    value={searchQuery}
+                    onChange={e => setSearchQuery(e.target.value)}
+                />
+            </div>
           </div>
           
           {loading ? (
              <div className="p-8 text-center text-gray-500">Loading players...</div>
-          ) : players.length === 0 ? (
-            <div className="p-8 text-center text-gray-500">No players found. Add one above!</div>
+          ) : filteredPlayers.length === 0 ? (
+            <div className="p-8 text-center text-gray-500">{searchQuery ? "No players found matching search." : "No players found. Add one above!"}</div>
           ) : (
             <ul className="divide-y divide-gray-100">
-              {players.map((player) => (
+              {filteredPlayers.map((player) => (
                 <li key={player.id} className={`p-4 flex items-center justify-between transition ${editingId === player.id ? 'bg-orange-50' : 'hover:bg-gray-50'}`}>
                   <div>
                     {/* The 'name' property comes formatted from the backend (e.g. Luke "The Nuke" Littler) */}
