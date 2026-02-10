@@ -14,7 +14,19 @@ import { polyfill } from 'mobile-drag-drop';
 import { scrollBehaviourDragImageTranslateOverride } from 'mobile-drag-drop/scroll-behaviour';
 import 'mobile-drag-drop/default.css';
 
-// Uitgebreide interface voor UI-specifieke properties
+// --- TYPE FIXES ---
+// We breiden de geïmporteerde Tournament interface lokaal uit
+// zodat TypeScript niet klaagt over 'mode' of 'players'.
+interface TournamentExtended extends Omit<Tournament, 'players'> {
+    mode: 'singles' | 'doubles';
+    players: { id: number; name: string }[]; // Nu mag dit wel!
+    qualifiers_per_poule?: number;
+    allow_byes: boolean;
+    public_uuid?: string;
+    format: string;
+}
+
+// Uitgebreide interface voor UI-specifieke properties van Match
 interface MatchWithUI extends Match {
   best_of_legs: number;
   player1_name: string;
@@ -25,7 +37,10 @@ interface MatchWithUI extends Match {
   round_number: number;
   poule_number: number | null;
   board_number?: number | null; 
+  
+  // Schrijver velden
   referee_id?: number | null;     
+  referee_team_id?: number | null; 
   custom_referee_name?: string | null; 
   referee_name?: string;               
   
@@ -56,7 +71,8 @@ const ManageTournament = () => {
   const navigate = useNavigate();
   
   // --- STATE ---
-  const [tournament, setTournament] = useState<Tournament | null>(null);
+  // Gebruik hier de Extended interface
+  const [tournament, setTournament] = useState<TournamentExtended | null>(null);
   const [matches, setMatches] = useState<MatchWithUI[]>([]);
   const [standings, setStandings] = useState<Record<number, StandingsItem[]>>({});
   const [loading, setLoading] = useState(true);
@@ -656,7 +672,7 @@ const onDragOver = (e: React.DragEvent) => {
 {/* --- VIEW: POULE & KNOCKOUT MANAGER (DRAG & DROP) --- */}
             {activeTab === 'poules' && (
                 <div className="animate-fade-in space-y-8">
-                     <div className="bg-blue-50 border border-blue-200 p-4 rounded-lg flex items-start gap-3">
+                      <div className="bg-blue-50 border border-blue-200 p-4 rounded-lg flex items-start gap-3">
                         <div className="p-2 bg-blue-100 text-blue-600 rounded-full mt-1"><ArrowRightLeft size={20}/></div>
                         <div>
                             <h4 className="font-bold text-blue-800">Indeling & Seeding Aanpassen</h4>
@@ -685,7 +701,7 @@ const onDragOver = (e: React.DragEvent) => {
                                                 onDragOver={onDragOver}
                                                 onDragEnter={onDragOver}
                                                 onDrop={(e) => onDropAny(e, 'player', p.id)}
-                                                className="draggable-item p-3 border border-gray-200 rounded bg-white hover:border-purple-400 hover:shadow-md cursor-grab active:cursor-grabbing transition-all flex items-center gap-3 group"                                            >
+                                                className="draggable-item p-3 border border-gray-200 rounded bg-white hover:border-purple-400 hover:shadow-md cursor-grab active:cursor-grabbing transition-all flex items-center gap-3 group"                                                      >
                                                 <div className="bg-gray-100 p-1.5 rounded text-gray-400 group-hover:text-purple-500">
                                                     <User size={16}/>
                                                 </div>
@@ -711,45 +727,46 @@ const onDragOver = (e: React.DragEvent) => {
                                     .sort((a,b) => a.id - b.id)
                                     .map((match, idx) => (
                                     <div 
-                                        key={match.id} 
-                                        draggable
-                                        onDragStart={(e) => onDragStart(e, 'match', match.id)}
-                                        onDragOver={onDragOver}
-                                        onDragEnter={onDragOver}
-                                        onDrop={(e) => onDropAny(e, 'match', match.id)}
-                                        className="draggable-item bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden cursor-move hover:shadow-md transition-shadow group"
+                                            key={match.id} 
+                                            draggable
+                                            onDragStart={(e) => onDragStart(e, 'match', match.id)}
+                                            onDragOver={onDragOver}
+                                            onDragEnter={onDragOver}
+                                            onDrop={(e) => onDropAny(e, 'match', match.id)}
+                                            className="draggable-item bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden cursor-move hover:shadow-md transition-shadow group"
                                     >
-                                        <div className="bg-orange-50 p-2 border-b border-orange-100 font-bold text-orange-800 text-xs flex justify-between items-center">
-                                            <span className="flex items-center gap-1"><LayoutGrid size={12}/> Match {idx + 1}</span>
-                                            {match.player2_name === "Bye" ? <span className="bg-green-200 text-green-800 px-1 rounded">BYE</span> : <span className="opacity-50">vs</span>}
-                                        </div>
-                                        
-                                        <div className="p-2 space-y-2 cursor-default"> {/* cursor-default reset de cursor voor de inhoud */}
-                                            {/* Speler 1 */}
-                                            {match.player1_id && (
-                                                <div
-                                                    draggable
-                                                    onDragStart={(e) => onDragStart(e, 'player', match.player1_id!)}
-                                                    onDragOver={onDragOver}
-                                                    onDragEnter={onDragOver}
-                                                    onDrop={(e) => onDropAny(e, 'player', match.player1_id!)}
-                                                    className="draggable-item p-2 border border-gray-100 rounded bg-gray-50 hover:bg-white hover:border-blue-400 cursor-grab flex items-center gap-2 text-sm"                                                >
-                                                    <span className="font-bold text-gray-700 truncate">{match.player1_name}</span>
-                                                </div>
-                                            )}
+                                            <div className="bg-orange-50 p-2 border-b border-orange-100 font-bold text-orange-800 text-xs flex justify-between items-center">
+                                                <span className="flex items-center gap-1"><LayoutGrid size={12}/> Match {idx + 1}</span>
+                                                {match.player2_name === "Bye" ? <span className="bg-green-200 text-green-800 px-1 rounded">BYE</span> : <span className="opacity-50">vs</span>}
+                                            </div>
                                             
-                                            {/* Speler 2 */}
-                                            {match.player2_id && (
-                                                <div
-                                                    draggable
-                                                    onDragStart={(e) => onDragStart(e, 'player', match.player2_id!)}
-                                                    onDragOver={onDragOver}
-                                                    onDrop={(e) => onDropAny(e, 'player', match.player2_id!)}
-                                                    className="draggable-item p-2 border border-gray-100 rounded bg-gray-50 hover:bg-white hover:border-blue-400 cursor-grab flex items-center gap-2 text-sm"                                                >
-                                                    <span className="font-bold text-gray-700 truncate">{match.player2_name}</span>
-                                                </div>
-                                            )}
-                                        </div>
+                                            <div className="p-2 space-y-2 cursor-default"> {/* cursor-default reset de cursor voor de inhoud */}
+                                                {/* Speler 1 */}
+                                                {match.player1_id && (
+                                                    <div
+                                                        draggable
+                                                        onDragStart={(e) => onDragStart(e, 'player', match.player1_id!)}
+                                                        onDragOver={onDragOver}
+                                                        onDragEnter={onDragOver}
+                                                        onDrop={(e) => onDropAny(e, 'player', match.player1_id!)}
+                                                        className="draggable-item p-2 border border-gray-100 rounded bg-gray-50 hover:bg-white hover:border-blue-400 cursor-grab flex items-center gap-2 text-sm"                                                                >
+                                                        <span className="font-bold text-gray-700 truncate">{match.player1_name}</span>
+                                                    </div>
+                                                )}
+                                                
+                                                {/* Speler 2 */}
+                                                {match.player2_id && (
+                                                    <div
+                                                        draggable
+                                                        onDragStart={(e) => onDragStart(e, 'player', match.player2_id!)}
+                                                        onDragOver={onDragOver}
+                                                        onDragEnter={onDragOver}
+                                                        onDrop={(e) => onDropAny(e, 'player', match.player2_id!)}
+                                                        className="draggable-item p-2 border border-gray-100 rounded bg-gray-50 hover:bg-white hover:border-blue-400 cursor-grab flex items-center gap-2 text-sm"                                                                >
+                                                        <span className="font-bold text-gray-700 truncate">{match.player2_name}</span>
+                                                    </div>
+                                                )}
+                                            </div>
                                     </div>
                                 ))}
                             </div>
@@ -829,17 +846,17 @@ const onDragOver = (e: React.DragEvent) => {
                                                             <div className="text-xs font-mono text-gray-300 mr-2">#{index + 1}</div>
                                                             <div className="flex items-center gap-2">
                                                                 <span className={`font-medium ${match.score_p1 > match.score_p2 ? 'text-gray-900 font-bold' : ''}`}>
-                                                                    {match.player1_name || 'Bye'}
+                                                                        {match.player1_name || 'Bye'}
                                                                 </span>
                                                                 <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded font-bold text-xs border border-green-200">
-                                                                    {match.score_p1} - {match.score_p2}
+                                                                        {match.score_p1} - {match.score_p2}
                                                                 </span>
                                                                 <span className={`font-medium ${match.score_p2 > match.score_p1 ? 'text-gray-900 font-bold' : ''}`}>
-                                                                    {match.player2_name || 'Bye'}
+                                                                        {match.player2_name || 'Bye'}
                                                                 </span>
                                                                 <div className="ml-auto flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                                    <span className="text-[10px] text-gray-400 uppercase font-bold">Wijzigen</span>
-                                                                    <Edit2 size={14} className="text-blue-500" />
+                                                                        <span className="text-[10px] text-gray-400 uppercase font-bold">Wijzigen</span>
+                                                                        <Edit2 size={14} className="text-blue-500" />
                                                                 </div>
                                                             </div>
                                                         </div>
@@ -858,7 +875,7 @@ const onDragOver = (e: React.DragEvent) => {
                                                                 <span>Match #{index + 1}</span>
                                                                 {match.is_completed && (
                                                                     <button onClick={() => toggleMatchExpand(match.id)} className="text-blue-600 hover:underline">
-                                                                            Sluiten
+                                                                                Sluiten
                                                                     </button>
                                                                 )}
                                                             </div>
@@ -870,9 +887,9 @@ const onDragOver = (e: React.DragEvent) => {
                                                                 </label>
                                                                 <div className="relative">
                                                                     <select 
-                                                                        className="w-full bg-gray-50 border border-gray-200 text-xs rounded px-2 py-1.5 outline-none focus:border-blue-500 font-medium appearance-none"
-                                                                        value={match.board_number || ''}
-                                                                        onChange={(e) => handleBoardChange(match.id, e.target.value)}
+                                                                            className="w-full bg-gray-50 border border-gray-200 text-xs rounded px-2 py-1.5 outline-none focus:border-blue-500 font-medium appearance-none"
+                                                                            value={match.board_number || ''}
+                                                                            onChange={(e) => handleBoardChange(match.id, e.target.value)}
                                                                     >
                                                                         <option value="">-- Kies --</option>
                                                                         {allBoards.map(board => (
@@ -885,33 +902,37 @@ const onDragOver = (e: React.DragEvent) => {
                                                                 </div>
                                                             </div>
 
-                                                            {/* Schrijver Selectie */}
+                                                            {/* --- SCHRIJVER SECTIE (AANGEPAST) --- */}
                                                             <div className="flex flex-col">
                                                                 <label className="text-[10px] font-bold text-gray-500 uppercase flex items-center gap-1 mb-1">
-                                                                    <User size={10} className="text-purple-500"/> Schrijver
+                                                                    <User size={10} className="text-blue-500"/> Schrijver
                                                                 </label>
-                                                                <div className="relative">
-                                                                    <select 
-                                                                        className={`w-full text-xs rounded px-2 py-1.5 outline-none border appearance-none ${
-                                                                            match.referee_id || match.custom_referee_name 
-                                                                            ? 'bg-blue-50 border-blue-200 text-blue-800 font-bold' 
-                                                                            : 'bg-white border-gray-200 text-gray-400'
-                                                                        }`}
-                                                                        value={match.referee_id || (match.custom_referee_name ? "CUSTOM_DISPLAY" : "")}
-                                                                        onChange={(e) => handleRefereeChange(match.id, e.target.value)}
-                                                                    >
-                                                                        <option value="">-- Kies --</option>
-                                                                        {match.custom_referee_name && <option value="CUSTOM_DISPLAY">✎ {match.custom_referee_name}</option>}
-                                                                        <optgroup label="Spelers">
-                                                                            {tournament?.players?.map(p => (
-                                                                                <option key={p.id} value={p.id}>{p.name}</option>
+
+                                                                {/* LOGICA: Is het Singles? Toon Dropdown. Is het Teams? Toon Label. */}
+                                                                {tournament.mode === 'singles' ? (
+                                                                    <div className="relative">
+                                                                        <select 
+                                                                            className="w-full bg-gray-50 border border-gray-200 text-xs rounded px-2 py-1.5 outline-none focus:border-blue-500 font-medium appearance-none" 
+                                                                            value={match.referee_id || ''} 
+                                                                            onChange={(e) => handleRefereeChange(match.id, e.target.value)}
+                                                                        >
+                                                                            <option value="">-- Kies --</option>
+                                                                            {tournament.players.map(p => (
+                                                                            <option key={p.id} value={p.id}>{p.name}</option>
                                                                             ))}
-                                                                        </optgroup>
-                                                                        <option value="CUSTOM_PROMPT" className="text-blue-600 font-bold">+ Handmatig</option>
-                                                                    </select>
-                                                                    <ChevronDown size={12} className="absolute right-2 top-2 text-gray-400 pointer-events-none"/>
-                                                                </div>
+                                                                            <option value="CUSTOM_PROMPT">Handmatig...</option>
+                                                                        </select>
+                                                                        <ChevronDown size={12} className="absolute right-2 top-2 text-gray-400 pointer-events-none"/>
+                                                                    </div>
+                                                                ) : (
+                                                                    /* WEERGAVE VOOR TEAMS / DOUBLES */
+                                                                    <div className="h-[28px] flex items-center bg-gray-100 border border-gray-200 text-xs rounded px-2 text-gray-700 font-bold truncate">
+                                                                        {/* We gebruiken hier de referee_name die we in Stap 2 hebben meegestuurd */}
+                                                                        {match.referee_name || "Nog geen schrijver"}
+                                                                    </div>
+                                                                )}
                                                             </div>
+
                                                         </div>
 
                                                         {/* --- SEGMENT 2: WEDSTRIJD & SCORES --- */}
@@ -920,31 +941,31 @@ const onDragOver = (e: React.DragEvent) => {
                                                             {/* A. MOBIELE WEERGAVE */}
                                                             <div className="md:hidden flex flex-col gap-3">
                                                                 <div className={`flex items-center justify-between p-3 rounded-lg border ${match.score_p1 > match.score_p2 && match.is_completed ? 'bg-green-50 border-green-200 shadow-sm' : 'bg-white border-gray-200'}`}>
-                                                                    <span className="font-bold text-gray-800 text-sm truncate pr-2">{match.player1_name || 'Bye'}</span>
-                                                                    <input 
-                                                                        type="number" 
-                                                                        className={`w-14 h-10 text-center rounded border border-gray-300 outline-none font-bold text-xl ${match.save_success ? 'text-green-600 border-green-300' : 'text-gray-900'}`}
-                                                                        value={match.score_p1}
-                                                                        onChange={(e) => handleScoreChange(match.id, 'score_p1', e.target.value)}
-                                                                        onBlur={() => saveMatchScore(match)}
-                                                                        onKeyDown={(e) => handleKeyDown(e, match)}
-                                                                    />
+                                                                        <span className="font-bold text-gray-800 text-sm truncate pr-2">{match.player1_name || 'Bye'}</span>
+                                                                        <input 
+                                                                            type="number" 
+                                                                            className={`w-14 h-10 text-center rounded border border-gray-300 outline-none font-bold text-xl ${match.save_success ? 'text-green-600 border-green-300' : 'text-gray-900'}`}
+                                                                            value={match.score_p1}
+                                                                            onChange={(e) => handleScoreChange(match.id, 'score_p1', e.target.value)}
+                                                                            onBlur={() => saveMatchScore(match)}
+                                                                            onKeyDown={(e) => handleKeyDown(e, match)}
+                                                                        />
                                                                 </div>
                                                                 <div className={`flex items-center justify-between p-3 rounded-lg border ${match.score_p2 > match.score_p1 && match.is_completed ? 'bg-green-50 border-green-200 shadow-sm' : 'bg-white border-gray-200'}`}>
-                                                                    <span className="font-bold text-gray-800 text-sm truncate pr-2">{match.player2_name || 'Bye'}</span>
-                                                                    <input 
-                                                                        type="number" 
-                                                                        className={`w-14 h-10 text-center rounded border border-gray-300 outline-none font-bold text-xl ${match.save_success ? 'text-green-600 border-green-300' : 'text-gray-900'}`}
-                                                                        value={match.score_p2}
-                                                                        onChange={(e) => handleScoreChange(match.id, 'score_p2', e.target.value)}
-                                                                        onBlur={() => saveMatchScore(match)}
-                                                                        onKeyDown={(e) => handleKeyDown(e, match)}
-                                                                    />
+                                                                        <span className="font-bold text-gray-800 text-sm truncate pr-2">{match.player2_name || 'Bye'}</span>
+                                                                        <input 
+                                                                            type="number" 
+                                                                            className={`w-14 h-10 text-center rounded border border-gray-300 outline-none font-bold text-xl ${match.save_success ? 'text-green-600 border-green-300' : 'text-gray-900'}`}
+                                                                            value={match.score_p2}
+                                                                            onChange={(e) => handleScoreChange(match.id, 'score_p2', e.target.value)}
+                                                                            onBlur={() => saveMatchScore(match)}
+                                                                            onKeyDown={(e) => handleKeyDown(e, match)}
+                                                                        />
                                                                 </div>
                                                                 <div className="flex justify-end mt-1">
-                                                                    <button onClick={() => handleResetMatch(match.id)} className="text-xs text-gray-400 underline hover:text-red-500 flex items-center gap-1">
-                                                                        <RefreshCcw size={10} /> Reset Score
-                                                                    </button>
+                                                                        <button onClick={() => handleResetMatch(match.id)} className="text-xs text-gray-400 underline hover:text-red-500 flex items-center gap-1">
+                                                                            <RefreshCcw size={10} /> Reset Score
+                                                                        </button>
                                                                 </div>
                                                             </div>
 
@@ -979,15 +1000,15 @@ const onDragOver = (e: React.DragEvent) => {
                                                                     </div>
                                                                 </div>
                                                                 <div className="w-8 flex justify-end shrink-0">
-                                                                    {match.is_saving ? (
-                                                                        <RefreshCcw size={16} className="animate-spin text-blue-500" />
-                                                                    ) : match.save_success ? (
-                                                                        <SaveAll size={16} className="text-green-500" />
-                                                                    ) : (
-                                                                        <button onClick={() => handleResetMatch(match.id)} className="p-2 text-gray-300 hover:text-red-500 transition-colors" title="Reset Match">
-                                                                            <RefreshCcw size={16} />
-                                                                        </button>
-                                                                    )}
+                                                                        {match.is_saving ? (
+                                                                            <RefreshCcw size={16} className="animate-spin text-blue-500" />
+                                                                        ) : match.save_success ? (
+                                                                            <SaveAll size={16} className="text-green-500" />
+                                                                        ) : (
+                                                                            <button onClick={() => handleResetMatch(match.id)} className="p-2 text-gray-300 hover:text-red-500 transition-colors" title="Reset Match">
+                                                                                <RefreshCcw size={16} />
+                                                                            </button>
+                                                                        )}
                                                                 </div>
                                                             </div>
 

@@ -187,14 +187,16 @@ def read_tournament_by_id(
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user)
 ):
-    # AANGEPAST: We halen de admins en players op
-    # We filteren NIET direct op user_id in de SQL, dat doen we in de check daarna
     statement = (
         select(Tournament)
         .where(Tournament.id == tournament_id)
         .options(
             selectinload(Tournament.players), 
-            selectinload(Tournament.admins) # Zorg dat admins geladen zijn!
+            selectinload(Tournament.admins),
+            selectinload(Tournament.matches).options(
+                selectinload(Match.referee_team),
+                selectinload(Match.referee)
+            )
         )
     )
     tournament = session.exec(statement).first()
@@ -204,23 +206,35 @@ def read_tournament_by_id(
     
     # --- SECURITY CHECK ---
     verify_tournament_access(tournament, current_user)
-    # ---------------------------------
+    
+    # --- DATA VERRIJKEN ---
+    # We zetten het Pydantic model om naar een dict zodat we velden kunnen aanpassen
+    t_dict = tournament.model_dump()
+    
+    # We moeten de matches handmatig verwerken om referee_name toe te voegen
+    if tournament.matches:
+        enriched_matches = []
+        # Sorteer matches op ID voor consistente weergave
+        sorted_matches = sorted(tournament.matches, key=lambda m: m.id)
         
-    return tournament
+        for m in sorted_matches:
+            m_data = m.model_dump()
+            
+            # Voeg referee_name toe (De property wordt normaal niet geserialiseerd)
+            ref_name = "-"
+            if m.referee_team:
+                ref_name = m.referee_team.name
+            elif m.referee:
+                ref_name = m.referee.name
+            elif m.custom_referee_name:
+                ref_name = m.custom_referee_name
+                
+            m_data['referee_name'] = ref_name
+            enriched_matches.append(m_data)
+        
+        t_dict['matches'] = enriched_matches
 
-@router.get("/{tournament_id}/standings")
-def get_tournament_standings(
-    tournament_id: int,
-    session: Session = Depends(get_session)
-    # Geen user check meer nodig, want de TV pagina moet dit ook kunnen zien
-):
-    tournament = session.get(Tournament, tournament_id)
-    if not tournament:
-        raise HTTPException(status_code=404, detail="Tournament not found")
-    
-    # We verwijderen verify_tournament_access omdat publiek dit ook mag zien
-    
-    return calculate_poule_standings(session, tournament)
+    return t_dict
 
 @router.get("/", response_model=List[TournamentRead])
 def read_tournaments(
@@ -301,12 +315,15 @@ def read_public_tournament(public_uuid: str, session: Session = Depends(get_sess
         else:
              m_dict['player2_name'] = "Bye"
              
-        if m.referee:
+        if m.referee_team_id:
+             # Gebruik de team_map die je hierboven al hebt gemaakt (sneller & veiliger)
+             m_dict['referee_name'] = team_map.get(m.referee_team_id, "-")
+        elif m.referee:
             m_dict['referee_name'] = m.referee.name
-        elif m.referee_team:
-            m_dict['referee_name'] = m.referee_team.name
+        elif m.custom_referee_name:
+            m_dict['referee_name'] = m.custom_referee_name
         else:
-            m_dict['referee_name'] = "-" 
+            m_dict['referee_name'] = "-"
 
         # 2. BORD KOPPELEN: Zoek het ID bij het nummer
         if m.board_number:
@@ -544,44 +561,55 @@ def delete_tournament(
     
     return {"ok": True}
 
+# 1. SETUP FUNCTIE (Zet schrijvers in DB)
 @router.post("/{tournament_id}/finalize")
 def finalize_tournament_setup(
     tournament_id: int, 
     session: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user) # Toegevoegd voor security
+    current_user: User = Depends(get_current_user)
 ):
     tournament = session.get(Tournament, tournament_id)
     if not tournament:
         raise HTTPException(status_code=404, detail="Toernooi niet gevonden")
 
-    # --- SECURITY CHECK ---
     session.refresh(tournament, ["admins"])
     verify_tournament_access(tournament, current_user)
-    # ----------------------
 
     if tournament.mode == "singles":
+        # Bij singles laten we de bestaande logica intact (of je roept hier je oude singles logica aan)
+        # Als je hier ook een fix nodig hebt, laat het weten, maar je vroeg specifiek om teams.
         return {"message": "Already generated (singles)"}
 
-    teams = session.exec(select(Team).where(Team.tournament_id == tournament_id)).all()
+    # --- TEAMS LOGICA ---
+    teams = session.exec(
+        select(Team)
+        .join(TournamentTeamLink)
+        .where(TournamentTeamLink.tournament_id == tournament_id)
+    ).all()
     
     if len(teams) < 2:
-        raise HTTPException(status_code=400, detail="Te weinig teams om wedstrijden te genereren.")
+        raise HTTPException(status_code=400, detail="Te weinig teams.")
 
+    # Oude matches wissen
     existing_matches = session.exec(select(Match).where(Match.tournament_id == tournament_id)).all()
     for m in existing_matches:
         session.delete(m)
     
+    boards = sorted(tournament.boards, key=lambda b: b.number) if tournament.boards else []
     num_poules = tournament.number_of_poules
     poules = [[] for _ in range(num_poules)]
     
     for i, team in enumerate(teams):
-        poule_index = i % num_poules
-        poules[poule_index].append(team)
+        poules[i % num_poules].append(team)
 
     matches_created = []
     
     for poule_idx, poule_teams in enumerate(poules):
         poule_number = poule_idx + 1
+        assigned_board_num = boards[poule_idx].number if poule_idx < len(boards) else None
+        
+        # Teller voor eerlijke verdeling
+        referee_counts = {t.id: 0 for t in poule_teams}
         n = len(poule_teams)
         poule_matches = [] 
 
@@ -590,27 +618,82 @@ def finalize_tournament_setup(
                 t1 = poule_teams[i]
                 t2 = poule_teams[j]
                 
+                # KIES SCHRIJVER (TEAM)
+                chosen_team_id = None
+                potential = [t for t in poule_teams if t.id != t1.id and t.id != t2.id]
+                if potential:
+                    potential.sort(key=lambda t: referee_counts[t.id])
+                    chosen = potential[0]
+                    chosen_team_id = chosen.id
+                    referee_counts[chosen.id] += 1
+
                 match = Match(
                     tournament_id=tournament.id,
                     poule_number=poule_number,
+                    board_number=assigned_board_num, 
                     team1_id=t1.id,
                     team2_id=t2.id,
+                    # HIER IS DE FIX: Team ID vullen, Player ID leeg laten
+                    referee_team_id=chosen_team_id,
+                    referee_id=None,
+                    
                     round_number=1, 
                     best_of_legs=tournament.starting_legs_group,
-                    best_of_sets=tournament.sets_per_match,
-                    is_completed=False,
-                    score_p1=0,
-                    score_p2=0
+                    best_of_sets=tournament.sets_per_match
                 )
                 poule_matches.append(match)
 
-        assign_referees(poule_matches, poule_teams, is_doubles=True)
         matches_created.extend(poule_matches)
         session.add_all(poule_matches)
 
     session.commit()
-    return {"message": f"Setup finalized. {len(matches_created)} matches generated for {len(teams)} teams."}
+    return {"message": f"Setup finalized. Matches generated."}
 
+
+# 2. READ FUNCTIE (Stuurt de naam naar de Frontend)
+@router.get("/{tournament_id}", response_model=TournamentRead)
+def read_tournament_by_id(
+    tournament_id: int,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user)
+):
+    # We moeten alle relaties laden om de namen te kunnen pakken
+    statement = (
+        select(Tournament)
+        .where(Tournament.id == tournament_id)
+        .options(
+            selectinload(Tournament.players), 
+            selectinload(Tournament.admins),
+            selectinload(Tournament.matches).options(
+                selectinload(Match.referee_team), # Laad Team
+                selectinload(Match.referee)       # Laad Player
+            )
+        )
+    )
+    tournament = session.exec(statement).first()
+
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+    
+    verify_tournament_access(tournament, current_user)
+    
+    # --- DE TRUC ---
+    # We converteren het model naar een dict en injecteren handmatig 'referee_name'
+    # omdat computed properties niet standaard in de JSON output zitten.
+    t_dict = tournament.model_dump()
+    
+    if tournament.matches:
+        enriched_matches = []
+        for m in tournament.matches:
+            m_data = m.model_dump()
+            # Hier roepen we de @property aan uit match.py
+            m_data['referee_name'] = m.referee_name 
+            enriched_matches.append(m_data)
+        
+        # Sorteer op ID zodat ze niet verspringen in beeld
+        t_dict['matches'] = sorted(enriched_matches, key=lambda x: x['id'])
+
+    return t_dict
 
 class AddAdminRequest(BaseModel):
     email: EmailStr
@@ -681,6 +764,7 @@ def swap_matches_content(
         m1.player1_id, m2.player1_id,
         m1.player2_id, m2.player2_id,
         m1.referee_id, m2.referee_id,
+        m1.referee_team_id, m2.referee_team_id,  
         m1.custom_referee_name, m2.custom_referee_name
     ) = (
         m2.team1_id, m1.team1_id,
@@ -688,6 +772,7 @@ def swap_matches_content(
         m2.player1_id, m1.player1_id,
         m2.player2_id, m1.player2_id,
         m2.referee_id, m1.referee_id,
+        m2.referee_team_id, m1.referee_team_id,
         m2.custom_referee_name, m1.custom_referee_name
     )
 

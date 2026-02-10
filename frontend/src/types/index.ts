@@ -45,7 +45,10 @@ export interface Match {
     
     board_id?: number | null;
     board_name?: string; 
-    referee_name?: string; 
+
+    referee_id?: number | null;
+    referee_team_id?: number | null;
+    referee_name?: string;
 
 }
 
@@ -68,6 +71,8 @@ export interface Tournament {
 
   boards: Dartboard[]; 
   matches: Match[]
+
+  mode: 'singles' | 'doubles';
 }
 
 export interface Team {
