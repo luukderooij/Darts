@@ -22,6 +22,7 @@ interface TournamentExtended extends Omit<Tournament, 'players'> {
     players: { id: number; name: string }[]; // Nu mag dit wel!
     qualifiers_per_poule?: number;
     allow_byes: boolean;
+    shuffle_boards: boolean;
     public_uuid?: string;
     format: string;
 }
@@ -79,6 +80,7 @@ const ManageTournament = () => {
   
   // Settings State
   const [allowByes, setAllowByes] = useState(true);
+  const [shuffleBoards, setShuffleBoards] = useState(false);
   const [settingsDirty, setSettingsDirty] = useState(false);
   const [newAdminEmail, setNewAdminEmail] = useState('');
 
@@ -138,6 +140,7 @@ const ManageTournament = () => {
       setTournament(currentTourn);
       setAllBoards(boardsRes.data);
       setAllowByes(currentTourn.allow_byes);
+      setShuffleBoards(currentTourn.shuffle_boards || false);
 
       if (currentTourn.public_uuid) {
           const matchesRes = await api.get(`/matches/by-tournament/${currentTourn.public_uuid}`);
@@ -184,7 +187,10 @@ const ManageTournament = () => {
   const handleUpdateSettings = async () => {
     if (!tournament) return;
     try {
-        await api.patch(`/tournaments/${tournament.id}`, { allow_byes: allowByes });
+        await api.patch(`/tournaments/${tournament.id}`, { 
+            allow_byes: allowByes, 
+            shuffle_boards: shuffleBoards 
+        });
         setSettingsDirty(false);
         alert("Instellingen opgeslagen.");
     } catch (err) {
@@ -617,6 +623,10 @@ const onDragOver = (e: React.DragEvent) => {
                 <label className="flex items-center gap-2 cursor-pointer">
                     <input type="checkbox" checked={allowByes} onChange={e => { setAllowByes(e.target.checked); setSettingsDirty(true); }} className="w-5 h-5 accent-blue-600"/>
                     <span className="font-medium text-gray-700">Allow Byes (Vrijlotingen toestaan in KO)</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer mt-2">
+                    <input type="checkbox" checked={shuffleBoards} onChange={e => { setShuffleBoards(e.target.checked); setSettingsDirty(true); }} className="w-5 h-5 accent-blue-600"/>
+                    <span className="font-medium text-gray-700">Borden Hussel (Wedstrijden roteren over borden)</span>
                 </label>
             </div>
         </div>

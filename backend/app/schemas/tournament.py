@@ -18,6 +18,7 @@ class TournamentCreate(BaseModel):
     format: str = "hybrid"
     mode: str = "singles"
     allow_byes: bool = True
+    shuffle_boards: bool = False
     
     # Settings
     qualifiers_per_poule: int = 2
@@ -36,6 +37,8 @@ class TournamentUpdate(BaseModel):
     status: Optional[str] = None
     format: Optional[str] = None
     scorer_uuid: Optional[str] = None
+    allow_byes: Optional[bool] = None
+    shuffle_boards: Optional[bool] = None
 
 # --- Output Schema (Read) ---
 class TournamentRead(BaseModel):
@@ -45,6 +48,7 @@ class TournamentRead(BaseModel):
     status: str
     format: str
     allow_byes: bool = True
+    shuffle_boards: bool = False
     number_of_poules: int  
     created_at: datetime
     public_uuid: str

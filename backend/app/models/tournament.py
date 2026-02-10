@@ -23,6 +23,7 @@ class Tournament(SQLModel, table=True):
     qualifiers_per_poule: int = Field(default=2) 
 
     allow_byes: bool = Field(default=True)
+    shuffle_boards: bool = Field(default=False)
     
     # --- Game Settings (Best of X) ---
     starting_legs_group: int = Field(default=3) 

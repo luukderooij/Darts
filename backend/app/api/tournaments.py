@@ -606,45 +606,61 @@ def finalize_tournament_setup(
     
     for poule_idx, poule_teams in enumerate(poules):
         poule_number = poule_idx + 1
-        assigned_board_num = boards[poule_idx].number if poule_idx < len(boards) else None
         
-        # Teller voor eerlijke verdeling
-        referee_counts = {t.id: 0 for t in poule_teams}
-        n = len(poule_teams)
-        poule_matches = [] 
-
-        for i in range(n):
-            for j in range(i + 1, n):
-                t1 = poule_teams[i]
-                t2 = poule_teams[j]
+        # ROUND ROBIN GENERATIE (Zodat we rondes hebben voor de hussel)
+        rotation = list(poule_teams)
+        if len(rotation) % 2 != 0:
+            rotation.append(None) # Bye
+        
+        num_rotation = len(rotation)
+        num_rounds = num_rotation - 1
+        half = num_rotation // 2
+        
+        for round_idx in range(num_rounds):
+            round_num = round_idx + 1
+            for i in range(half):
+                t1 = rotation[i]
+                t2 = rotation[num_rotation - 1 - i]
                 
-                # KIES SCHRIJVER (TEAM)
-                chosen_team_id = None
-                potential = [t for t in poule_teams if t.id != t1.id and t.id != t2.id]
-                if potential:
-                    potential.sort(key=lambda t: referee_counts[t.id])
-                    chosen = potential[0]
-                    chosen_team_id = chosen.id
-                    referee_counts[chosen.id] += 1
+                if t1 and t2:
+                    match = Match(
+                        tournament_id=tournament.id,
+                        poule_number=poule_number,
+                        board_number=None, # Wordt hieronder toegewezen
+                        team1_id=t1.id,
+                        team2_id=t2.id,
+                        round_number=round_num,
+                        best_of_legs=tournament.starting_legs_group,
+                        best_of_sets=tournament.sets_per_match
+                    )
+                    matches_created.append(match)
+            
+            rotation.insert(1, rotation.pop())
 
-                match = Match(
-                    tournament_id=tournament.id,
-                    poule_number=poule_number,
-                    board_number=assigned_board_num, 
-                    team1_id=t1.id,
-                    team2_id=t2.id,
-                    # HIER IS DE FIX: Team ID vullen, Player ID leeg laten
-                    referee_team_id=chosen_team_id,
-                    referee_id=None,
-                    
-                    round_number=1, 
-                    best_of_legs=tournament.starting_legs_group,
-                    best_of_sets=tournament.sets_per_match
-                )
-                poule_matches.append(match)
+    # BORD TOEWIJZING (Hussel of Vast)
+    if len(boards) > num_poules or tournament.shuffle_boards:
+        matches_created.sort(key=lambda m: (m.round_number, m.poule_number))
+        for i, match in enumerate(matches_created):
+            offset = (match.round_number - 1) if tournament.shuffle_boards else 0
+            board_idx = (i + offset) % len(boards)
+            match.board_number = boards[board_idx].number
+    else:
+        for match in matches_created:
+            if match.poule_number <= len(boards):
+                match.board_number = boards[match.poule_number - 1].number
 
-        matches_created.extend(poule_matches)
-        session.add_all(poule_matches)
+    # SCHRIJVERS TOEWIJZEN (Per poule)
+    matches_by_poule = {i: [] for i in range(1, num_poules + 1)}
+    for m in matches_created:
+        matches_by_poule[m.poule_number].append(m)
+        
+    for poule_idx, poule_teams in enumerate(poules):
+        p_num = poule_idx + 1
+        pm = matches_by_poule[p_num]
+        pm.sort(key=lambda m: m.round_number)
+        assign_referees(pm, poule_teams, is_doubles=True)
+
+    session.add_all(matches_created)
 
     session.commit()
     return {"message": f"Setup finalized. Matches generated."}

@@ -61,15 +61,18 @@ def generate_poule_phase(
     # 4. BORD TOEWIJZING LOGICA
     
     # Scenario A: OVERFLOW (Meer borden dan poules) -> Dynamisch verdelen
-    # Bijv: 1 Poule, 2 Borden. Of 2 Poules, 4 Borden.
-    if len(boards) > num_poules:
+    # OF SHUFFLE (Borden Hussel aan) -> Wedstrijden roteren over borden
+    if len(boards) > num_poules or tournament.shuffle_boards:
         # We sorteren alle wedstrijden eerst op ronde, dan op poule.
         # Zo vullen we ronde 1 eerst op bord 1, 2, 3...
         all_created_matches.sort(key=lambda m: (m.round_number, m.poule_number))
         
         for i, match in enumerate(all_created_matches):
-            # Cyclisch toewijzen: Match 1->Bord 1, Match 2->Bord 2, Match 3->Bord 1...
-            board_idx = i % len(boards)
+            # Als shuffle aan staat, voegen we een offset toe op basis van de ronde.
+            # Hierdoor start Ronde 2 op een ander bord dan Ronde 1.
+            offset = (match.round_number - 1) if tournament.shuffle_boards else 0
+            
+            board_idx = (i + offset) % len(boards)
             match.board_number = boards[board_idx].number
             
     # Scenario B: STANDAARD (Gelijk of minder borden) -> Vaste toewijzing

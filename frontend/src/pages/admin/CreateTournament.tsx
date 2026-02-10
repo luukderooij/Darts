@@ -58,6 +58,7 @@ const CreateTournament = () => {
     const [poules, setPoules] = useState(1);
     const [qualifiersPerPoule, setQualifiersPerPoule] = useState(2);
     const [allowByes, setAllowByes] = useState(false); // Standaard UIT
+    const [shuffleBoards, setShuffleBoards] = useState(false);
     const [groupLegs, setGroupLegs] = useState(3);
     const [koLegs, setKoLegs] = useState(3);
     const [sets, setSets] = useState(1);
@@ -221,7 +222,8 @@ const CreateTournament = () => {
 
             const payload = {
                 name: name.trim() === "" ? defaultName : name,
-                date, format, mode: participationMode, allow_byes: allowByes,
+                date, format, mode: participationMode, allow_byes: allowByes, 
+                shuffle_boards: shuffleBoards,
                 number_of_poules: poules, qualifiers_per_poule: qualifiersPerPoule,
                 starting_legs_group: groupLegs, starting_legs_ko: koLegs, sets_per_match: sets,
                 board_ids: selectedBoardIds,
@@ -445,6 +447,10 @@ const CreateTournament = () => {
                                     <div className="flex items-center gap-2 p-2 rounded hover:bg-gray-50 transition cursor-pointer" onClick={() => setAllowByes(!allowByes)}>
                                         <input type="checkbox" checked={allowByes} onChange={e => setAllowByes(e.target.checked)} className="w-4 h-4 cursor-pointer" />
                                         <span className="text-sm select-none">Sta <b>Byes</b> toe (Vrijloting) - <i>Iedereen gaat door naar KO</i></span>
+                                    </div>
+                                    <div className="flex items-center gap-2 p-2 rounded hover:bg-gray-50 transition cursor-pointer" onClick={() => setShuffleBoards(!shuffleBoards)}>
+                                        <input type="checkbox" checked={shuffleBoards} onChange={e => setShuffleBoards(e.target.checked)} className="w-4 h-4 cursor-pointer" />
+                                        <span className="text-sm select-none"><b>Borden Hussel</b> (Wedstrijden roteren over borden)</span>
                                     </div>
                                 </div>
                             </div>
