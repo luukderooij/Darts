@@ -27,6 +27,7 @@ const ScorerStandby = () => {
     const navigate = useNavigate();
     const [sessionData, setSessionData] = useState<{tournament_id: number, board_number: number} | null>(null);
     const [data, setData] = useState<StatusResponse | null>(null);
+    const [activeMatchInfo, setActiveMatchInfo] = useState<MatchInfo | null>(null);
     const intervalRef = useRef<any>(null);
 
     // Initial Load
@@ -46,8 +47,37 @@ const ScorerStandby = () => {
                 const statusData: StatusResponse = res.data;
                 setData(statusData);
 
-                // LET OP: De automatische navigatie is hier verwijderd.
-                // We laten de gebruiker nu zelf klikken op de knop die verschijnt.
+                // Haal details op van de actieve match als we die nog niet hebben
+                if (statusData.match_id) {
+                    if (activeMatchInfo?.id !== statusData.match_id) {
+                        // 1. Probeer te vinden in next_matches
+                        let found = statusData.next_matches.find(m => m.id === statusData.match_id);
+                        if (!found) found = statusData.last_matches.find(m => m.id === statusData.match_id);
+
+                        if (found) {
+                            setActiveMatchInfo(found);
+                        } else {
+                            // 2. Anders los ophalen
+                            try {
+                                const mRes = await api.get(`/matches/${statusData.match_id}`);
+                                const m = mRes.data;
+                                setActiveMatchInfo({
+                                    id: m.id,
+                                    player1_name: m.player1_name,
+                                    player2_name: m.player2_name,
+                                    score_p1: m.score_p1,
+                                    score_p2: m.score_p2,
+                                    referee_name: m.referee_name || '-',
+                                    round_str: m.poule_number ? `Poule ${m.poule_number}` : `Ronde ${m.round_number}`
+                                });
+                            } catch (e) {
+                                console.error("Kon actieve match niet laden", e);
+                            }
+                        }
+                    }
+                } else {
+                    setActiveMatchInfo(null);
+                }
             } catch (err) {
                 console.error("Polling error", err);
             }
@@ -56,7 +86,7 @@ const ScorerStandby = () => {
         checkStatus();
         intervalRef.current = setInterval(checkStatus, 5000);
         return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
-    }, [sessionData, navigate]);
+    }, [sessionData, navigate, activeMatchInfo]);
 
     // Navigeer naar wedstrijd
     const startMatch = (matchId: number) => {
@@ -123,8 +153,22 @@ const ScorerStandby = () => {
                                 <div className="relative z-10 flex justify-between items-center">
                                     <div>
                                         <div className="text-blue-400 font-bold uppercase text-xs tracking-widest mb-1">Klaar om te starten</div>
-                                        <div className="text-2xl font-black text-white">Match #{data.match_id}</div>
-                                        <div className="text-slate-400 text-sm mt-1">Klik om te openen</div>
+                                        {activeMatchInfo ? (
+                                            <div className="flex flex-col gap-1 mt-1">
+                                                <div className="text-lg sm:text-xl md:text-2xl font-black text-white leading-tight truncate">
+                                                    {activeMatchInfo.player1_name}
+                                                </div>
+                                                <div className="text-xs font-bold text-slate-500 uppercase">VS</div>
+                                                <div className="text-lg sm:text-xl md:text-2xl font-black text-white leading-tight truncate">
+                                                    {activeMatchInfo.player2_name}
+                                                </div>
+                                                <div className="text-slate-400 text-xs mt-2 flex items-center gap-2 font-mono">
+                                                    <User size={14} /> Ref: <span className="text-white font-bold">{activeMatchInfo.referee_name}</span>
+                                                </div>
+                                            </div>
+                                        ) : (
+                                            <div className="text-2xl font-black text-white">Match #{data.match_id}</div>
+                                        )}
                                     </div>
                                     <PlayCircle size={48} className="text-green-400 group-hover:scale-110 transition-transform" />
                                 </div>
