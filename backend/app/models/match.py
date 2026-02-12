@@ -46,6 +46,13 @@ class Match(SQLModel, table=True):
     referee: Optional["Player"] = Relationship(sa_relationship_kwargs={"foreign_keys": "[Match.referee_id]"})
     referee_team: Optional["Team"] = Relationship(sa_relationship_kwargs={"foreign_keys": "[Match.referee_team_id]"})
 
+    beer_fetcher_id: Optional[int] = Field(default=None, foreign_key="player.id")
+    beer_fetcher_team_id: Optional[int] = Field(default=None, foreign_key="team.id")
+
+    beer_fetcher: Optional["Player"] = Relationship(sa_relationship_kwargs={"foreign_keys": "[Match.beer_fetcher_id]"})
+    beer_fetcher_team: Optional["Team"] = Relationship(sa_relationship_kwargs={"foreign_keys": "[Match.beer_fetcher_team_id]"})
+
+    
     # --- DE FIX: COMPUTED PROPERTY ---
     @property
     def referee_name(self) -> str:
@@ -59,6 +66,15 @@ class Match(SQLModel, table=True):
         if self.custom_referee_name:
             return self.custom_referee_name
         return ""
+    
+    @property
+    def beer_fetcher_name(self) -> Optional[str]:
+        if self.beer_fetcher_team:
+            return self.beer_fetcher_team.name
+        if self.beer_fetcher:
+            # Check of het object een 'name' attribute heeft (SQLModel standaard)
+            return getattr(self.beer_fetcher, "name", "Onbekend")
+        return None
 
 # --- Output Model voor API ---
 class MatchDetail(BaseModel):
@@ -74,3 +90,5 @@ class MatchDetail(BaseModel):
     # Doordat de property in de class Match óók 'referee_name' heet,
     # zal Pydantic deze automatisch vullen met de waarde uit de property hierboven.
     referee_name: Optional[str] = None
+
+    beer_fetcher_name: Optional[str] = None

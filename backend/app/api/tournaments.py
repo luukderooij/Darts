@@ -233,7 +233,9 @@ def read_public_tournament(public_uuid: str, session: Session = Depends(get_sess
         .options(
             selectinload(Tournament.matches).options(
                 selectinload(Match.referee),
-                selectinload(Match.referee_team)
+                selectinload(Match.referee_team),
+                selectinload(Match.beer_fetcher),
+                selectinload(Match.beer_fetcher_team)
             ), 
             selectinload(Tournament.players),
             selectinload(Tournament.boards)  # <--- 1. DEZE REGEL TOEGEVOEGD [cite: 2250]
@@ -284,6 +286,13 @@ def read_public_tournament(public_uuid: str, session: Session = Depends(get_sess
             m_dict['referee_name'] = m.custom_referee_name
         else:
             m_dict['referee_name'] = "-"
+
+        if m.beer_fetcher:
+            m_dict['beer_fetcher_name'] = m.beer_fetcher.name
+        elif m.beer_fetcher_team:
+            m_dict['beer_fetcher_name'] = m.beer_fetcher_team.name
+        else:
+            m_dict['beer_fetcher_name'] = None
 
         # 2. BORD KOPPELEN: Zoek het ID bij het nummer
         if m.board_number:

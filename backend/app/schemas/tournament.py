@@ -34,6 +34,8 @@ class TournamentCreate(BaseModel):
     player_ids: List[int]
     board_ids: List[int]  
 
+    enable_beer_fetchers: bool = False
+
 # --- Input Schema (Update) ---
 class TournamentUpdate(BaseModel):
     name: Optional[str] = None
@@ -70,6 +72,8 @@ class TournamentRead(BaseModel):
 
     players: List[PlayerRead] = []
     teams: List[TeamSimple] = []
+
+    enable_beer_fetchers: bool = False
     
     class Config:
         from_attributes = True
@@ -88,6 +92,7 @@ class MatchReadSimple(BaseModel):
     board_id: Optional[int] = None 
     best_of_legs: Optional[int] = None
     best_of_sets: Optional[int] = None
+    beer_fetcher_name: Optional[str] = None
 
 class TournamentReadWithMatches(TournamentRead):
     matches: List[MatchReadSimple] = []
