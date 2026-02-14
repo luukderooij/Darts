@@ -29,6 +29,8 @@ class Tournament(SQLModel, table=True):
     starting_legs_group: int = Field(default=3) 
     starting_legs_ko: int = Field(default=3)    
     sets_per_match: int = Field(default=1)
+
+    matches_per_player: Optional[int] = Field(default=None)
     
     # --- Access Control ---
     public_uuid: str = Field(default_factory=lambda: str(uuid.uuid4()), index=True, unique=True)

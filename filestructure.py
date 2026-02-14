@@ -24,6 +24,7 @@ Modellen: user, tournament, player, team, match, dartboard.
 - Wizard-configuratie & Auto-Generation van schema's.
 - Slimme Arbitrage: Automatische toewijzing van schrijvers.
 - Narrowcasting (TV Mode): Live carrousel voor toeschouwers.
+- Format for big tournaments. make one poule for al the players and give a number of matches to play. best score go trough to the knock-out.
 
 5. Business Logic
 - Match-validatie via state-machine (Best of X).

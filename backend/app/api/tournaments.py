@@ -17,6 +17,7 @@ from app.models.dartboard import Dartboard
 from app.models.team import Team
 from app.api.users import get_current_user
 from app.models.links import TournamentTeamLink
+from app.services.scheduler_random import generate_random_schedule
 
 from app.schemas.tournament import (
     TournamentCreate, 
@@ -178,7 +179,18 @@ def create_tournament(
                     sets_best_of=tournament.sets_per_match,
                     session=session
                 )
-        
+            elif tournament.format == "random_poule":
+            # Fallback als het null is (bijv 5)
+                target_matches = tournament.matches_per_player if tournament.matches_per_player else 5
+                
+                generate_random_schedule(
+                    tournament_id=tournament.id,
+                    players=players_to_link, # Dit is de lijst spelers die je al opbouwt in de functie
+                    matches_per_player=target_matches,
+                    legs_best_of=tournament.starting_legs_group,
+                    sets_best_of=tournament.sets_per_match,
+                    session=session
+                )
     return tournament
 
 
