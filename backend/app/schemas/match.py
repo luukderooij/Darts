@@ -33,6 +33,14 @@ class MatchRead(BaseModel):
     score_p1: int
     score_p2: int
     is_completed: bool
+
+    beer_fetcher_id: Optional[int] = None
+    beer_fetcher_team_id: Optional[int] = None
+    beer_fetcher_name: Optional[str] = None
     
     class Config:
         from_attributes = True
+
+class MatchBeerFetcherUpdate(BaseModel):
+    beer_fetcher_id: Optional[int] = None
+    beer_fetcher_team_id: Optional[int] = None

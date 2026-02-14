@@ -12,9 +12,10 @@ from app.models.player import Player
 from app.models.team import Team 
 from app.models.tournament import Tournament
 from app.models.user import User
-from app.schemas.match import MatchRead, MatchScoreUpdate
+from app.schemas.match import MatchRead, MatchScoreUpdate, MatchBeerFetcherUpdate 
 from app.api.users import get_current_user
 from app.services.tournament_gen import check_and_advance_knockout
+from app.services.beer_fetcher_gen import reassign_beer_fetcher_for_match
 
 logger = logging.getLogger("dart_app")
 
@@ -122,7 +123,9 @@ def get_matches_public(
             selectinload(Match.team1), 
             selectinload(Match.team2),
             selectinload(Match.referee),
-            selectinload(Match.referee_team)
+            selectinload(Match.referee_team),
+            selectinload(Match.beer_fetcher),   
+            selectinload(Match.beer_fetcher_team) 
         )
         .order_by(Match.id)
     )
@@ -158,6 +161,15 @@ def get_matches_public(
             m_data['referee_name'] = m.custom_referee_name
         else:
             m_data['referee_name'] = "-" 
+
+
+        if m.beer_fetcher:
+            m_data['beer_fetcher_name'] = m.beer_fetcher.name
+        elif m.beer_fetcher_team:
+            m_data['beer_fetcher_name'] = m.beer_fetcher_team.name
+        else:
+            m_data['beer_fetcher_name'] = None  # Frontend toont "Handige Peppie"
+    
     
         results.append(m_data)
         
@@ -202,7 +214,9 @@ def get_single_match(
             selectinload(Match.team1), 
             selectinload(Match.team2),
             selectinload(Match.referee),
-            selectinload(Match.referee_team)
+            selectinload(Match.referee_team),
+            selectinload(Match.beer_fetcher),        # ⭐ NIEUW
+            selectinload(Match.beer_fetcher_team)
         )
     )
     match = session.exec(statement).first()
@@ -226,4 +240,73 @@ def get_single_match(
     elif getattr(match, 'custom_referee_name', None): m_data['referee_name'] = match.custom_referee_name
     else: m_data['referee_name'] = "-" 
 
+    if match.beer_fetcher: 
+        m_data['beer_fetcher_name'] = match.beer_fetcher.name
+    elif match.beer_fetcher_team: 
+        m_data['beer_fetcher_name'] = match.beer_fetcher_team.name
+    else: 
+        m_data['beer_fetcher_name'] = None  # Frontend toont "Handige Peppie"
+
+
     return m_data
+
+@router.patch("/{match_id}/beer-fetcher", response_model=dict)
+def update_match_beer_fetcher(
+    match_id: int,
+    update_data: MatchBeerFetcherUpdate,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Update de bierhaler van een specifieke match.
+    
+    - Kan beer_fetcher_id (singles) of beer_fetcher_team_id (doubles) updaten
+    - Als beide None zijn, wordt bierhaler verwijderd (frontend toont "Handige Peppie")
+    - Alleen tournament eigenaar mag dit doen
+    """
+    # Check of match bestaat
+    match = session.get(Match, match_id)
+    if not match:
+        raise HTTPException(status_code=404, detail="Match not found")
+    
+    # Check of user eigenaar is van tournament
+    tournament = session.get(Tournament, match.tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+    
+    if tournament.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to modify this tournament")
+    
+    # Check of bierhaler functie is ingeschakeld
+    if not tournament.enable_beer_fetchers:
+        raise HTTPException(
+            status_code=400, 
+            detail="Beer fetcher feature is not enabled for this tournament"
+        )
+    
+    # Update bierhaler via service functie
+    try:
+        updated_match = reassign_beer_fetcher_for_match(
+            session=session,
+            match_id=match_id,
+            new_fetcher_id=update_data.beer_fetcher_id,
+            new_fetcher_team_id=update_data.beer_fetcher_team_id
+        )
+        
+        # Haal bierhaler naam op voor response
+        beer_fetcher_name = None
+        if updated_match.beer_fetcher_id:
+            beer_fetcher = session.get(Player, updated_match.beer_fetcher_id)
+            beer_fetcher_name = beer_fetcher.name if beer_fetcher else None
+        elif updated_match.beer_fetcher_team_id:
+            beer_fetcher = session.get(Team, updated_match.beer_fetcher_team_id)
+            beer_fetcher_name = beer_fetcher.name if beer_fetcher else None
+        
+        return {
+            "message": "Beer fetcher updated successfully",
+            "match_id": updated_match.id,
+            "beer_fetcher_name": beer_fetcher_name or "Handige Peppie"
+        }
+        
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))

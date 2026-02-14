@@ -46,3 +46,5 @@ class Tournament(SQLModel, table=True):
     teams: List["Team"] = Relationship(back_populates="tournaments", link_model=TournamentTeamLink)
 
     admins: List["User"] = Relationship(back_populates="shared_tournaments", link_model=TournamentAdminLink)
+
+    enable_beer_fetchers: bool = Field(default=False)

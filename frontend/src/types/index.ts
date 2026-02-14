@@ -49,6 +49,11 @@ export interface Match {
     referee_id?: number | null;
     referee_team_id?: number | null;
     referee_name?: string;
+    
+    beer_fetcher_name?: string;
+    
+    
+
 
 }
 

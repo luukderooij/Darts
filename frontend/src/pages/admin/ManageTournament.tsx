@@ -6,7 +6,7 @@ import AdminLayout from '../../components/layout/AdminLayout';
 import { 
     Save, RefreshCcw, ShieldAlert, Settings, ChevronDown, ChevronRight, 
     SaveAll, GitMerge, Trophy, AlertCircle, LayoutGrid, Medal, 
-    UserPlus, Monitor, X, Target, User, Edit2, ArrowRightLeft
+    UserPlus, Monitor, X, Target, User, Edit2, ArrowRightLeft, Beer
 } from 'lucide-react';
 import { Dartboard, Tournament, Match } from '../../types';
 
@@ -26,6 +26,7 @@ interface TournamentExtended extends Omit<Tournament, 'players'> {
     shuffle_boards: boolean;
     public_uuid?: string;
     format: string;
+    enable_beer_fetchers: boolean;
 }
 
 // Uitgebreide interface voor UI-specifieke properties van Match
@@ -44,7 +45,11 @@ interface MatchWithUI extends Match {
   referee_id?: number | null;     
   referee_team_id?: number | null; 
   custom_referee_name?: string | null; 
-  referee_name?: string;               
+  referee_name?: string;     
+  
+  beer_fetcher_id?: number | null;
+  beer_fetcher_team_id?: number | null;
+  beer_fetcher_name?: string;
   
   // UI States
   is_saving?: boolean;
@@ -92,6 +97,7 @@ const ManageTournament = () => {
   const [allBoards, setAllBoards] = useState<Dartboard[]>([]);
   const [showCodesModal, setShowCodesModal] = useState(false);
   const [boardCodes, setBoardCodes] = useState<BoardCode[]>([]);
+
 
   // TAB STATE
   const [activeTab, setActiveTab] = useState<'matches' | 'poules'>('matches');
@@ -425,6 +431,25 @@ const ManageTournament = () => {
         console.error("Update failed", err);
     }
   };
+
+const handleBeerFetcherChange = async (matchId: number, value: string) => {
+    const idVal = value === "" ? null : parseInt(value);
+
+    try {
+        const payload: any = {};
+        if (tournament?.mode === 'singles') {
+            payload.beer_fetcher_id = idVal;
+        } else {
+            payload.beer_fetcher_team_id = idVal;
+        }
+        
+        await api.patch(`/matches/${matchId}/beer-fetcher`, payload);
+        loadData(false);
+    } catch (error) {
+        console.error('Error updating beer fetcher:', error);
+        alert('Fout bij updaten bierhaler');
+    }
+};
 
   // --- POULE SWAP LOGIC ---
     const handleDrop = async (sourceId: number, targetId: number) => {
@@ -953,6 +978,32 @@ const onDragOver = (e: React.DragEvent) => {
                                                                     <ChevronDown size={12} className="absolute right-2 top-2 text-gray-400 pointer-events-none"/>
                                                                 </div>
                                                             </div>
+
+                                                            {tournament?.enable_beer_fetchers && (
+    <div className="flex flex-col">
+        <label className="text-[10px] font-bold text-gray-500 uppercase flex items-center gap-1 mb-1">
+            <Beer size={10} className="text-amber-500"/> Bierhaler
+        </label>
+        
+        <div className="relative">
+            <select 
+                className="w-full bg-gray-50 border border-gray-200 text-xs rounded px-2 py-1.5 outline-none focus:border-amber-500 font-medium appearance-none" 
+                value={match.beer_fetcher_id || match.beer_fetcher_team_id || ''} 
+                onChange={(e) => handleBeerFetcherChange(match.id, e.target.value)}
+            >
+                <option value="">Handige Peppie</option>
+                
+                {(match.poule_number && pouleLayout[match.poule_number] 
+                    ? pouleLayout[match.poule_number] 
+                    : (tournament.mode === 'doubles' ? tournament.teams : tournament.players)
+                )?.map(entity => (
+                    <option key={entity.id} value={entity.id}>{entity.name}</option>
+                ))}
+            </select>
+            <ChevronDown size={12} className="absolute right-2 top-2 text-gray-400 pointer-events-none"/>
+        </div>
+    </div>
+)}
 
                                                         </div>
 
