@@ -1,7 +1,7 @@
 // FILE: frontend/src/pages/Home.tsx
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom'; // Link weer toegevoegd
-import { Trophy, Target, Users, BarChart3, Calendar, Monitor, ChevronRight } from 'lucide-react';
+import { Trophy, Target, Users, BarChart3, Calendar, Monitor, ChevronRight, User } from 'lucide-react';
 import api from '../services/api';
 import { Tournament } from '../types';
 
@@ -34,6 +34,11 @@ const handleTournamentClick = (uuid: string) => {
       e.stopPropagation(); 
       navigate(`/tv/${uuid}`); 
   };
+
+const handleMeClick = (e: React.MouseEvent, uuid: string) => {
+    e.stopPropagation(); 
+    navigate(`/t/${uuid}/me`); 
+};
 
   return (
     <div className="min-h-screen bg-white flex flex-col">
@@ -114,19 +119,29 @@ const handleTournamentClick = (uuid: string) => {
                             </div>
 
                             {/* Right Actions */}
-                            <div className="flex items-center gap-3 shrink-0">
-                              <button 
-                                  onClick={(e) => handleTvClick(e, t.public_uuid!)}
-                                  className="flex items-center justify-center p-3 bg-slate-800 text-white rounded-lg hover:bg-slate-700 transition shadow-sm"
-                                  title="Open TV Mode"
-                              >
-                                  <Monitor size={20} /> 
-                              </button>
-                                
-                                <div className="p-2 text-gray-300 group-hover:text-blue-500 transition-colors">
-                                    <ChevronRight size={20} />
-                                </div>
-                            </div>
+<div className="flex items-center gap-2 shrink-0">
+    {/* NIEUW: Speler Portaal Knop */}
+<button 
+    onClick={(e) => handleMeClick(e, t.public_uuid!)} // <--- Let op de '!'
+    className="flex items-center justify-center p-3 bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-600 hover:text-white transition shadow-sm"
+    title="Mijn Schema & Taken"
+>
+    <User size={20} /> 
+</button>
+
+    {/* BESTAAND: TV Mode Knop */}
+    <button 
+        onClick={(e) => handleTvClick(e, t.public_uuid!)}
+        className="flex items-center justify-center p-3 bg-slate-800 text-white rounded-lg hover:bg-slate-700 transition shadow-sm"
+        title="Open TV Mode"
+    >
+        <Monitor size={20} /> 
+    </button>
+    
+    <div className="p-2 text-gray-300 group-hover:text-blue-500 transition-colors">
+        <ChevronRight size={20} />
+    </div>
+</div>
                         </div>
                     ))}
                 </div>

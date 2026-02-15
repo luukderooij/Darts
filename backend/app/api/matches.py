@@ -368,3 +368,66 @@ def update_match_beer_fetcher(
         
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/tournaments/{tournament_id}/participants/{participant_id}/schedule")
+def get_participant_schedule(
+    tournament_id: int, 
+    participant_id: int, 
+    is_team: bool = False, # True voor doubles/teams, False voor singles
+    session: Session = Depends(get_session)
+):
+    """
+    Haalt alle taken op voor een specifieke speler of team:
+    1. Wedstrijden om te spelen
+    2. Wedstrijden om te schrijven (referee)
+    3. Rondes om bier te halen
+    """
+    
+    # 1. Matches om te spelen
+    if is_team:
+        # Zoek op team_id
+        playing_query = select(Match).where(
+            Match.tournament_id == tournament_id,
+            (Match.team1_id == participant_id) | (Match.team2_id == participant_id)
+        ).order_by(Match.id)
+    else:
+        # Zoek op player_id
+        playing_query = select(Match).where(
+            Match.tournament_id == tournament_id,
+            (Match.player1_id == participant_id) | (Match.player2_id == participant_id)
+        ).order_by(Match.id)
+        
+    matches_to_play = session.exec(playing_query).all()
+
+    # 2. Matches om te schrijven (Referee)
+    # Let op: Soms schrijft een heel team, soms een speler.
+    # Dit hangt af van hoe je referee_id/referee_team_id vult in je logica.
+    if is_team:
+        referee_query = select(Match).where(
+            Match.tournament_id == tournament_id,
+            Match.referee_team_id == participant_id
+        )
+    else:
+        referee_query = select(Match).where(
+            Match.tournament_id == tournament_id,
+            Match.referee_id == participant_id
+        )
+    
+    matches_to_referee = session.exec(referee_query).all()
+
+    # 3. Bier halen (Beer Fetcher)
+    # Aanname: Je hebt een beer_fetcher_id of vergelijkbaar veld.
+    # Als je alleen op naam matcht (zoals in je interface snippet), moet je hier op naam zoeken.
+    # Idealiter voeg je 'beer_fetcher_id' toe aan je Match model.
+    beer_query = select(Match).where(
+        Match.tournament_id == tournament_id,
+        Match.beer_fetcher_id == participant_id # Pas aan naar jouw model
+    )
+    beer_tasks = session.exec(beer_query).all()
+
+    return {
+        "playing": matches_to_play,
+        "refereeing": matches_to_referee,
+        "beer_fetching": beer_tasks
+    }

@@ -25,6 +25,7 @@ import ScorerMatchList from './pages/scorer/MatchList';
 import Scoreboard from './pages/scorer/Scoreboard';
 import ScorerLogin from './pages/scorer/ScorerLogin';
 import ScorerStandby from './pages/scorer/ScorerStandby';
+import PlayerPortal from './pages/public/PlayerPortal';
 
 function App() {
   return (
@@ -42,6 +43,7 @@ function App() {
           {/* DE TV ROUTE: Deze moet hier staan! */}
           <Route path="/tv/:public_uuid" element={<TournamentTV />} />
           <Route path="/t/:public_uuid" element={<TournamentView />} />
+          <Route path="/t/:uuid/me" element={<PlayerPortal />} />
 
           {/* =========================================
              2. ADMIN ROUTES (MET LOGIN CHECK)

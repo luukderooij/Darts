@@ -1,0 +1,82 @@
+PROJECT STRUCTUUR OVERZICHT
+==============================
+
+--- ROOT BESTANDEN ---
+[ROOT] package.json
+[ROOT] docker-compose.yml
+[ROOT] README.md
+[ROOT] .env.example
+
+--- MAP STRUCTUUR ---
+backend/app\main.py
+backend/app\__init__.py
+backend/app\api\auth.py
+backend/app\api\dartboards.py
+backend/app\api\matches.py
+backend/app\api\players.py
+backend/app\api\scorer.py
+backend/app\api\system.py
+backend/app\api\teams.py
+backend/app\api\tournaments.py
+backend/app\api\users.py
+backend/app\api\__init__.py
+backend/app\core\config.py
+backend/app\core\logging_config.py
+backend/app\core\security.py
+backend/app\core\__init__.py
+backend/app\db\session.py
+backend/app\db\__init__.py
+backend/app\models\dartboard.py
+backend/app\models\links.py
+backend/app\models\match.py
+backend/app\models\player.py
+backend/app\models\scorer_auth.py
+backend/app\models\team.py
+backend/app\models\tournament.py
+backend/app\models\user.py
+backend/app\models\__init__.py
+backend/app\schemas\auth.py
+backend/app\schemas\dartboard.py
+backend/app\schemas\match.py
+backend/app\schemas\player.py
+backend/app\schemas\team.py
+backend/app\schemas\token.py
+backend/app\schemas\tournament.py
+backend/app\schemas\user.py
+backend/app\schemas\__init__.py
+backend/app\services\beer_fetcher_gen.py
+backend/app\services\csv_service.py
+backend/app\services\scheduler_random.py
+backend/app\services\tournament_gen.py
+backend/app\services\__init__.py
+frontend/src\App.tsx
+frontend/src\index.css
+frontend/src\main.tsx
+frontend/src\vite-env.d.ts
+frontend/src\components\admin\ImportExportActions.tsx
+frontend/src\components\layout\AdminLayout.tsx
+frontend/src\components\layout\Sidebar.tsx
+frontend/src\context\AuthContext.tsx
+frontend/src\hooks\useAuth.ts
+frontend/src\hooks\useWebSocket.ts
+frontend/src\pages\Home.tsx
+frontend/src\pages\SystemLogs.tsx
+frontend/src\pages\admin\Changelog.tsx
+frontend/src\pages\admin\CreateTournament.tsx
+frontend/src\pages\admin\Dashboard.tsx
+frontend/src\pages\admin\ManageBoards.tsx
+frontend/src\pages\admin\ManagePlayers.tsx
+frontend/src\pages\admin\ManageTeams.tsx
+frontend/src\pages\admin\ManageTournament.tsx
+frontend/src\pages\auth\Login.tsx
+frontend/src\pages\auth\Register.tsx
+frontend/src\pages\public\PlayerPortal.tsx
+frontend/src\pages\public\TournamentTV.tsx
+frontend/src\pages\public\TournamentView.tsx
+frontend/src\pages\scorer\MatchList.tsx
+frontend/src\pages\scorer\Scoreboard.tsx
+frontend/src\pages\scorer\ScorerLogin.tsx
+frontend/src\pages\scorer\ScorerStandby.tsx
+frontend/src\services\api.ts
+frontend/src\services\authService.ts
+frontend/src\types\index.ts

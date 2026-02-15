@@ -4,6 +4,7 @@ import math
 import random
 from typing import List, Optional, Any, Dict
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import or_
 from sqlmodel import Session, select
 from sqlalchemy.orm import selectinload
 from pydantic import BaseModel, EmailStr
@@ -899,3 +900,187 @@ def swap_matches_content(
 
     session.commit()
     return {"message": "Wedstrijden gewisseld, scores gereset en vervolgrondes verwijderd."}
+
+
+@router.get("/public/{tournament_uuid}/participants")
+def get_public_participants(
+    tournament_uuid: str, 
+    session: Session = Depends(get_session)
+):
+    print(f"DEBUG: Ophalen deelnemers voor UUID: {tournament_uuid}") # LOGGING
+
+    # 1. Zoek toernooi
+    tournament = session.exec(
+        select(Tournament)
+        .where(Tournament.public_uuid == tournament_uuid)
+        .options(selectinload(Tournament.players)) # Pre-load players
+    ).first()
+
+    if not tournament:
+        print("DEBUG: Toernooi niet gevonden")
+        raise HTTPException(status_code=404, detail="Toernooi niet gevonden")
+
+    # 2. Check modus
+    is_doubles = (tournament.mode == "doubles")
+    print(f"DEBUG: Modus is {'Doubles' if is_doubles else 'Singles'}")
+
+    results = []
+    try:
+        if is_doubles:
+            # GEBRUIK EXPLICIETE JOIN (Veiligste methode)
+            teams = session.exec(
+                select(Team)
+                .join(TournamentTeamLink)
+                .where(TournamentTeamLink.tournament_id == tournament.id)
+                .order_by(Team.name)
+            ).all()
+            
+            results = [{"id": t.id, "name": t.name} for t in teams]
+            print(f"DEBUG: {len(results)} teams gevonden via Link tabel.")
+            
+            return {
+                "type": "teams",
+                "tournament_name": tournament.name,
+                "data": results
+            }
+        else:
+            # SINGLES
+            players = tournament.players
+            # Fallback als lazy load faalt
+            if not players:
+                 players = session.exec(
+                    select(Player)
+                    .where(Player.tournament_id == tournament.id)
+                    .order_by(Player.name)
+                ).all()
+
+            results = [{"id": p.id, "name": p.name} for p in players]
+            print(f"DEBUG: {len(results)} spelers gevonden.")
+
+            return {
+                "type": "players",
+                "tournament_name": tournament.name,
+                "data": results
+            }
+
+    except Exception as e:
+        print(f"CRITICAL ERROR in get_public_participants: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/public/{tournament_uuid}/participant/{participant_id}/schedule")
+def get_participant_schedule(
+    tournament_uuid: str, 
+    participant_id: int, 
+    session: Session = Depends(get_session)
+):
+    # 1. Toernooi valideren
+    tournament = session.exec(select(Tournament).where(Tournament.public_uuid == tournament_uuid)).first()
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Toernooi niet gevonden")
+    
+    is_team = (tournament.mode == "doubles")
+    t_id = tournament.id
+
+    # Hulpfunctie
+    def format_match(m, role="playing"):
+        try:
+            # Namen bepalen (veilig, check op None)
+            opp_name = "Bye"
+            if role == "playing":
+                if is_team:
+                    if m.team1_id == participant_id: 
+                        opp_name = m.team2.name if m.team2 else "Bye"
+                    else: 
+                        opp_name = m.team1.name if m.team1 else "Bye"
+                else:
+                    if m.player1_id == participant_id: 
+                        opp_name = m.player2.name if m.player2 else "Bye"
+                    else: 
+                        opp_name = m.player1.name if m.player1 else "Bye"
+            
+            # Match naam
+            match_name = ""
+            if m.team1 and m.team2: match_name = f"{m.team1.name} vs {m.team2.name}"
+            elif m.player1 and m.player2: match_name = f"{m.player1.name} vs {m.player2.name}"
+
+            # Bord naam
+            board_str = "?"
+            if m.board_number: board_str = str(m.board_number)
+            # Als je relatie hebt: m.board.name if m.board else "?"
+
+            return {
+                "id": m.id,
+                "round_number": m.round_number,
+                "poule_number": m.poule_number,
+                "board_name": board_str, 
+                "opponent_name": opp_name,
+                "match_name": match_name,
+                "is_completed": m.is_completed,
+                "score_p1": m.score_p1,
+                "score_p2": m.score_p2
+            }
+        except Exception as e:
+            print(f"Error formatting match {m.id}: {e}")
+            return None
+
+    # QUERY 1: SPELEN
+    # Let op de 'selectinload' om crashes te voorkomen bij .name opvragen
+    if is_team:
+        matches_playing = session.exec(
+            select(Match)
+            .where(Match.tournament_id == t_id)
+            .where(or_(Match.team1_id == participant_id, Match.team2_id == participant_id))
+            .options(selectinload(Match.team1), selectinload(Match.team2))
+            .order_by(Match.id)
+        ).all()
+    else:
+        matches_playing = session.exec(
+            select(Match)
+            .where(Match.tournament_id == t_id)
+            .where(or_(Match.player1_id == participant_id, Match.player2_id == participant_id))
+            .options(selectinload(Match.player1), selectinload(Match.player2))
+            .order_by(Match.id)
+        ).all()
+
+    # QUERY 2: SCHRIJVEN
+    if is_team:
+        matches_referee = session.exec(
+            select(Match)
+            .where(Match.tournament_id == t_id)
+            .where(Match.referee_team_id == participant_id)
+            .options(selectinload(Match.team1), selectinload(Match.team2))
+            .order_by(Match.id)
+        ).all()
+    else:
+        matches_referee = session.exec(
+            select(Match)
+            .where(Match.tournament_id == t_id)
+            .where(Match.referee_id == participant_id)
+            .options(selectinload(Match.player1), selectinload(Match.player2))
+            .order_by(Match.id)
+        ).all()
+
+    # QUERY 3: BIER (Indien aanwezig)
+    matches_beer = []
+    # Voeg hier error handling toe voor als kolom niet bestaat
+    try:
+        if is_team:
+            # Check of beer_fetcher_team_id bestaat op Match model voor je dit runt
+             matches_beer = session.exec(
+                select(Match).where(Match.tournament_id == t_id, Match.beer_fetcher_team_id == participant_id)
+                .options(selectinload(Match.team1), selectinload(Match.team2))
+            ).all()
+        else:
+             matches_beer = session.exec(
+                select(Match).where(Match.tournament_id == t_id, Match.beer_fetcher_id == participant_id)
+                .options(selectinload(Match.player1), selectinload(Match.player2))
+            ).all()
+    except Exception:
+        pass # Veld bestaat waarschijnlijk niet, negeren
+
+    return {
+        "playing": [res for m in matches_playing if (res := format_match(m, "playing"))],
+        "refereeing": [res for m in matches_referee if (res := format_match(m, "referee"))],
+        "beer_fetching": [res for m in matches_beer if (res := format_match(m, "beer"))]
+    }
