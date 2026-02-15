@@ -1,7 +1,7 @@
 import { useEffect, useState, useMemo } from 'react';
 import { useParams } from 'react-router-dom';
 import api from '../../services/api';
-import { Trophy, LayoutGrid, GitMerge, Medal, Target, PenTool, History, Clock, Info, Crown, Star } from 'lucide-react';
+import { Trophy, LayoutGrid, GitMerge, Medal, Target, PenTool, History, Clock, Info, Crown, Star, Beer } from 'lucide-react';
 import { Tournament, Match } from '../../types'; 
 
 interface StandingsItem {
@@ -194,6 +194,16 @@ const TournamentTV = () => {
                         <span className="truncate" title={m.referee_name}>{m.referee_name}</span>
                     </div>
                 ) : <span>-</span>}
+
+                {/* Bierhalers regel in KO-fase */}
+{!m.is_completed && (
+                <div className="flex justify-end items-center gap-1 text-amber-600/80 border-t border-white/5 mt-1 pt-0.5 italic">
+                    <span className="truncate max-w-[120px]">
+                        {m.beer_fetcher_name || "Peppie"}
+                    </span>
+                    <Beer size={9} />
+                </div>
+            )}
             </div>
             <div className="p-2 space-y-1">
                 <div className="flex justify-between items-center">
@@ -221,6 +231,15 @@ const TournamentTV = () => {
                     <span className="whitespace-nowrap">{getBoardName(m.board_id)}</span>
                 </div>
                 {m.referee_name && <div className="flex items-center justify-end gap-2 text-orange-300 min-w-0 overflow-hidden"><PenTool size={16} className="shrink-0" /><span className="truncate text-right" title={m.referee_name}>{m.referee_name}</span></div>}
+                {/* De Bierhalers (Spelers die rust hebben/wachten) */}
+                {!m.is_completed && (
+                    <div className="flex items-center gap-2 text-amber-500/80 text-[11px] animate-pulse">
+                        <span className="truncate">
+                            Bier: {m.beer_fetcher_name || "Handige Peppie"}
+                        </span>
+                        <Beer size={12} className="shrink-0" />
+                    </div>
+                )}
             </div>
             <div className="flex items-center justify-between gap-2">
                 <div className={`text-xl font-bold flex-1 text-right truncate ${m.score_p1 > m.score_p2 && m.is_completed ? 'text-green-400' : 'text-white'}`}>{m.player1_name || 'Bye'}</div>

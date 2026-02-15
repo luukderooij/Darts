@@ -5,7 +5,7 @@ import AdminLayout from '../../components/layout/AdminLayout';
 import { Player, Dartboard } from '../../types';
 import { 
     Trophy, Users, Target, Scissors, Shuffle, UserPlus, 
-    Save, Shield, Plus, X, ArrowRight, ArrowLeft, Dna, AlertTriangle 
+    Save, Shield, Plus, X, ArrowRight, ArrowLeft, Dna, AlertTriangle, Beer
 } from 'lucide-react';
 
 // --- TYPES ---
@@ -64,6 +64,7 @@ const CreateTournament = () => {
     const [sets, setSets] = useState(1);
     const [selectedBoardIds, setSelectedBoardIds] = useState<number[]>([]);
     const [matchesPerPlayer, setMatchesPerPlayer] = useState<number>(5);
+    const [enableBeerFetchers, setEnableBeerFetchers] = useState(false);
 
     // --- LOAD DATA ---
     useEffect(() => {
@@ -272,8 +273,9 @@ const handleStartTournament = async () => {
                 board_ids: selectedBoardIds,
                 player_ids: Array.from(allPlayerIds),
                 
-                // <--- NIEUWE REGEL: Stuur het aantal matches mee als het format juist is
                 matches_per_player: format === 'random_poule' ? matchesPerPlayer : null
+                enable_beer_fetchers: enableBeerFetchers
+
             };
             
             const res = await api.post('/tournaments/', payload);
@@ -550,7 +552,26 @@ const handleStartTournament = async () => {
                                             <span className="text-sm select-none"><b>Borden Hussel</b> (Wedstrijden roteren over borden)</span>
                                         </label>
                                     </div>
-                                </div>
+
+                                    <div className="flex items-center gap-3 p-4 bg-amber-950/30 rounded-lg border border-amber-900/50">
+                                        <input
+                                        type="checkbox"
+                                        id="enableBeerFetchers"
+                                        checked={enableBeerFetchers}
+                                        onChange={(e) => setEnableBeerFetchers(e.target.checked)}
+                                        className="w-5 h-5 rounded border-amber-700 text-amber-500 focus:ring-amber-500"
+                                        />
+                                        <label htmlFor="enableBeerFetchers" className="flex items-center gap-2 cursor-pointer">
+                                        <Beer size={20} className="text-amber-400" />
+                                        <div>
+                                            <span className="font-medium text-amber-100">Bierhaler Functie</span>
+                                            <p className="text-xs text-amber-300/70">
+                                            Spelers die niet spelen of schrijven worden bierhaler
+                                            </p>
+                                        </div>
+                                        </label>
+                                    </div>
+                                    </div>
                             </div>
                         </div>
 
