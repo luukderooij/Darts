@@ -740,6 +740,59 @@ const onDragOver = (e: React.DragEvent) => {
                         </div>
                     </div>
 
+                    {/* SECTIE 1.5: POULE WEDSTRIJD VOLGORDE */}
+{matches.some(m => m.poule_number !== null) && (
+    <div className="border-t pt-6 mt-6">
+        <h3 className="font-bold text-gray-700 mb-3 flex items-center gap-2">
+            <Trophy size={20}/> Poule Wedstrijd Volgorde
+        </h3>
+        <p className="text-xs text-gray-500 mb-4">
+            Sleep de wedstrijden om de speelvolgorde binnen de poules aan te passen.
+        </p>
+        
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {/* Groepeer matches per poule */}
+            {Object.entries(matches.reduce((acc, m) => {
+                if (m.poule_number === null) return acc;
+                if (!acc[m.poule_number]) acc[m.poule_number] = [];
+                acc[m.poule_number].push(m);
+                return acc;
+            }, {} as Record<number, MatchWithUI[]>))
+            .sort(([a], [b]) => Number(a) - Number(b)) // Sorteer op poule nummer
+            .map(([pouleNum, pouleMatches]) => (
+                <div key={pouleNum} className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden flex flex-col">
+                    <div className="bg-gray-100 p-2 font-bold text-gray-700 text-sm border-b">
+                        Poule {pouleNum} - Wedstrijden
+                    </div>
+                    <div className="p-2 space-y-2 flex-1">
+                        {pouleMatches
+                            // Sorteer op ID of een volgorde veld als je dat hebt
+                            .sort((a, b) => a.id - b.id) 
+                            .map((match, idx) => (
+                            <div 
+                                key={match.id}
+                                draggable
+                                onDragStart={(e) => onDragStart(e, 'match', match.id)}
+                                onDragOver={onDragOver}
+                                onDragEnter={onDragOver}
+                                onDrop={(e) => onDropAny(e, 'match', match.id)}
+                                className="draggable-item bg-white border border-gray-200 p-2 rounded text-xs flex justify-between items-center cursor-move hover:shadow hover:border-blue-400 group"
+                            >
+                                <span className="text-gray-400 font-mono w-4">{idx + 1}.</span>
+                                <div className="flex-1 flex justify-between px-2">
+                                    <span className="truncate max-w-[40%]">{match.player1_name}</span>
+                                    <span className="text-gray-400 text-[10px]">vs</span>
+                                    <span className="truncate max-w-[40%] text-right">{match.player2_name}</span>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            ))}
+        </div>
+    </div>
+)}
+
 {/* SECTIE 2: KNOCKOUT (Ronde 1) */}
                     {matches.some(m => m.poule_number === null) && (
                         <div className="border-t pt-6">

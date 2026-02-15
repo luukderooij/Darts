@@ -12,7 +12,7 @@ from app.models.player import Player
 from app.models.team import Team 
 from app.models.tournament import Tournament
 from app.models.user import User
-from app.schemas.match import MatchRead, MatchScoreUpdate
+from app.schemas.match import MatchRead, MatchScoreUpdate, MatchSwapRequest
 from app.api.users import get_current_user
 from app.services.tournament_gen import check_and_advance_knockout
 
@@ -227,3 +227,60 @@ def get_single_match(
     else: m_data['referee_name'] = "-" 
 
     return m_data
+
+
+
+
+@router.post("/{tournament_id}/swap-matches")
+def swap_matches(
+    tournament_id: int,
+    swap_data: MatchSwapRequest,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Wisselt twee wedstrijden van plek (door de spelers/teams te swappen).
+    Dit past de speelvolgorde aan zonder ID's te veranderen.
+    """
+    m1 = session.get(Match, swap_data.match_id_1)
+    m2 = session.get(Match, swap_data.match_id_2)
+
+    if not m1 or not m2:
+        raise HTTPException(status_code=404, detail="Match niet gevonden")
+
+    if m1.tournament_id != tournament_id or m2.tournament_id != tournament_id:
+        raise HTTPException(status_code=400, detail="Matches horen niet bij dit toernooi")
+
+    # Veiligheidscheck: Niet wisselen als er al gescoord is
+    if (m1.is_completed or m1.score_p1 > 0 or m1.score_p2 > 0 or 
+        m2.is_completed or m2.score_p1 > 0 or m2.score_p2 > 0):
+        raise HTTPException(status_code=400, detail="Kan geen wedstrijden wisselen die al gestart zijn.")
+
+    # --- DE SWAP ---
+    # We wisselen de 'inhoud' van de match records, zodat de ID's (en dus de volgorde in de lijst) gelijk blijven.
+    
+    # 1. Tijdelijke opslag van M1 data
+    temp_p1 = m1.player1_id
+    temp_p2 = m1.player2_id
+    temp_t1 = m1.team1_id
+    temp_t2 = m1.team2_id
+    # Eventueel ook round_number wisselen als je op rondes sorteert, 
+    # maar voor poule-volgorde is ID-behoud vaak genoeg.
+
+    # 2. M1 krijgt data van M2
+    m1.player1_id = m2.player1_id
+    m1.player2_id = m2.player2_id
+    m1.team1_id = m2.team1_id
+    m1.team2_id = m2.team2_id
+
+    # 3. M2 krijgt data van M1 (uit temp)
+    m2.player1_id = temp_p1
+    m2.player2_id = temp_p2
+    m2.team1_id = temp_t1
+    m2.team2_id = temp_t2
+
+    session.add(m1)
+    session.add(m2)
+    session.commit()
+
+    return {"status": "success", "message": "Matches gewisseld"}
