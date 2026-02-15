@@ -272,10 +272,8 @@ const handleStartTournament = async () => {
                 sets_per_match: sets,
                 board_ids: selectedBoardIds,
                 player_ids: Array.from(allPlayerIds),
-                
-                matches_per_player: format === 'random_poule' ? matchesPerPlayer : null
+                matches_per_player: format === 'random_poule' ? matchesPerPlayer : null,
                 enable_beer_fetchers: enableBeerFetchers
-
             };
             
             const res = await api.post('/tournaments/', payload);
