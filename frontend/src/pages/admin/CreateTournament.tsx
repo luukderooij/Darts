@@ -138,7 +138,7 @@ const CreateTournament = () => {
         setPoules(suggestedPoules);
         setQualifiersPerPoule(suggestedQualifiers);
 
-    }, [step, allowByes, cart.length]); // Herberekenen als Step, Byes of Aantal deelnemers wijzigt
+    }, [step, allowByes, cart.length, format]); // Herberekenen als Step, Byes of Aantal deelnemers wijzigt
 
 
     // --- ACTIONS: CART ---
@@ -153,6 +153,31 @@ const CreateTournament = () => {
             id: `existing-${team.id}`, type: 'existing_team', name: team.name, players: team.players, teamId: team.id
         }]);
     };
+
+    const addAllGlobalTeams = () => {
+    const teamsToAdd = globalTeams.filter(team => {
+        // Check of het team al in de cart zit
+        const alreadyIn = cart.some(c => c.teamId === team.id);
+        // Check of een van de spelers al in de cart zit (via een ander team of individueel)
+        const hasConflict = team.players.some(p => isPlayerInCart(p.id));
+        
+        return !alreadyIn && !hasConflict;
+    });
+
+    if (teamsToAdd.length === 0) {
+        return alert("Geen nieuwe teams om toe te voegen (of spelers zijn al bezet).");
+    }
+
+    const newCartItems: CartItem[] = teamsToAdd.map(team => ({
+        id: `existing-${team.id}`,
+        type: 'existing_team',
+        name: team.name,
+        players: team.players,
+        teamId: team.id
+    }));
+
+    setCart(prev => [...prev, ...newCartItems]);
+};
 
     const createAdHocTeam = () => {
         if (manualSelection.length !== 2) return;
@@ -345,25 +370,45 @@ const handleStartTournament = async () => {
 
                                 <div className="flex-1 overflow-y-auto p-4 custom-scrollbar bg-white">
                                     {/* ... INHOUD VAN TABS (Doubles/Singles) ... */}
-                                    {participationMode === 'doubles' && activeTab === 'teams' && (
-                                        <div className="space-y-2">
-                                            {globalTeams.map(team => {
-                                                const disabled = team.players.some(p => isPlayerInCart(p.id));
-                                                const alreadyIn = cart.some(c => c.teamId === team.id);
-                                                return (
-                                                    <div key={team.id} className={`flex justify-between items-center p-3 rounded border ${disabled ? 'opacity-50 bg-gray-50' : 'hover:border-blue-400 bg-white'}`}>
-                                                        <div><div className="font-bold text-gray-800">{team.name}</div><div className="text-xs text-gray-500">{team.players.map(p => p.name).join(' & ')}</div></div>
-                                                        <button onClick={() => addGlobalTeamToCart(team)} disabled={disabled} className={`p-2 rounded-full ${alreadyIn ? 'text-green-600' : 'bg-blue-100 text-blue-600'}`}>{alreadyIn ? <Save size={20}/> : <Plus size={20}/>}</button>
-                                                    </div>
-                                                )
-                                            })}
-                                        </div>
-                                    )}
+{participationMode === 'doubles' && activeTab === 'teams' && (
+    <div className="space-y-2">
+        {/* KNOP: ALLE TEAMS TOEVOEGEN */}
+        {globalTeams.length > 0 && (
+            <button 
+                onClick={addAllGlobalTeams}
+                className="w-full mb-4 flex items-center justify-center gap-2 bg-blue-50 text-blue-700 border border-blue-200 py-2 rounded-md hover:bg-blue-100 transition-colors font-semibold text-sm"
+            >
+                <Plus size={16} /> Voeg alle beschikbare teams toe
+            </button>
+        )}
+
+        {/* LIJST BESTAANDE TEAMS */}
+        {globalTeams.map(team => {
+            const disabled = team.players.some(p => isPlayerInCart(p.id));
+            const alreadyIn = cart.some(c => c.teamId === team.id);
+            return (
+                <div key={team.id} className={`flex justify-between items-center p-3 rounded border ${disabled ? 'opacity-50 bg-gray-50' : 'hover:border-blue-400 bg-white'}`}>
+                    <div>
+                        <div className="font-bold text-gray-800">{team.name}</div>
+                        <div className="text-xs text-gray-500">{team.players.map(p => p.name).join(' & ')}</div>
+                    </div>
+                    <button 
+                        onClick={() => addGlobalTeamToCart(team)} 
+                        disabled={disabled} 
+                        className={`p-2 rounded-full ${alreadyIn ? 'text-green-600' : 'bg-blue-100 text-blue-600'}`}
+                    >
+                        {alreadyIn ? <Save size={20}/> : <Plus size={20}/>}
+                    </button>
+                </div>
+            );
+        })}
+    </div>
+)}
 
                                     {participationMode === 'doubles' && activeTab === 'players' && (
                                         <div className="space-y-6">
                                             <div className="bg-purple-50 p-4 rounded border border-purple-100">
-                                                <h4 className="font-bold text-purple-800 text-sm mb-2 flex items-center gap-2"><Shuffle size={16}/> Random Vullling</h4>
+                                                <h4 className="font-bold text-purple-800 text-sm mb-2 flex items-center gap-2"><Shuffle size={16}/> Random Vulling</h4>
                                                 <button onClick={generateRandomTeams} className="w-full bg-white border border-purple-300 text-purple-700 font-bold py-2 rounded hover:bg-purple-100 text-sm">Genereer Random Teams</button>
                                             </div>
                                             <div>
