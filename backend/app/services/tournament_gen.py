@@ -1,3 +1,4 @@
+# backend/app/services/tournament_gen.py
 import math
 import random
 import functools
@@ -247,14 +248,55 @@ def calculate_poule_standings(session: Session, tournament: Tournament) -> Dict[
             
             poule_list.sort(key=functools.cmp_to_key(lambda a, b: compare_entities(a, b, p_num)), reverse=True)
 
-            # Detecteer gelijke statistieken (Shootout nodig)
-            for i in range(len(poule_list) - 1):
-                p1 = poule_list[i]
-                p2 = poule_list[i+1]
-                if p1["points"] == p2["points"] and p1["leg_diff"] == p2["leg_diff"]:
-                    poule_list[i]["needs_shootout"] = True
-                    poule_list[i+1]["needs_shootout"] = True
+            total_matches_needed = len(poule_list) - 1
+            poule_finished = all(p["played"] >= total_matches_needed for p in poule_list)
 
+            if poule_finished:
+                # Stap 2: Groepeer spelers op basis van Punten & Leg-Saldo
+                # Dit zijn de 'harde' stats. Als die gelijk zijn, kijken we naar H2H.
+                groups = {}
+                for p in poule_list:
+                    key = (p["points"], p["leg_diff"])
+                    if key not in groups:
+                        groups[key] = []
+                    groups[key].append(p)
+
+                # Stap 3: Analyseer elke groep die groter is dan 1 persoon
+                for key, group in groups.items():
+                    if len(group) > 1:
+                        # We bouwen een mini-stand op van ALLEEN onderlinge wedstrijden in deze groep
+                        internal_wins = {p["id"]: 0 for p in group}
+                        
+                        # Check elke mogelijke match binnen de groep
+                        for i in range(len(group)):
+                            for j in range(i + 1, len(group)):
+                                p_a = group[i]
+                                p_b = group[j]
+                                
+                                # Haal winnaar uit de eerder gemaakte h2h tabel
+                                pair = tuple(sorted([p_a["id"], p_b["id"]]))
+                                winner_id = h2h_winners.get((p_num, pair))
+
+                                if winner_id == p_a["id"]:
+                                    internal_wins[p_a["id"]] += 1
+                                elif winner_id == p_b["id"]:
+                                    internal_wins[p_b["id"]] += 1
+
+                        # Stap 4: Conclusie trekken
+                        # Een shootout is nodig als IEDEREEN in de groep evenveel interne winstpunten heeft.
+                        # Bijv: Bij 3 spelers heeft iedereen 1x gewonnen (Cirkel).
+                        # Als er 1 iemand alles won, heeft die 2 punten en de rest 1 of 0 -> Geen shootout.
+                        
+                        wins_values = list(internal_wins.values())
+                        
+                        # Zijn alle waarden in de lijst identiek? (bv. [1, 1, 1])
+                        is_deadlock = len(set(wins_values)) == 1
+                        
+                        if is_deadlock:
+                            for p in group:
+                                p["needs_shootout"] = True
+
+            # Sla op in de final standings
             final_standings[p_num] = poule_list
         else:
             final_standings[p_num] = []

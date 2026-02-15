@@ -41,6 +41,10 @@ class MatchRead(BaseModel):
     class Config:
         from_attributes = True
 
+class MatchSwapRequest(BaseModel):
+    match_id_1: int
+    match_id_2: int
+      
 class MatchBeerFetcherUpdate(BaseModel):
     beer_fetcher_id: Optional[int] = None
     beer_fetcher_team_id: Optional[int] = None

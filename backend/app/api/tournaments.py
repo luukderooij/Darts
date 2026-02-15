@@ -1,6 +1,7 @@
 # FILE: backend/app/api/tournaments.py
 import uuid
 import math 
+import random
 from typing import List, Optional, Any, Dict
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select
@@ -17,6 +18,7 @@ from app.models.dartboard import Dartboard
 from app.models.team import Team
 from app.api.users import get_current_user
 from app.models.links import TournamentTeamLink
+from app.services.scheduler_random import generate_random_schedule
 
 from app.schemas.tournament import (
     TournamentCreate, 
@@ -178,7 +180,18 @@ def create_tournament(
                     sets_best_of=tournament.sets_per_match,
                     session=session
                 )
-        
+            elif tournament.format == "random_poule":
+            # Fallback als het null is (bijv 5)
+                target_matches = tournament.matches_per_player if tournament.matches_per_player else 5
+                
+                generate_random_schedule(
+                    tournament_id=tournament.id,
+                    players=players_to_link, # Dit is de lijst spelers die je al opbouwt in de functie
+                    matches_per_player=target_matches,
+                    legs_best_of=tournament.starting_legs_group,
+                    sets_best_of=tournament.sets_per_match,
+                    session=session
+                )
     return tournament
 
 
@@ -545,11 +558,9 @@ def finalize_tournament_setup(
     verify_tournament_access(tournament, current_user)
 
     if tournament.mode == "singles":
-        # Bij singles laten we de bestaande logica intact (of je roept hier je oude singles logica aan)
-        # Als je hier ook een fix nodig hebt, laat het weten, maar je vroeg specifiek om teams.
         return {"message": "Already generated (singles)"}
 
-    # --- TEAMS LOGICA ---
+    # --- TEAMS OPHALEN ---
     teams = session.exec(
         select(Team)
         .join(TournamentTeamLink)
@@ -559,80 +570,180 @@ def finalize_tournament_setup(
     if len(teams) < 2:
         raise HTTPException(status_code=400, detail="Te weinig teams.")
 
-    # Oude matches wissen
+    # Oude matches wissen (Reset)
     existing_matches = session.exec(select(Match).where(Match.tournament_id == tournament_id)).all()
     for m in existing_matches:
         session.delete(m)
     
     boards = sorted(tournament.boards, key=lambda b: b.number) if tournament.boards else []
-    num_poules = tournament.number_of_poules
-    poules = [[] for _ in range(num_poules)]
-    
-    for i, team in enumerate(teams):
-        poules[i % num_poules].append(team)
-
     matches_created = []
-    
-    for poule_idx, poule_teams in enumerate(poules):
-        poule_number = poule_idx + 1
+
+    # =========================================================
+    # LOGICA TAK 1: SUPER LEAGUE (RANDOM)
+    # Hier gebruiken we jouw input (1, 5, 10, etc.)
+    # =========================================================
+    if tournament.format == "random_poule":
+        # Dit getal komt uit jouw frontend input
+        matches_pp = tournament.matches_per_player if tournament.matches_per_player else 1
         
-        # ROUND ROBIN GENERATIE (Zodat we rondes hebben voor de hussel)
-        rotation = list(poule_teams)
-        if len(rotation) % 2 != 0:
-            rotation.append(None) # Bye
+        # We proberen 10x een geldige indeling te maken (retry mechanisme)
+        best_schedule = []
         
-        num_rotation = len(rotation)
-        num_rounds = num_rotation - 1
-        half = num_rotation // 2
-        
-        for round_idx in range(num_rounds):
-            round_num = round_idx + 1
-            for i in range(half):
-                t1 = rotation[i]
-                t2 = rotation[num_rotation - 1 - i]
+        for attempt in range(10):
+            temp_matches = []
+            pot = []
+            
+            # --- DE GRABBELTON ---
+            # Elk team gaat 'matches_pp' keer in de pot.
+            # Bij 20 teams en 1 match pp -> pot lengte 20.
+            # Bij 20 teams en 5 match pp -> pot lengte 100.
+            
+            # Correctie: Als totaal aantal tickets oneven is, moet er 1 af.
+            total_slots = len(teams) * matches_pp
+            correction = 1 if total_slots % 2 != 0 else 0
+
+            for i, team in enumerate(teams):
+                count = matches_pp
+                # Als het totaal oneven is, krijgt het laatste team 1 wedstrijd minder
+                if correction > 0 and i == len(teams) - 1:
+                    count -= 1
+                pot.extend([team] * count)
+            
+            random.shuffle(pot)
+            
+            valid_attempt = True
+            while len(pot) >= 2:
+                t1 = pot.pop(0)
                 
-                if t1 and t2:
-                    match = Match(
+                # Zoek de eerste tegenstander in de pot die niet zichzelf is
+                opponent_idx = -1
+                for idx, candidate in enumerate(pot):
+                    if candidate.id != t1.id:
+                        opponent_idx = idx
+                        break
+                
+                if opponent_idx != -1:
+                    t2 = pot.pop(opponent_idx)
+                    
+                    # Match maken
+                    m = Match(
                         tournament_id=tournament.id,
-                        poule_number=poule_number,
-                        board_number=None, # Wordt hieronder toegewezen
+                        poule_number=1, # Super League is 1 grote poule
+                        round_number=1, # Wordt hieronder verdeeld
                         team1_id=t1.id,
                         team2_id=t2.id,
-                        round_number=round_num,
                         best_of_legs=tournament.starting_legs_group,
-                        best_of_sets=tournament.sets_per_match
+                        best_of_sets=tournament.sets_per_match,
+                        is_completed=False,
+                        score_p1=0, score_p2=0
                     )
-                    matches_created.append(match)
+                    temp_matches.append(m)
+                else:
+                    # Alleen nog maar tickets van t1 over in de pot -> Deadlock
+                    valid_attempt = False
+                    break
             
-            rotation.insert(1, rotation.pop())
+            if valid_attempt:
+                matches_created = temp_matches
+                break # Gelukt!
+        
+        # Spreiding over rondes (zodat team A niet 5x achter elkaar speelt in ronde 1)
+        # We schatten dat er (Aantal Teams / 2) wedstrijden tegelijk gespeeld kunnen worden.
+        chunk_size = max(1, len(teams) // 2)
+        for i, match in enumerate(matches_created):
+            match.round_number = (i // chunk_size) + 1
 
-    # BORD TOEWIJZING (Hussel of Vast)
-    if len(boards) > num_poules or tournament.shuffle_boards:
+    # =========================================================
+    # LOGICA TAK 2: STANDAARD POULES / ROUND ROBIN
+    # Dit wordt gebruikt als je NIET voor random_poule kiest
+    # =========================================================
+    else:
+        num_poules = tournament.number_of_poules
+        poules = [[] for _ in range(num_poules)]
+        
+        for i, team in enumerate(teams):
+            poules[i % num_poules].append(team)
+
+        for poule_idx, poule_teams in enumerate(poules):
+            poule_number = poule_idx + 1
+            
+            # Round Robin generator
+            rotation = list(poule_teams)
+            if len(rotation) % 2 != 0:
+                rotation.append(None) # Bye
+            
+            num_rotation = len(rotation)
+            num_rounds = num_rotation - 1
+            half = num_rotation // 2
+            
+            for round_idx in range(num_rounds):
+                round_num = round_idx + 1
+                for i in range(half):
+                    t1 = rotation[i]
+                    t2 = rotation[num_rotation - 1 - i]
+                    
+                    if t1 and t2:
+                        match = Match(
+                            tournament_id=tournament.id,
+                            poule_number=poule_number,
+                            team1_id=t1.id,
+                            team2_id=t2.id,
+                            round_number=round_num,
+                            best_of_legs=tournament.starting_legs_group,
+                            best_of_sets=tournament.sets_per_match
+                        )
+                        matches_created.append(match)
+            
+                rotation.insert(1, rotation.pop())
+
+    # =========================================================
+    # BORDEN & SCHRIJVERS (Geldt voor beide logica's)
+    # =========================================================
+    
+    # 1. Borden toewijzen
+    # Bij random poule of hussel: verdeel dynamisch
+    if tournament.format == 'random_poule' or len(boards) > tournament.number_of_poules or tournament.shuffle_boards:
         matches_created.sort(key=lambda m: (m.round_number, m.poule_number))
         for i, match in enumerate(matches_created):
+            if not boards: break
             offset = (match.round_number - 1) if tournament.shuffle_boards else 0
             board_idx = (i + offset) % len(boards)
             match.board_number = boards[board_idx].number
     else:
+        # Vaste toewijzing (Poule 1 -> Bord 1)
         for match in matches_created:
-            if match.poule_number <= len(boards):
+            if match.poule_number and match.poule_number <= len(boards):
                 match.board_number = boards[match.poule_number - 1].number
 
-    # SCHRIJVERS TOEWIJZEN (Per poule)
-    matches_by_poule = {i: [] for i in range(1, num_poules + 1)}
-    for m in matches_created:
-        matches_by_poule[m.poule_number].append(m)
-        
-    for poule_idx, poule_teams in enumerate(poules):
-        p_num = poule_idx + 1
-        pm = matches_by_poule[p_num]
+    # 2. Schrijvers toewijzen
+    matches_by_poule = {}
+    teams_by_poule = {}
+
+    if tournament.format == 'random_poule':
+        # Bij random is iedereen beschikbaar als schrijver voor iedereen
+        matches_by_poule[1] = matches_created
+        teams_by_poule[1] = teams
+    else:
+        # Bij normale poules schrijft je eigen poule
+        for i in range(1, tournament.number_of_poules + 1):
+            matches_by_poule[i] = [m for m in matches_created if m.poule_number == i]
+            # Zoek teams die in deze poule zitten
+            poule_team_ids = set()
+            for m in matches_by_poule[i]:
+                if m.team1_id: poule_team_ids.add(m.team1_id)
+                if m.team2_id: poule_team_ids.add(m.team2_id)
+            teams_by_poule[i] = [t for t in teams if t.id in poule_team_ids]
+
+    for p_num, pm in matches_by_poule.items():
+        if not pm: continue
         pm.sort(key=lambda m: m.round_number)
-        assign_referees(pm, poule_teams, is_doubles=True)
+        pool_participants = teams_by_poule.get(p_num, [])
+        assign_referees(pm, pool_participants, is_doubles=True)
 
     session.add_all(matches_created)
-
     session.commit()
-    return {"message": f"Setup finalized. Matches generated."}
+    
+    return {"message": f"Setup finalized. {len(matches_created)} matches generated."}
 
 
 # 2. READ FUNCTIE (Stuurt de naam naar de Frontend)

@@ -63,6 +63,7 @@ const CreateTournament = () => {
     const [koLegs, setKoLegs] = useState(3);
     const [sets, setSets] = useState(1);
     const [selectedBoardIds, setSelectedBoardIds] = useState<number[]>([]);
+    const [matchesPerPlayer, setMatchesPerPlayer] = useState<number>(5);
     const [enableBeerFetchers, setEnableBeerFetchers] = useState(false);
 
     // --- LOAD DATA ---
@@ -97,6 +98,14 @@ const CreateTournament = () => {
         const count = cart.length;
         if (count < 2) return;
 
+        if (format === 'random_poule') {
+            setPoules(1); // Altijd 1 poule
+            // Zet een standaard aantal qualifiers (bijv. top 30-50%)
+            const suggestedQualifiers = Math.max(4, Math.floor(count / 2));
+            setQualifiersPerPoule(suggestedQualifiers);
+            return; // Stop hier, forceer de rest niet
+        }
+
         // REGEL 1: Max 7 spelers in 1 poule
         // 7 spelers = 1 poule. 8 spelers = 2 poules. 15 spelers = 3 poules.
         let suggestedPoules = Math.ceil(count / 7);
@@ -130,7 +139,7 @@ const CreateTournament = () => {
         setPoules(suggestedPoules);
         setQualifiersPerPoule(suggestedQualifiers);
 
-    }, [step, allowByes, cart.length]); // Herberekenen als Step, Byes of Aantal deelnemers wijzigt
+    }, [step, allowByes, cart.length, format]); // Herberekenen als Step, Byes of Aantal deelnemers wijzigt
 
 
     // --- ACTIONS: CART ---
@@ -145,6 +154,31 @@ const CreateTournament = () => {
             id: `existing-${team.id}`, type: 'existing_team', name: team.name, players: team.players, teamId: team.id
         }]);
     };
+
+    const addAllGlobalTeams = () => {
+    const teamsToAdd = globalTeams.filter(team => {
+        // Check of het team al in de cart zit
+        const alreadyIn = cart.some(c => c.teamId === team.id);
+        // Check of een van de spelers al in de cart zit (via een ander team of individueel)
+        const hasConflict = team.players.some(p => isPlayerInCart(p.id));
+        
+        return !alreadyIn && !hasConflict;
+    });
+
+    if (teamsToAdd.length === 0) {
+        return alert("Geen nieuwe teams om toe te voegen (of spelers zijn al bezet).");
+    }
+
+    const newCartItems: CartItem[] = teamsToAdd.map(team => ({
+        id: `existing-${team.id}`,
+        type: 'existing_team',
+        name: team.name,
+        players: team.players,
+        teamId: team.id
+    }));
+
+    setCart(prev => [...prev, ...newCartItems]);
+};
 
     const createAdHocTeam = () => {
         if (manualSelection.length !== 2) return;
@@ -209,7 +243,9 @@ const CreateTournament = () => {
 
 
     // --- SUBMIT ---
-    const handleStartTournament = async () => {
+const handleStartTournament = async () => {
+        // VALIDATIE CHECK
+        // Bij random_poule is 'poules' 1. Als je meer dan 0 borden hebt, gaat dit goed.
         if (selectedBoardIds.length < poules) {
             if (!confirm(`LET OP: Je hebt ${poules} poules maar slechts ${selectedBoardIds.length} borden. Elke poule zou idealiter zijn eigen bord moeten hebben. Wil je toch doorgaan?`)) {
                 return;
@@ -221,14 +257,23 @@ const CreateTournament = () => {
             const allPlayerIds = new Set<number>();
             cart.forEach(item => item.players.forEach(p => allPlayerIds.add(p.id)));
 
+            // HIER IS DE WIJZIGING:
             const payload = {
                 name: name.trim() === "" ? defaultName : name,
-                date, format, mode: participationMode, allow_byes: allowByes, 
+                date, 
+                format, 
+                mode: participationMode, 
+                allow_byes: allowByes, 
                 shuffle_boards: shuffleBoards,
-                number_of_poules: poules, qualifiers_per_poule: qualifiersPerPoule,
-                starting_legs_group: groupLegs, starting_legs_ko: koLegs, sets_per_match: sets,
+                number_of_poules: poules, 
+                qualifiers_per_poule: qualifiersPerPoule,
+                starting_legs_group: groupLegs, 
+                starting_legs_ko: koLegs, 
+                sets_per_match: sets,
                 board_ids: selectedBoardIds,
                 player_ids: Array.from(allPlayerIds),
+                
+                matches_per_player: format === 'random_poule' ? matchesPerPlayer : null
                 enable_beer_fetchers: enableBeerFetchers
 
             };
@@ -236,6 +281,7 @@ const CreateTournament = () => {
             const res = await api.post('/tournaments/', payload);
             const tournamentId = res.data.id;
 
+            // ... De rest van je logica voor doubles en teams blijft exact hetzelfde ...
             if (participationMode === 'doubles') {
                 const existingIds = cart.filter(c => c.type === 'existing_team').map(c => c.teamId as number);
                 if (existingIds.length > 0) {
@@ -251,6 +297,7 @@ const CreateTournament = () => {
                 }
                 await api.post(`/tournaments/${tournamentId}/finalize`);
             } 
+            
             navigate(`/dashboard/tournament/${tournamentId}`);
 
         } catch (err: any) {
@@ -325,25 +372,45 @@ const CreateTournament = () => {
 
                                 <div className="flex-1 overflow-y-auto p-4 custom-scrollbar bg-white">
                                     {/* ... INHOUD VAN TABS (Doubles/Singles) ... */}
-                                    {participationMode === 'doubles' && activeTab === 'teams' && (
-                                        <div className="space-y-2">
-                                            {globalTeams.map(team => {
-                                                const disabled = team.players.some(p => isPlayerInCart(p.id));
-                                                const alreadyIn = cart.some(c => c.teamId === team.id);
-                                                return (
-                                                    <div key={team.id} className={`flex justify-between items-center p-3 rounded border ${disabled ? 'opacity-50 bg-gray-50' : 'hover:border-blue-400 bg-white'}`}>
-                                                        <div><div className="font-bold text-gray-800">{team.name}</div><div className="text-xs text-gray-500">{team.players.map(p => p.name).join(' & ')}</div></div>
-                                                        <button onClick={() => addGlobalTeamToCart(team)} disabled={disabled} className={`p-2 rounded-full ${alreadyIn ? 'text-green-600' : 'bg-blue-100 text-blue-600'}`}>{alreadyIn ? <Save size={20}/> : <Plus size={20}/>}</button>
-                                                    </div>
-                                                )
-                                            })}
-                                        </div>
-                                    )}
+{participationMode === 'doubles' && activeTab === 'teams' && (
+    <div className="space-y-2">
+        {/* KNOP: ALLE TEAMS TOEVOEGEN */}
+        {globalTeams.length > 0 && (
+            <button 
+                onClick={addAllGlobalTeams}
+                className="w-full mb-4 flex items-center justify-center gap-2 bg-blue-50 text-blue-700 border border-blue-200 py-2 rounded-md hover:bg-blue-100 transition-colors font-semibold text-sm"
+            >
+                <Plus size={16} /> Voeg alle beschikbare teams toe
+            </button>
+        )}
+
+        {/* LIJST BESTAANDE TEAMS */}
+        {globalTeams.map(team => {
+            const disabled = team.players.some(p => isPlayerInCart(p.id));
+            const alreadyIn = cart.some(c => c.teamId === team.id);
+            return (
+                <div key={team.id} className={`flex justify-between items-center p-3 rounded border ${disabled ? 'opacity-50 bg-gray-50' : 'hover:border-blue-400 bg-white'}`}>
+                    <div>
+                        <div className="font-bold text-gray-800">{team.name}</div>
+                        <div className="text-xs text-gray-500">{team.players.map(p => p.name).join(' & ')}</div>
+                    </div>
+                    <button 
+                        onClick={() => addGlobalTeamToCart(team)} 
+                        disabled={disabled} 
+                        className={`p-2 rounded-full ${alreadyIn ? 'text-green-600' : 'bg-blue-100 text-blue-600'}`}
+                    >
+                        {alreadyIn ? <Save size={20}/> : <Plus size={20}/>}
+                    </button>
+                </div>
+            );
+        })}
+    </div>
+)}
 
                                     {participationMode === 'doubles' && activeTab === 'players' && (
                                         <div className="space-y-6">
                                             <div className="bg-purple-50 p-4 rounded border border-purple-100">
-                                                <h4 className="font-bold text-purple-800 text-sm mb-2 flex items-center gap-2"><Shuffle size={16}/> Random Vullling</h4>
+                                                <h4 className="font-bold text-purple-800 text-sm mb-2 flex items-center gap-2"><Shuffle size={16}/> Random Vulling</h4>
                                                 <button onClick={generateRandomTeams} className="w-full bg-white border border-purple-300 text-purple-700 font-bold py-2 rounded hover:bg-purple-100 text-sm">Genereer Random Teams</button>
                                             </div>
                                             <div>
@@ -400,7 +467,7 @@ const CreateTournament = () => {
                     </div>
                 )}
 
-                {/* --- STEP 3: SETTINGS --- */}
+{/* --- STEP 3: SETTINGS --- */}
                 {step === 3 && (
                     <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 animate-fade-in">
                         <div className="lg:col-span-8 space-y-6">
@@ -419,11 +486,12 @@ const CreateTournament = () => {
                                     <AlertTriangle className="shrink-0 mt-0.5" />
                                     <div>
                                         <p className="font-bold text-sm">Let op: Te weinig borden</p>
-                                        <p className="text-xs mt-1">Je hebt {poules} poules, maar slechts {selectedBoardIds.length} borden geselecteerd. Het advies is minimaal 1 bord per poule.</p>
+                                        <p className="text-xs mt-1">Je hebt {poules} poule(s), maar slechts {selectedBoardIds.length} borden geselecteerd. Het advies is minimaal 1 bord per poule.</p>
                                     </div>
                                 </div>
                             )}
 
+                            {/* ALGEMEEN */}
                             <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
                                 <h3 className="font-bold text-gray-700 mb-4 border-b pb-2">Algemeen</h3>
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -432,6 +500,7 @@ const CreateTournament = () => {
                                 </div>
                             </div>
 
+                            {/* FORMAT SELECTIE */}
                             <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
                                 <h3 className="font-bold text-gray-700 mb-4 border-b pb-2">Format</h3>
                                 <div className="space-y-4">
@@ -439,21 +508,49 @@ const CreateTournament = () => {
                                         <option value="hybrid">Hybride (Poules + Knockout)</option>
                                         <option value="knockout">Direct Knockout</option>
                                         <option value="round_robin">Alleen Poules</option>
+                                        <option value="random_poule">Super League (Random Matches)</option>
                                     </select>
                                     
+                                    {/* OPTIES VOOR HYBRIDE */}
                                     {format === 'hybrid' && (
                                         <div className="grid grid-cols-2 gap-4 bg-gray-50 p-4 rounded border">
                                             <div><label className={LABEL_STYLE}>Aantal Poules</label><input type="number" min="1" max={cart.length} className={INPUT_STYLE} value={poules} onChange={e => setPoules(parseInt(e.target.value))} /></div>
                                             <div><label className={LABEL_STYLE}>Qualifiers per Poule</label><input type="number" min="1" className={INPUT_STYLE} value={qualifiersPerPoule} onChange={e => setQualifiersPerPoule(parseInt(e.target.value))} /></div>
                                         </div>
                                     )}
-                                    <div className="flex items-center gap-2 p-2 rounded hover:bg-gray-50 transition cursor-pointer" onClick={() => setAllowByes(!allowByes)}>
-                                        <input type="checkbox" checked={allowByes} onChange={e => setAllowByes(e.target.checked)} className="w-4 h-4 cursor-pointer" />
-                                        <span className="text-sm select-none">Sta <b>Byes</b> toe (Vrijloting) - <i>Iedereen gaat door naar KO</i></span>
-                                    </div>
-                                    <div className="flex items-center gap-2 p-2 rounded hover:bg-gray-50 transition cursor-pointer" onClick={() => setShuffleBoards(!shuffleBoards)}>
-                                        <input type="checkbox" checked={shuffleBoards} onChange={e => setShuffleBoards(e.target.checked)} className="w-4 h-4 cursor-pointer" />
-                                        <span className="text-sm select-none"><b>Borden Hussel</b> (Wedstrijden roteren over borden)</span>
+
+                                    {/* OPTIES VOOR SUPER LEAGUE (RANDOM) */}
+                                    {format === 'random_poule' && (
+                                        <div className="bg-blue-50 p-4 rounded border border-blue-200 space-y-3">
+                                            <h4 className="font-bold text-blue-900 text-sm flex items-center gap-2">Instellingen Super League</h4>
+                                            <div className="grid grid-cols-2 gap-4">
+                                                <div>
+                                                    <label className={LABEL_STYLE}>Wedstrijden p.p.</label>
+                                                    <input type="number" min="1" max={cart.length - 1} className={INPUT_STYLE} value={matchesPerPlayer} onChange={e => setMatchesPerPlayer(parseInt(e.target.value) || 1)} />
+                                                </div>
+                                                <div>
+                                                    <label className={LABEL_STYLE}>Naar Knockout</label>
+                                                    <input type="number" min="2" max={cart.length} className={INPUT_STYLE} value={qualifiersPerPoule} onChange={e => setQualifiersPerPoule(parseInt(e.target.value) || 4)} />
+                                                </div>
+                                            </div>
+                                            {(cart.length * matchesPerPlayer) % 2 !== 0 && (
+                                                <div className="text-xs text-orange-600 bg-orange-100 p-2 rounded border border-orange-200">
+                                                    ⚠️ Let op: Totaal aantal slots is oneven. Eén speler speelt een wedstrijd minder/meer.
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+
+                                    {/* ALGEMENE CHECKBOXES */}
+                                    <div className="space-y-2 pt-2">
+                                        <label className="flex items-center gap-2 p-2 rounded hover:bg-gray-50 transition cursor-pointer">
+                                            <input type="checkbox" checked={allowByes} onChange={e => setAllowByes(e.target.checked)} className="w-4 h-4 cursor-pointer" />
+                                            <span className="text-sm select-none">Sta <b>Byes</b> toe (Vrijloting) - <i>Automatisch door naar volgende ronde</i></span>
+                                        </label>
+                                        <label className="flex items-center gap-2 p-2 rounded hover:bg-gray-50 transition cursor-pointer">
+                                            <input type="checkbox" checked={shuffleBoards} onChange={e => setShuffleBoards(e.target.checked)} className="w-4 h-4 cursor-pointer" />
+                                            <span className="text-sm select-none"><b>Borden Hussel</b> (Wedstrijden roteren over borden)</span>
+                                        </label>
                                     </div>
 
                                     <div className="flex items-center gap-3 p-4 bg-amber-950/30 rounded-lg border border-amber-900/50">
@@ -478,6 +575,7 @@ const CreateTournament = () => {
                             </div>
                         </div>
 
+                        {/* RECHTERKOLOM (Match Instellingen & Borden) */}
                         <div className="lg:col-span-4 space-y-6">
                             <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
                                 <h3 className="font-bold text-gray-700 mb-4 border-b pb-2">Wedstrijd Instellingen</h3>
@@ -486,16 +584,17 @@ const CreateTournament = () => {
                                     <div><label className={LABEL_STYLE}>KO (Best of)</label><input type="number" className={INPUT_STYLE} value={koLegs} onChange={e => setKoLegs(Number(e.target.value))}/></div>
                                 </div>
                                 <label className={LABEL_STYLE}>Borden ({selectedBoardIds.length})</label>
-                                <div className="max-h-40 overflow-y-auto border rounded p-2 bg-gray-50">
+                                <div className="max-h-60 overflow-y-auto border rounded p-2 bg-gray-50 space-y-1">
                                     {allBoards.map(board => (
-                                        <label key={board.id} className="flex items-center p-2 hover:bg-white rounded cursor-pointer">
-                                            <input type="checkbox" className="mr-3" checked={selectedBoardIds.includes(board.id)} onChange={() => toggleBoard(board.id)} />
+                                        <label key={board.id} className="flex items-center p-2 hover:bg-white rounded cursor-pointer border border-transparent hover:border-gray-200">
+                                            <input type="checkbox" className="mr-3 h-4 w-4 text-green-600 rounded focus:ring-green-500" checked={selectedBoardIds.includes(board.id)} onChange={() => toggleBoard(board.id)} />
                                             <span className="text-sm">Bord {board.number} {board.name ? `(${board.name})` : ''}</span>
                                         </label>
                                     ))}
                                 </div>
                             </div>
                             
+                            {/* ACTIE KNOPPEN */}
                             <div className="flex gap-2">
                                 <button onClick={() => setStep(2)} className="px-4 py-3 rounded-lg border text-gray-600 font-bold hover:bg-gray-50"><ArrowLeft size={20}/></button>
                                 <button onClick={handleStartTournament} disabled={loading} className="flex-1 bg-green-600 text-white font-bold py-4 rounded-lg hover:bg-green-700 transition shadow-lg flex justify-center items-center gap-2 disabled:opacity-50">

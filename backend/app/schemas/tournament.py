@@ -29,6 +29,8 @@ class TournamentCreate(BaseModel):
     starting_legs_group: int = 3
     starting_legs_ko: int = 5
     sets_per_match: int = 1
+
+    matches_per_player: Optional[int] = None
     
     # IDs voor relaties
     player_ids: List[int]
@@ -65,6 +67,8 @@ class TournamentRead(BaseModel):
     qualifiers_per_poule: int = 2
     starting_legs_group: int = 3
     starting_legs_ko: int = 5
+
+    matches_per_player: Optional[int] = None
     
     # Counts
     player_count: int = 0
