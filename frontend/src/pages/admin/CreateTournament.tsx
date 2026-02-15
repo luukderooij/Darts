@@ -549,24 +549,9 @@ const handleStartTournament = async () => {
                                             <input type="checkbox" checked={shuffleBoards} onChange={e => setShuffleBoards(e.target.checked)} className="w-4 h-4 cursor-pointer" />
                                             <span className="text-sm select-none"><b>Borden Hussel</b> (Wedstrijden roteren over borden)</span>
                                         </label>
-                                    </div>
-
-                                    <div className="flex items-center gap-3 p-4 bg-amber-950/30 rounded-lg border border-amber-900/50">
-                                        <input
-                                        type="checkbox"
-                                        id="enableBeerFetchers"
-                                        checked={enableBeerFetchers}
-                                        onChange={(e) => setEnableBeerFetchers(e.target.checked)}
-                                        className="w-5 h-5 rounded border-amber-700 text-amber-500 focus:ring-amber-500"
-                                        />
-                                        <label htmlFor="enableBeerFetchers" className="flex items-center gap-2 cursor-pointer">
-                                        <Beer size={20} className="text-amber-400" />
-                                        <div>
-                                            <span className="font-medium text-amber-100">Bierhaler Functie</span>
-                                            <p className="text-xs text-amber-300/70">
-                                            Spelers die niet spelen of schrijven worden bierhaler
-                                            </p>
-                                        </div>
+                                        <label className="flex items-center gap-2 p-2 rounded hover:bg-gray-50 transition cursor-pointer">
+                                            <input type="checkbox" checked={enableBeerFetchers} onChange={e => setEnableBeerFetchers(e.target.checked)} className="w-4 h-4 cursor-pointer" />
+                                            <span className="text-sm select-none"><b>Bierhaler Functie</b> (Spelers die niet spelen/schrijven halen bier)</span>
                                         </label>
                                     </div>
                                     </div>
