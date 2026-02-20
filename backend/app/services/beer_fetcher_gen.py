@@ -2,7 +2,7 @@
 Beer Fetcher Generation Logic
 Assigns beer fetchers to matches based on availability (players not playing or refereeing)
 """
-
+import random
 from typing import List, Union, Optional
 from sqlmodel import Session, select
 from app.models.match import Match
@@ -129,95 +129,36 @@ def assign_beer_fetchers_to_round(
     session.commit()
 
 
-def assign_beer_fetchers_to_tournament(
-    session: Session,
-    tournament_id: int
-) -> None:
-    """
-    Hoofdfunctie: Wijst bierhalers toe aan ALLE rondes in een toernooi.
-    
-    Deze functie wordt aangeroepen na het genereren van matches en schrijvers.
-    
-    Args:
-        session: Database sessie
-        tournament_id: ID van het toernooi
-    """
-    # Haal tournament op
+def assign_beer_fetchers_to_tournament(session: Session, tournament_id: int):
     tournament = session.get(Tournament, tournament_id)
-    if not tournament:
-        raise ValueError(f"Tournament {tournament_id} not found")
-    
-    # Check of bierhaler functie is ingeschakeld
-    if not tournament.enable_beer_fetchers:
-        print(f"ℹ️  Bierhaler functie is uitgeschakeld voor toernooi '{tournament.name}'")
-        return
-    
-    print(f"\n🍺 === BIERHALER TOEWIJZING START ===")
-    print(f"Toernooi: {tournament.name}")
-    print(f"Mode: {tournament.mode}")
-    
-    # Haal alle matches op
-    all_matches = session.exec(
-        select(Match)
-        .where(Match.tournament_id == tournament_id)
-        .order_by(Match.round_number, Match.id)
-    ).all()
-    
-    if not all_matches:
-        print("⚠️  Geen matches gevonden om bierhalers aan toe te wijzen")
-        return
-    
-    # Haal alle deelnemers op
-    if tournament.mode == "singles":
-        # Voor singles: alle players die aan dit tournament gekoppeld zijn
-        player_ids = set()
-        for match in all_matches:
-            if match.player1_id:
-                player_ids.add(match.player1_id)
-            if match.player2_id:
-                player_ids.add(match.player2_id)
+    if not tournament: return
+
+    rounds = tournament.rounds
+    all_participants = tournament.teams if tournament.mode == "doubles" else tournament.players
+
+    for round_obj in rounds:
+        round_matches = round_obj.matches
+        # Wie is er vrij in dit hele tijdblok?
+        available = get_available_beer_fetchers(round_matches, all_participants, tournament.mode)
         
-        all_players = session.exec(
-            select(Player).where(Player.id.in_(player_ids))
-        ).all()
-        participants = list(all_players)
-    else:  # doubles
-        # Voor doubles: alle teams
-        team_ids = set()
-        for match in all_matches:
-            if match.team1_id:
-                team_ids.add(match.team1_id)
-            if match.team2_id:
-                team_ids.add(match.team2_id)
-        
-        all_teams = session.exec(
-            select(Team).where(Team.id.in_(team_ids))
-        ).all()
-        participants = list(all_teams)
+        if not available:
+            continue
+
+        # Schud de beschikbare mensen zodat niet altijd dezelfde als eerste wordt gekozen
+        random.shuffle(available)
+
+        # Wijs aan elke match (bord) een eigen bierhaler toe
+        for i, match in enumerate(round_matches):
+            # We pakken de i-de beschikbare persoon. 
+            # Als er minder bierhalers dan borden zijn, gebruiken we modulo om te herhalen.
+            fetcher = available[i % len(available)]
+            
+            if tournament.mode == "doubles":
+                match.beer_fetcher_team_id = fetcher.id
+            else:
+                match.beer_fetcher_id = fetcher.id
     
-    print(f"Aantal deelnemers: {len(participants)}")
-    
-    # Groepeer matches per ronde
-    rounds_dict = {}
-    for match in all_matches:
-        if match.round_number not in rounds_dict:
-            rounds_dict[match.round_number] = []
-        rounds_dict[match.round_number].append(match)
-    
-    # Wijs bierhalers toe per ronde
-    for round_num in sorted(rounds_dict.keys()):
-        round_matches = rounds_dict[round_num]
-        
-        assign_beer_fetchers_to_round(
-            session=session,
-            tournament_id=tournament_id,
-            round_number=round_num,
-            round_matches=round_matches,
-            all_players_or_teams=participants,
-            mode=tournament.mode
-        )
-    
-    print(f"🍺 === BIERHALER TOEWIJZING VOLTOOID ===\n")
+    session.commit()
 
 
 def clear_beer_fetchers(session: Session, tournament_id: int) -> None:

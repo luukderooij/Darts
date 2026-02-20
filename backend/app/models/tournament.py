@@ -50,3 +50,17 @@ class Tournament(SQLModel, table=True):
     admins: List["User"] = Relationship(back_populates="shared_tournaments", link_model=TournamentAdminLink)
 
     enable_beer_fetchers: bool = Field(default=False)
+
+    rounds: List["TournamentRound"] = Relationship(back_populates="tournament")
+
+class TournamentRound(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    round_index: int  # Bijv. 1, 2, 3
+    name: Optional[str] = None  # Bijv. "Poule Fase Blok A"
+    is_active: bool = Field(default=False)
+    
+    tournament_id: int = Field(foreign_key="tournament.id")
+    tournament: Optional["Tournament"] = Relationship(back_populates="rounds")
+    
+    # Relatie naar de matches in deze ronde
+    matches: List["Match"] = Relationship(back_populates="round_container")

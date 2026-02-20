@@ -7,8 +7,11 @@ from sqlmodel import Session, select
 from app.models.match import Match
 from app.models.team import Team
 from app.models.player import Player
-from app.models.tournament import Tournament
-from app.models.dartboard import Dartboard # Toegevoegd voor bordtoewijzing
+from app.models.tournament import Tournament, TournamentRound
+from app.services.beer_fetcher_gen import assign_beer_fetchers_to_tournament
+from app.services.referee_gen import assign_referees_safe
+from app.services.scheduler_logic import assign_matches_to_logical_rounds
+from sqlalchemy.orm import selectinload
 
 # ==========================================
 # 1. POULE FASE LOGICA (VOOR SINGLES)
@@ -23,82 +26,88 @@ def generate_poule_phase(
     session: Session
 ):
     """
-    Verdeelt spelers over N poules, wijst borden toe (Dynamisch of Vast) en genereert wedstrijden.
+    Verdeelt DEELNEMERS (Spelers of Teams) over poules en genereert wedstrijden.
     """
-    # 1. Haal toernooi en borden op
-    statement = select(Tournament).where(Tournament.id == tournament_id)
-    tournament = session.exec(statement).first()
+    # 1. Haal toernooi op MET RELATIES
+    stmt = select(Tournament).where(Tournament.id == tournament_id).options(
+        selectinload(Tournament.teams),
+        selectinload(Tournament.players),
+        selectinload(Tournament.boards) # Ook borden meteen laden
+    )
+    tournament = session.exec(stmt).first()
     
-    # Sorteer borden op nummer
-    boards = sorted(tournament.boards, key=lambda b: b.number) if tournament and tournament.boards else []
+    if not tournament: return []
+    
+    session.refresh(tournament) 
+    is_doubles = (tournament.mode == "doubles")
 
-    if len(players) < num_poules:
+    # 2. BEPAAL DEELNEMERS (Correctie: via relatie ophalen)
+    participants = []
+    if is_doubles:
+        # FIX: Team heeft geen tournament_id kolom, haal op via de relatie
+        participants = tournament.teams
+        print(f"DEBUG: Doubles Mode - Gevonden teams: {len(participants)}")
+        
+        if len(participants) == 0:
+            print("ERROR: Geen teams gevonden! Maak eerst teams aan.")
+            return []
+    else:
+        participants = list(players)
+        print(f"DEBUG: Singles Mode - Gevonden spelers: {len(participants)}")
+
+    # Check borden
+    boards = sorted(tournament.boards, key=lambda b: b.number) if tournament.boards else []
+    print(f"DEBUG: Toernooi {tournament_id} heeft {len(boards)} borden beschikbaar.")
+
+    # 3. Husselen en verdelen over poules
+    if len(participants) < num_poules:
         num_poules = 1
 
-    # 2. Spelers husselen en verdelen
-    shuffled_players = list(players)
-    random.shuffle(shuffled_players)
+    shuffled_participants = list(participants)
+    random.shuffle(shuffled_participants)
 
     poules_map = {i: [] for i in range(1, num_poules + 1)}
-    for idx, player in enumerate(shuffled_players):
+    for idx, entity in enumerate(shuffled_participants):
         target_poule = (idx % num_poules) + 1
-        poules_map[target_poule].append(player)
+        poules_map[target_poule].append(entity)
 
-    # 3. Eerst ALLE wedstrijden genereren (zonder bordnummer)
+    # 4. Matches genereren
     all_created_matches = []
-    matches_per_poule = {} # Houden we bij voor de referee toewijzing later
+    
+    max_matches_limit = getattr(tournament, 'matches_per_player', None)
+    if max_matches_limit == 0: max_matches_limit = None 
 
-    for poule_num, pool_players in poules_map.items():
+    for poule_num, pool_entities in poules_map.items():
         poule_matches = _create_round_robin_matches(
             tournament_id=tournament_id,
-            players=pool_players,
+            participants=pool_entities,
             poule_number=poule_num,
             legs=legs_best_of,
-            sets=sets_best_of
+            sets=sets_best_of, 
+            max_rounds=max_matches_limit,
+            is_doubles=is_doubles
         )
-        matches_per_poule[poule_num] = poule_matches
         all_created_matches.extend(poule_matches)
 
-    # 4. BORD TOEWIJZING LOGICA
-    
-    # Scenario A: OVERFLOW (Meer borden dan poules) -> Dynamisch verdelen
-    # OF SHUFFLE (Borden Hussel aan) -> Wedstrijden roteren over borden
-    if len(boards) > num_poules or tournament.shuffle_boards:
-        # We sorteren alle wedstrijden eerst op ronde, dan op poule.
-        # Zo vullen we ronde 1 eerst op bord 1, 2, 3...
-        all_created_matches.sort(key=lambda m: (m.round_number, m.poule_number))
-        
-        for i, match in enumerate(all_created_matches):
-            # Als shuffle aan staat, voegen we een offset toe op basis van de ronde.
-            # Hierdoor start Ronde 2 op een ander bord dan Ronde 1.
-            offset = (match.round_number - 1) if tournament.shuffle_boards else 0
-            
-            board_idx = (i + offset) % len(boards)
-            match.board_number = boards[board_idx].number
-            
-    # Scenario B: STANDAARD (Gelijk of minder borden) -> Vaste toewijzing
-    # Bijv: 2 Poules, 2 Borden. Poule 1->Bord 1, Poule 2->Bord 2.
-    else:
-        for match in all_created_matches:
-            if match.poule_number and match.poule_number <= len(boards):
-                # Poule 1 krijgt index 0 (Bord 1)
-                match.board_number = boards[match.poule_number - 1].number
-            else:
-                # Geen bord beschikbaar (Queue)
-                match.board_number = None
-
-    # 5. Referees toewijzen (Nu de borden bekend zijn)
-    # We doen dit per poule, omdat je meestal schrijft bij je eigen poule
-    for poule_num, pool_players in poules_map.items():
-        pm = matches_per_poule[poule_num]
-        pm.sort(key=lambda m: m.round_number)
-        
-        # De vernieuwde assign_referees functie (die bord-locatie meeneemt)
-        assign_referees(pm, pool_players, is_doubles=False)
-
-    # 6. Opslaan
+    # 5. Opslaan
     session.add_all(all_created_matches)
     session.commit()
+
+    # 6. Indelen
+    print("DEBUG: Start herindeling over borden...")
+    assign_matches_to_logical_rounds(session, tournament_id, all_created_matches)
+    
+    for m in all_created_matches:
+        session.refresh(m)
+
+    # 7. Scheidsrechters (let op de simpele aanroep!)
+    print("DEBUG: Start veilige scheidsrechter toewijzing...")
+    assign_referees_safe(session, tournament_id)
+
+    # 8. Bierhalers
+    assign_beer_fetchers_to_tournament(session, tournament_id)
+
+    return all_created_matches
 
 
 def generate_round_robin_global(
@@ -116,41 +125,60 @@ def generate_round_robin_global(
 
 def _create_round_robin_matches(
     tournament_id: int, 
-    players: List[Player], 
-    poule_number: int | None,
-    legs: int,
-    sets: int
+    participants: List[Any], # Kan Player of Team zijn
+    poule_number: int | None, 
+    legs: int, 
+    sets: int,
+    max_rounds: int | None = None,
+    is_doubles: bool = False # Nieuwe parameter
 ) -> List[Match]:
     matches = []
-    if len(players) < 2:
+    if len(participants) < 2:
         return matches
 
-    rotation = list(players)
+    rotation = list(participants)
     if len(rotation) % 2 != 0:
-        rotation.append(None)
+        rotation.append(None) # Dummy
     
-    num_players = len(rotation)
-    num_rounds = num_players - 1
-    half = num_players // 2
+    num_entities = len(rotation)
+    total_possible_rounds = num_entities - 1
+    
+    # De limiet logic:
+    # Als max_rounds = 5, speelt ieder Team/Speler exact 5 keer.
+    if max_rounds and max_rounds > 0:
+        num_rounds_to_play = min(max_rounds, total_possible_rounds)
+    else:
+        num_rounds_to_play = total_possible_rounds
 
-    for round_idx in range(num_rounds):
-        round_num = round_idx + 1
+    half = num_entities // 2
+
+    for round_idx in range(num_rounds_to_play):
+        round_num = round_idx + 1 
+        
         for i in range(half):
-            p1 = rotation[i]
-            p2 = rotation[num_players - 1 - i]
+            entity1 = rotation[i]
+            entity2 = rotation[num_entities - 1 - i]
             
-            if p1 and p2:
+            if entity1 and entity2:
                 match = Match(
                     tournament_id=tournament_id,
                     round_number=round_num,
                     poule_number=poule_number,
-                    player1_id=p1.id,
-                    player2_id=p2.id,
                     best_of_legs=legs,
                     best_of_sets=sets,
                     is_completed=False
                 )
+                
+                # HIER MAKEN WE HET ONDERSCHEID
+                if is_doubles:
+                    match.team1_id = entity1.id
+                    match.team2_id = entity2.id
+                else:
+                    match.player1_id = entity1.id
+                    match.player2_id = entity2.id
+                    
                 matches.append(match)
+        
         rotation.insert(1, rotation.pop())
     
     return matches
@@ -568,105 +596,3 @@ def _create_ko_match(tournament, p1_id, p2_id):
         best_of_sets=tournament.sets_per_match,
         is_completed=False
     )
-
-# ==========================================
-# 4. TEAM & REFEREE HELPERS
-# ==========================================
-
-def create_random_teams(tournament_id: int, player_ids: list[int], session: Session):
-    players = session.exec(select(Player).where(Player.id.in_(player_ids))).all()
-    if len(players) % 2 != 0: raise ValueError("Aantal spelers moet even zijn!")
-    random.shuffle(players)
-    teams = []
-    for i in range(0, len(players), 2):
-        p1 = players[i]
-        p2 = players[i+1]
-        team = Team(name=f"{p1.last_name or p1.first_name} & {p2.last_name or p2.first_name}", tournament_id=tournament_id)
-        team.players = [p1, p2]
-        session.add(team)
-        teams.append(team)
-    session.commit()
-    return teams
-
-def create_manual_team(tournament_id: int, player_ids: list[int], custom_name: str | None, session: Session):
-    players = session.exec(select(Player).where(Player.id.in_(player_ids))).all()
-    if not players: raise ValueError("Geen geldige spelers")
-    name = custom_name if custom_name and custom_name.strip() else " & ".join([p.last_name or p.first_name for p in players])
-    team = Team(name=name, tournament_id=tournament_id)
-    team.players = players
-    session.add(team)
-    session.commit()
-    session.refresh(team)
-    return team
-
-def assign_referees(matches: List[Match], participants: List[Any], is_doubles: bool):
-    """
-    Wijst scheidsrechters toe met prioriteiten:
-    1. Gelijke verdeling (count).
-    2. Locatie (liefst op hetzelfde bord blijven).
-    3. Rusttijd (gap).
-    """
-    if len(participants) < 3: return
-
-    ref_counts = {p.id: 0 for p in participants}
-    
-    # We houden bij wanneer (index) en WAAR (bord) iemand actief was
-    last_active_index = {p.id: -1 for p in participants}
-    last_active_board = {p.id: None for p in participants}
-
-    for i, match in enumerate(matches):
-        # 1. Spelers identificeren
-        if is_doubles:
-            p1_id, p2_id = match.team1_id, match.team2_id
-        else:
-            p1_id, p2_id = match.player1_id, match.player2_id
-
-        current_board = match.board_number
-
-        # Spelers zijn nu actief op dit bord
-        if p1_id: 
-            last_active_index[p1_id] = i
-            last_active_board[p1_id] = current_board
-        if p2_id: 
-            last_active_index[p2_id] = i
-            last_active_board[p2_id] = current_board
-
-        # 2. Kandidaten zoeken (niet zelf aan het spelen)
-        candidates = [p for p in participants if p.id not in (p1_id, p2_id)]
-        if not candidates: continue
-
-        # 3. Scoring Algoritme
-        # Score = (Aantal keer geschreven * 100) + LocatieStraf - Rusttijd
-        # Laagste score wint.
-        def get_score(candidate):
-            count = ref_counts[candidate.id]
-            
-            # Rustfactor
-            last_idx = last_active_index[candidate.id]
-            gap = i - last_idx if last_idx != -1 else 999 
-            
-            # Locatiefactor (Sectie 5d)
-            # Als je vorige keer op bord X was, en nu is de match op bord Y -> Strafpunten
-            location_penalty = 0
-            last_board = last_active_board[candidate.id]
-            
-            if last_board is not None and current_board is not None:
-                if last_board != current_board:
-                    # Grote straf: we willen lopen voorkomen
-                    location_penalty = 50 
-            
-            return (count * 100) + location_penalty - gap
-
-        candidates.sort(key=get_score)
-        best_ref = candidates[0]
-
-        # 4. Toewijzen
-        if is_doubles:
-            match.referee_team_id = best_ref.id
-        else:
-            match.referee_id = best_ref.id
-
-        # 5. Tracking updaten
-        ref_counts[best_ref.id] += 1
-        last_active_index[best_ref.id] = i
-        last_active_board[best_ref.id] = current_board # Ref is nu hier actief

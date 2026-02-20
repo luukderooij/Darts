@@ -35,7 +35,7 @@ from app.services.tournament_gen import (
     generate_round_robin_global,
     generate_knockout,
     generate_knockout_bracket,
-    assign_referees,
+    assign_referees_safe,
     calculate_poule_standings 
 )
 
@@ -739,7 +739,7 @@ def finalize_tournament_setup(
         if not pm: continue
         pm.sort(key=lambda m: m.round_number)
         pool_participants = teams_by_poule.get(p_num, [])
-        assign_referees(pm, pool_participants, is_doubles=True)
+        assign_referees_safe(session, tournament.id)
 
     session.add_all(matches_created)
     session.commit()

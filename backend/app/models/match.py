@@ -3,6 +3,8 @@ from typing import Optional
 from sqlmodel import SQLModel, Field, Relationship
 from pydantic import BaseModel
 
+from app.models.tournament import TournamentRound
+
 class Match(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     
@@ -52,6 +54,11 @@ class Match(SQLModel, table=True):
     beer_fetcher: Optional["Player"] = Relationship(sa_relationship_kwargs={"foreign_keys": "[Match.beer_fetcher_id]"})
     beer_fetcher_team: Optional["Team"] = Relationship(sa_relationship_kwargs={"foreign_keys": "[Match.beer_fetcher_team_id]"})
 
+    round_id: Optional[int] = Field(default=None, foreign_key="tournamentround.id")
+    round_container: Optional["TournamentRound"] = Relationship(back_populates="matches")
+
+    board_number: Optional[int] = Field(default=None) # Het fysieke nummer (1, 2, 3...)
+    board_id: Optional[int] = Field(default=None, foreign_key="dartboard.id") # De link naar de tabel
     
     # --- DE FIX: COMPUTED PROPERTY ---
     @property

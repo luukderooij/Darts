@@ -24,6 +24,7 @@ export interface Dartboard {
 export interface Match {
     id: number;
     round_number: number;
+    round_id?: number | null; 
     poule_number: number | null;
     
     // UI velden voor namen (komt uit backend 'player1_name' etc)
@@ -45,12 +46,17 @@ export interface Match {
     
     board_id?: number | null;
     board_name?: string; 
+    board_number?: number | null;
 
     referee_id?: number | null;
     referee_team_id?: number | null;
     referee_name?: string;
     
+
+    beer_fetcher_id?: number | null;
+    beer_fetcher_team_id?: number | null; // Voor doubles
     beer_fetcher_name?: string;
+
     
     
 
@@ -60,6 +66,7 @@ export interface Match {
 export interface Tournament {
   id: number;
   name: string;
+  rounds?: TournamentRound[]; // NIEUW
   date: string;
   status: string; // 'draft', 'active', 'completed'
   format: string;
@@ -84,4 +91,13 @@ export interface Team {
   id: number;
   name: string;
   players: Player[];
+}
+
+export interface TournamentRound {
+  id: number;
+  round_index: number;
+  name: string | null;
+  is_active: boolean;
+  tournament_id: number;
+  matches?: Match[]; // Optioneel, afhankelijk of je ze mee-include
 }

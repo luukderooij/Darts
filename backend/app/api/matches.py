@@ -14,7 +14,7 @@ from app.models.tournament import Tournament
 from app.models.user import User
 from app.schemas.match import MatchRead, MatchScoreUpdate, MatchBeerFetcherUpdate, MatchSwapRequest
 from app.api.users import get_current_user
-from app.services.tournament_gen import check_and_advance_knockout
+from app.services.tournament_gen import check_and_advance_knockout, assign_matches_to_logical_rounds
 from app.services.beer_fetcher_gen import reassign_beer_fetcher_for_match
 
 logger = logging.getLogger("dart_app")
@@ -130,6 +130,27 @@ def get_matches_public(
         .order_by(Match.id)
     )
     matches = session.exec(statement_matches).all()
+
+    # =========================================================
+    # FAIL-SAFE: Check of de indeling klopt met de borden
+    # =========================================================
+    if tournament.boards and len(matches) > 0:
+        # Tel hoeveel matches er nu in Ronde 1 staan
+        matches_in_r1 = sum(1 for m in matches if m.round_number == 1)
+        num_boards = len(tournament.boards)
+
+        # Als er meer matches in R1 zijn dan borden (bijv 10 matches op 6 borden)
+        # Dan is de indeling kapot en repareren we die NU direct.
+        if num_boards > 0 and matches_in_r1 > num_boards:
+            print(f"FAIL-SAFE ACTIVATED: {matches_in_r1} matches in R1, maar {num_boards} borden. Repareren...")
+            
+            # Roep de reparatie-functie aan
+            assign_matches_to_logical_rounds(session, tournament.id, matches)
+            
+            # Ververs de lijst met matches, zodat de frontend direct de goede data krijgt
+            session.expire_all() 
+            matches = session.exec(statement_matches).all()
+    # =========================================================
     
     # 3. Construct Response met de juiste namen
     results = []
@@ -168,7 +189,7 @@ def get_matches_public(
         elif m.beer_fetcher_team:
             m_data['beer_fetcher_name'] = m.beer_fetcher_team.name
         else:
-            m_data['beer_fetcher_name'] = None  # Frontend toont "Handige Peppie"
+            m_data['beer_fetcher_name'] = None 
     
     
         results.append(m_data)
